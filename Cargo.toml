@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/modena-core",
+    "crates/modena-cli",
+    "crates/modena-bench",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+authors = ["MODENA contributors"]
+license = "MIT"
+repository = "https://example.com/modena"
+description = "MODENA — Molecular Dynamics Engine for Numerical Atomistics. A fast, extensible MD framework in Rust."
+
+[workspace.dependencies]
+# Internal
+modena-core = { path = "crates/modena-core", version = "0.1.0" }
+
+# External
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "2"
+rayon = "1"
+rand = "0.10"
+rand_distr = "0.6"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = false
+
+[profile.bench]
+inherits = "release"

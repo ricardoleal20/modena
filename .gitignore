@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+
+# generated simulation outputs
+*.csv
+*.xyz
+*.dcd
+*.xtc
+*.trr

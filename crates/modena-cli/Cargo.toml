@@ -1,0 +1,19 @@
+[package]
+name = "modena-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Command-line interface for the MODENA molecular dynamics engine."
+
+[[bin]]
+name = "modena"
+path = "src/main.rs"
+
+[dependencies]
+modena-core = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }

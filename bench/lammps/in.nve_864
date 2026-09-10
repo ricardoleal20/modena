@@ -1,0 +1,39 @@
+# MODENA-vs-LAMMPS benchmark — Case 1: NVE LJ liquid, 864 atoms.
+# Matched to bench/modena/nve_864.toml: same lattice, density, dt, steps,
+# shifted-force LJ (lj/smooth/linear == MODENA's F(r)-F(rc) form), reduced units.
+
+units           lj
+atom_style      atomic
+boundary        p p p
+
+# In `units lj`, the lattice value is the NUMBER DENSITY, not the lattice
+# constant. rho = 0.8442  =>  a = (4/rho)^(1/3) = 1.6796, matching MODENA's
+# lattice_constant = 1.6796.  (Using 1.6796 here would mean rho = 1.6796,
+# i.e. a = 1.335 with atoms inside sigma — a different, repulsive system.)
+lattice         fcc 0.8442
+region          box block 0 6 0 6 0 6
+create_box      1 box
+create_atoms    1 box
+
+mass            1 1.0
+
+# Shifted-force LJ: force = F(r) - F(rc), continuous at the cutoff.
+# Matches MODENA LennardJones shifted-force kernel.
+pair_style      lj/smooth/linear 2.5
+pair_coeff      1 1 1.0 1.0 2.5
+
+velocity        all create 1.0 87287 dist gaussian mom yes rot no
+
+neighbor        0.3 bin
+neigh_modify    every 1 delay 0 check yes
+
+fix             1 all nve
+
+timestep        0.005
+
+thermo          500
+thermo_style    custom step temp pe ke etotal press
+# Report TOTAL extensive quantities (default in `units lj` is per-atom).
+thermo_modify   norm no flush yes
+
+run             5000

@@ -1,0 +1,13 @@
+case,engine,atoms,steps,wall_s,rss_kb
+nve_864,modena,864,5000,9.70,3744
+nve_864,lammps,864,5000,1.29,11856
+nve_2048,modena,2048,5000,23.22,4576
+nve_2048,lammps,2048,5000,3.27,12224
+scale_4,modena,256,2000,1.04,3120
+scale_4,lammps,256,2000,0.14,11568
+scale_6,modena,864,2000,3.92,3648
+scale_6,lammps,864,2000,0.50,11824
+scale_8,modena,2048,2000,9.08,4576
+scale_8,lammps,2048,2000,1.29,12240
+scale_10,modena,4000,2000,18.39,6128
+scale_10,lammps,4000,2000,2.63,12928

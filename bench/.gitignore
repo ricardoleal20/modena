@@ -1,0 +1,7 @@
+# Transient per-run outputs from bench/run_comparison.sh.
+# Keep comparison.csv (the summarized result table); ignore raw logs.
+*.time
+*.out
+*.err
+log.lammps
+nve_*_energy.csv

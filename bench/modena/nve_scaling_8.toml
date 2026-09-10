@@ -1,0 +1,28 @@
+# MODENA-vs-LAMMPS benchmark — Case 3 (scaling sweep): NVE, n=4 → 256 atoms.
+# Matched to:  lmp_serial -var n 4 -in in.nve_scaling
+
+units = "reduced"
+
+[structure]
+type = "fcc"
+lattice_constant = 1.6796
+replicas = [8, 8, 8]   # 2048 atoms
+element = "Ar"
+
+[model]
+type = "lennard_jones"
+sigma = 1.0
+epsilon = 1.0
+cutoff = 2.5
+
+[integrator]
+type = "velocity_verlet"
+dt = 0.005
+
+[run]
+steps = 2000
+initial_temperature = 1.0
+seed = 87287
+trajectory_every = 2000
+log_file = "nve_scaling_8_energy.csv"
+log_every = 1000

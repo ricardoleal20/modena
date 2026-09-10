@@ -1,0 +1,32 @@
+# MODENA example — Lennard-Jones argon, NVT via BAOAB Langevin.
+# Same system as argon_nve.toml but thermostatted at T = 1.0.
+
+units = "reduced"
+
+[structure]
+type = "fcc"
+lattice_constant = 1.6796
+replicas = [4, 4, 4]   # 256 atoms
+element = "Ar"
+
+[model]
+type = "lennard_jones"
+sigma = 1.0
+epsilon = 1.0
+cutoff = 2.5
+
+[integrator]
+type = "langevin_baoab"
+dt = 0.005
+gamma = 1.0
+target_temperature = 1.0
+seed = 42
+
+[run]
+steps = 2000
+initial_temperature = 1.0
+seed = 42
+trajectory_file = "argon_nvt_traj.xyz"
+trajectory_every = 100
+log_file = "argon_nvt_energy.csv"
+log_every = 10

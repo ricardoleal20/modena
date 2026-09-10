@@ -1,0 +1,30 @@
+# MODENA example — Lennard-Jones argon, NVE (microcanonical).
+# Reduced units (sigma = epsilon = mass = 1).
+# Density rho = 4 / a^3 with a = 1.6796 → rho ≈ 0.8442 (canonical LJ liquid).
+
+units = "reduced"
+
+[structure]
+type = "fcc"
+lattice_constant = 1.6796
+replicas = [4, 4, 4]   # 256 atoms
+element = "Ar"
+
+[model]
+type = "lennard_jones"
+sigma = 1.0
+epsilon = 1.0
+cutoff = 2.5
+
+[integrator]
+type = "velocity_verlet"
+dt = 0.005
+
+[run]
+steps = 2000
+initial_temperature = 0.8
+seed = 42
+trajectory_file = "argon_nve_traj.xyz"
+trajectory_every = 100
+log_file = "argon_nve_energy.csv"
+log_every = 10

@@ -50,7 +50,9 @@ jobs:
       - name: Test
         run: cargo test --verbose
       - name: Run NVE smoke example
-        run: cargo run --release -- run -i examples/argon_nve.toml
+        # The workspace ships two binaries (`modena`, `modena-mcp`); pin the CLI
+        # binary explicitly so `cargo run` never has to disambiguate.
+        run: cargo run --release --bin modena -- run -i examples/argon_nve.toml
 
   bench-compile:
     name: Benchmarks compile

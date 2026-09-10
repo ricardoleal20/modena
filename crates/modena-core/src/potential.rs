@@ -14,6 +14,22 @@
 use crate::error::{ModenaError, Result};
 
 /// Short-ranged pairwise-additive potential.
+///
+/// # Conservation contract
+///
+/// Implementations MUST satisfy **force/energy consistency**: the energy `U(r)`
+/// returned by [`energy_force`](Self::energy_force) must be a function whose
+/// radial derivative is the negative of the reported force,
+///
+/// `dU/dr = −F(r)`, where `F(r) = f_over_r · r`.
+///
+/// Equivalently, the reported potential energy is the *exact integral* of the
+/// reported force. This makes the NVE Hamiltonian `H = KE + PE` the true
+/// conserved quantity under the symplectic integrator, so energy drift is a
+/// genuine numerical signal rather than a truncation artifact. The invariant is
+/// verified for every registered potential by the property-based tests in
+/// `tests/property_consistency.rs` (force = −∇U by finite difference, no NaN/Inf,
+/// cutoff continuity). See `conservation::ConservationReport`.
 pub trait PairPotential: Send + Sync {
     /// Cutoff distance (length units).
     fn cutoff(&self) -> f64;
@@ -24,6 +40,8 @@ pub trait PairPotential: Send + Sync {
     /// Pair interaction for squared distance `r2` and species `(ti, tj)`.
     /// Returns `(U, f_over_r)` where `U` is the (shifted) pair energy and
     /// `f_over_r = F_radial / r`. Caller must skip pairs with `r2 > cutoff2`.
+    ///
+    /// **Contract:** `dU/dr = −(f_over_r · r)` (see the trait-level docs).
     fn energy_force(&self, r2: f64, ti: u32, tj: u32) -> (f64, f64);
 }
 

@@ -21,6 +21,7 @@
 
 #![allow(clippy::needless_doctest_main)]
 
+pub mod conservation;
 pub mod error;
 pub mod force_model;
 pub mod integrator;
@@ -35,6 +36,7 @@ pub mod thermostat;
 pub mod units;
 pub mod vec3;
 
+pub use conservation::{ConservationReport, ConservationVerdict};
 pub use error::{ModenaError, Result};
 pub use force_model::{ForceModel, PairForceModel, Virial};
 pub use integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
@@ -45,7 +47,7 @@ pub use io::log::LogWriter;
 pub use io::xyz::{read_xyz, TrajectoryWriter};
 pub use neighbor::NeighborList;
 pub use potential::{LennardJones, PairPotential};
-pub use runner::{run_from_file, RunSummary, Simulation};
+pub use runner::{run_from_file, RunEvent, RunSummary, Simulation};
 pub use system::{SimBox, System};
 pub use thermo::Energies;
 pub use thermostat::{Berendsen, NoneThermostat, Thermostat, VelocityRescaling};

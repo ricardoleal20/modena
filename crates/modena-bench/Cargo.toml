@@ -1,0 +1,25 @@
+[package]
+name = "modena-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Criterion benchmarks for the MODENA molecular dynamics engine."
+publish = false
+
+[dependencies]
+modena-core = { workspace = true }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "force_kernel"
+harness = false
+
+[[bench]]
+name = "neighbor_build"
+harness = false
+
+[[bench]]
+name = "integrator_step"
+harness = false

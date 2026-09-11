@@ -20,6 +20,12 @@
 //! is structured so a rename is mechanical (crate name + this doc header).
 
 #![allow(clippy::needless_doctest_main)]
+// The potential validators use `!(x > 0.0)` rather than `x <= 0.0` deliberately:
+// the negated form rejects NaN inputs (NaN > 0.0 is false → !(false) = true →
+// error), which the direct comparison would silently accept. Clippy's
+// `neg_cmp_op_on_partial_ord` lint dislikes the style; the NaN-safety is load-
+// bearing, so we allow it crate-wide.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
 
 pub mod conservation;
 pub mod error;

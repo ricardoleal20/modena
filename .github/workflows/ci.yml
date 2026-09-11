@@ -23,7 +23,7 @@ jobs:
         run: cargo fmt --all -- --check
 
   clippy:
-    name: Clippy
+    name: Clippy (default + gpu)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,8 +31,52 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      # `gpu` is pure-Rust (wgpu) and compiles without a GPU; `mpi` needs a
+      # system MPI and is exercised in its own job below. Check both default
+      # and gpu feature here.
+      - name: cargo clippy (default)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo clippy (gpu feature)
+        run: cargo clippy --all-targets --features gpu -- -D warnings
+
+  mpi:
+    name: MPI backend (mpiexec -n 2)
+    runs-on: ubuntu-latest
+    env:
+      OMPI_ALLOW_RUN_AS_ROOT: 1
+      OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install OpenMPI
+        run: sudo apt-get update && sudo apt-get install -y libopenmpi-dev openmpi-bin
+      - name: Clippy (mpi feature)
+        run: cargo clippy --all-targets --features mpi -- -D warnings
+      - name: Build MPI test
+        run: cargo test --features mpi --test mpi_decomp --no-run
+      - name: Run MPI test (mpiexec -n 2)
+        # The decomposed force/energy/virial must match the serial reference
+        # across two real MPI ranks. Single-process `cargo test` skips (see
+        # `tests/mpi_decomp.rs`); this drives the genuine 2-rank path.
+        run: |
+          BIN=$(find target/debug -name 'mpi_decomp-*' -type f ! -name '*.d' | head -1)
+          mpirun --allow-run-as-root -n 2 "$BIN" --nocapture
+
+  gpu:
+    name: GPU backend (compile + skip-test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test (gpu feature; skips without adapter)
+        # The wgpu backend compiles everywhere; on a headless CI runner there is
+        # no GPU adapter, so the test self-skips. Run it to confirm the build +
+        # graceful skip path.
+        run: cargo test --features gpu --test gpu_pair
 
   test:
     name: Build & test (${{ matrix.os }})

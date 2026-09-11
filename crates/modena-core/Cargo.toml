@@ -15,6 +15,23 @@ rayon = { workspace = true }
 rand = { workspace = true }
 rand_distr = { workspace = true }
 libm = { workspace = true }
+# M9 optional backends. Default-off so `cargo build`/`cargo test` need no native
+# MPI or GPU runtime; enable with `--features mpi` / `--features gpu`.
+mpi = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+
+[features]
+default = []
+# Real distributed-memory parallelism via the `mpi` crate (requires a system
+# MPI — MPICH or OpenMPI). Adds `MpiCommunicator` and a ghost-exchange pair
+# driver; the decomposition algorithm itself lives in `decomp` (always on).
+mpi = ["dep:mpi"]
+# GPU offload of the pair kernel via a WGSL compute shader (`wgpu`). Compiles
+# everywhere; `GpuPairForceModel::new` returns `None` when no suitable GPU
+# adapter is available (e.g. CI), so callers/tests skip gracefully.
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
 
 [dev-dependencies]
 proptest = { workspace = true }

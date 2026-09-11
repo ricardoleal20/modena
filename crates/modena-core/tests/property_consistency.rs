@@ -40,10 +40,13 @@ fn jittered_system(jitters: &[(f64, f64, f64)], jitter: f64) -> System {
     assert_eq!(sys.n(), 108);
     for (i, &(dx, dy, dz)) in jitters.iter().enumerate() {
         // Clamp to the promised bound defensively.
-        sys.positions[i] += Vec3::new(
-            dx.clamp(-jitter, jitter),
-            dy.clamp(-jitter, jitter),
-            dz.clamp(-jitter, jitter),
+        sys.add_pos(
+            i,
+            Vec3::new(
+                dx.clamp(-jitter, jitter),
+                dy.clamp(-jitter, jitter),
+                dz.clamp(-jitter, jitter),
+            ),
         );
     }
     sys.wrap_positions();
@@ -73,13 +76,14 @@ proptest! {
         let cutoff = pot.cutoff();
         let model = PairForceModel::new(LennardJones::new(1.0, 1.0, 2.5).unwrap());
         let sys = jittered_system(&jitters, 0.10);
+        let n = sys.n();
         let mut neighbors = NeighborList::new(cutoff);
 
         // Reference forces.
         let mut virial = Virial::default();
         let mut sys_for_forces = sys.clone();
         model.compute(&mut sys_for_forces, &mut virial, &mut neighbors).unwrap();
-        let forces: Vec<Vec3> = sys_for_forces.forces.clone();
+        let forces: Vec<Vec3> = (0..n).map(|i| sys_for_forces.force(i)).collect();
 
         let h = 1e-5_f64;
         let mut max_err = 0.0_f64;
@@ -87,8 +91,8 @@ proptest! {
             for k in 0..3 {
                 let mut sp = sys.clone();
                 let mut sm = sys.clone();
-                sp.positions[i].0[k] += h;
-                sm.positions[i].0[k] -= h;
+                sp.positions[3 * i + k] += h;
+                sm.positions[3 * i + k] -= h;
                 let pe_p = total_pe(&sp, &model, &mut neighbors);
                 let pe_m = total_pe(&sm, &model, &mut neighbors);
                 // F = -dU/dx  =>  dU/dx = (pe_p - pe_m)/(2h); force = -that.
@@ -177,19 +181,22 @@ fn nve_drift_within_symplectic_bound() {
         let mut system = lattice::fcc(1.6796, [2, 2, 2], "Ar");
         for i in 0..system.n() {
             let fi = i as f64;
-            system.velocities[i] = Vec3::new(
-                0.5 * fi.sin(),
-                0.5 * (1.3 * fi).cos(),
-                0.5 * (0.7 * fi).sin(),
+            system.set_vel(
+                i,
+                Vec3::new(
+                    0.5 * fi.sin(),
+                    0.5 * (1.3 * fi).cos(),
+                    0.5 * (0.7 * fi).sin(),
+                ),
             );
         }
         let mut com = Vec3::zero();
-        for v in &system.velocities {
-            com += *v;
+        for i in 0..system.n() {
+            com += system.vel(i);
         }
         com *= 1.0 / system.n() as f64;
-        for v in system.velocities.iter_mut() {
-            *v -= com;
+        for i in 0..system.n() {
+            system.set_vel(i, system.vel(i) - com);
         }
 
         let mut neighbors = NeighborList::new(cutoff);
@@ -397,22 +404,25 @@ fn multi_species_lj_cross_interaction_conserves_energy() {
     }
     for i in 0..system.n() {
         let fi = i as f64;
-        system.velocities[i] = Vec3::new(
-            0.3 * fi.sin(),
-            0.3 * (1.3 * fi).cos(),
-            0.3 * (0.7 * fi).sin(),
+        system.set_vel(
+            i,
+            Vec3::new(
+                0.3 * fi.sin(),
+                0.3 * (1.3 * fi).cos(),
+                0.3 * (0.7 * fi).sin(),
+            ),
         );
     }
     // Remove COM drift.
     let mut com = Vec3::zero();
     let mut tm = 0.0;
     for i in 0..system.n() {
-        com += system.velocities[i] * system.masses[i];
+        com += system.vel(i) * system.masses[i];
         tm += system.masses[i];
     }
     com *= 1.0 / tm;
     for i in 0..system.n() {
-        system.velocities[i] -= com;
+        system.set_vel(i, system.vel(i) - com);
     }
 
     let mut neighbors = NeighborList::new(cutoff);

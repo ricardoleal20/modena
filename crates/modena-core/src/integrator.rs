@@ -8,6 +8,8 @@
 //! Convention: `system.forces` holds F(t) on entry and F(t+dt) on exit, so the
 //! runner computes forces once before the loop and the first half-kick uses the
 //! cached F(t). This avoids a redundant force evaluation per step.
+//!
+//! M7: the kick/drift loops operate on the flat `3N` SoA buffers directly.
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -58,24 +60,10 @@ impl Integrator for VelocityVerlet {
         let half = 0.5 * dt;
 
         // First half-kick: v(t+dt/2) = v(t) + (dt/2) a(t), using cached F(t).
-        {
-            let v = &mut system.velocities;
-            let f = &system.forces;
-            let m = &system.masses;
-            for i in 0..n {
-                let inv_m = 1.0 / m[i];
-                v[i] += f[i] * (half * inv_m);
-            }
-        }
+        kick(system, n, half);
 
         // Drift: x(t+dt) = x(t) + dt v(t+dt/2), then wrap.
-        {
-            let x = &mut system.positions;
-            let v = &system.velocities;
-            for i in 0..n {
-                x[i] += v[i] * dt;
-            }
-        }
+        drift(system, n, dt);
         system.wrap_positions();
 
         // New forces F(t+dt), potential energy, virial.
@@ -83,15 +71,7 @@ impl Integrator for VelocityVerlet {
         let pe = model.compute(system, &mut virial, neighbors)?;
 
         // Second half-kick: v(t+dt) = v(t+dt/2) + (dt/2) a(t+dt).
-        {
-            let v = &mut system.velocities;
-            let f = &system.forces;
-            let m = &system.masses;
-            for i in 0..n {
-                let inv_m = 1.0 / m[i];
-                v[i] += f[i] * (half * inv_m);
-            }
-        }
+        kick(system, n, half);
 
         Ok(Energies::from(system, pe, &virial))
     }
@@ -134,42 +114,24 @@ impl Integrator for LangevinBAOAB {
         let c1sq = c1 * c1;
 
         // B½: v += (dt/2) F/m   (using cached F(t))
-        {
-            let v = &mut system.velocities;
-            let f = &system.forces;
-            let m = &system.masses;
-            for i in 0..n {
-                v[i] += f[i] * (half / m[i]);
-            }
-        }
+        kick(system, n, half);
         // A½: x += (dt/2) v
-        {
-            let x = &mut system.positions;
-            let v = &system.velocities;
-            for i in 0..n {
-                x[i] += v[i] * half;
-            }
-        }
+        drift(system, n, half);
         // O: exact OU velocity update.
         {
             let v = &mut system.velocities;
             let m = &system.masses;
-            for i in 0..n {
-                let s = ((1.0 - c1sq) * kt / m[i]).sqrt();
+            for (i, &mi) in m.iter().enumerate() {
+                let s = ((1.0 - c1sq) * kt / mi).sqrt();
                 for k in 0..3 {
                     let gauss: f64 = StandardNormal.sample(&mut self.rng);
-                    v[i].0[k] = c1 * v[i].0[k] + s * gauss;
+                    let idx = 3 * i + k;
+                    v[idx] = c1 * v[idx] + s * gauss;
                 }
             }
         }
         // A½: x += (dt/2) v
-        {
-            let x = &mut system.positions;
-            let v = &system.velocities;
-            for i in 0..n {
-                x[i] += v[i] * half;
-            }
-        }
+        drift(system, n, half);
         system.wrap_positions();
 
         // Recompute F(t+dt).
@@ -177,15 +139,32 @@ impl Integrator for LangevinBAOAB {
         let pe = model.compute(system, &mut virial, neighbors)?;
 
         // B½: v += (dt/2) F/m
-        {
-            let v = &mut system.velocities;
-            let f = &system.forces;
-            let m = &system.masses;
-            for i in 0..n {
-                v[i] += f[i] * (half / m[i]);
-            }
-        }
+        kick(system, n, half);
 
         Ok(Energies::from(system, pe, &virial))
+    }
+}
+
+/// Half-kick: `v += factor * F / m` over all atoms (flat SoA).
+#[inline]
+fn kick(system: &mut System, n: usize, factor: f64) {
+    let v = &mut system.velocities;
+    let f = &system.forces;
+    let m = &system.masses;
+    for i in 0..n {
+        let inv_m = factor / m[i];
+        for k in 0..3 {
+            v[3 * i + k] += f[3 * i + k] * inv_m;
+        }
+    }
+}
+
+/// Drift: `x += factor * v` over all atoms (flat SoA).
+#[inline]
+fn drift(system: &mut System, n: usize, factor: f64) {
+    let x = &mut system.positions;
+    let v = &system.velocities;
+    for k in 0..3 * n {
+        x[k] += v[k] * factor;
     }
 }

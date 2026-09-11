@@ -32,11 +32,11 @@ mod lattice_tests {
     fn fcc_nearest_neighbor_distance() {
         // FCC nearest-neighbor = a/√2. With a=√2, NN = 1.0.
         let sys = lattice::fcc(2f64.sqrt(), [2, 2, 2], "Ar");
-        let p0 = sys.positions[0]; // (0,0,0)
-                                   // Find the closest other atom.
+        let p0 = sys.pos(0); // (0,0,0)
+                             // Find the closest other atom.
         let mut dmin = f64::INFINITY;
-        for &p in sys.positions.iter().skip(1) {
-            let d = (p - p0).norm();
+        for i in 1..sys.n() {
+            let d = (sys.pos(i) - p0).norm();
             if d < dmin {
                 dmin = d;
             }
@@ -55,9 +55,9 @@ mod io_tests {
         // Write a 3-atom frame.
         let mut sys = System::new(SimBox::cubic(10.0));
         sys.resize(3);
-        sys.positions[0] = Vec3::new(0.0, 0.0, 0.0);
-        sys.positions[1] = Vec3::new(1.0, 2.0, 3.0);
-        sys.positions[2] = Vec3::new(-1.0, -2.0, -3.0);
+        sys.set_pos(0, Vec3::new(0.0, 0.0, 0.0));
+        sys.set_pos(1, Vec3::new(1.0, 2.0, 3.0));
+        sys.set_pos(2, Vec3::new(-1.0, -2.0, -3.0));
         sys.elements = vec!["Ar".into(), "Ar".into(), "Ne".into()];
 
         {
@@ -70,7 +70,7 @@ mod io_tests {
         assert_eq!(sys2.n(), 3);
         assert_eq!(sys2.elements[2], "Ne");
         for i in 0..3 {
-            assert!((sys2.positions[i] - sys.positions[i]).norm() < 1e-6);
+            assert!((sys2.pos(i) - sys.pos(i)).norm() < 1e-6);
         }
     }
 
@@ -83,7 +83,7 @@ mod io_tests {
         {
             let mut w = TrajectoryWriter::create(&path).unwrap();
             for step in 0..5 {
-                sys.positions[0] = Vec3::new(step as f64, 0.0, 0.0);
+                sys.set_pos(0, Vec3::new(step as f64, 0.0, 0.0));
                 w.write_frame(&sys, step, step as f64 * 0.1, "").unwrap();
             }
         }
@@ -248,7 +248,7 @@ mod thermo_tests {
         let mut sys = System::new(SimBox::cubic(10.0));
         sys.resize(1);
         sys.masses[0] = 2.0;
-        sys.velocities[0] = Vec3::new(1.0, 1.0, 1.0);
+        sys.set_vel(0, Vec3::new(1.0, 1.0, 1.0));
         assert!((sys.kinetic_energy() - 3.0).abs() < 1e-12);
         assert!((sys.temperature() - 2.0).abs() < 1e-12);
     }
@@ -259,8 +259,8 @@ mod thermo_tests {
         sys.resize(2);
         sys.masses[0] = 1.0;
         sys.masses[1] = 3.0;
-        sys.velocities[0] = Vec3::new(2.0, 0.0, 0.0);
-        sys.velocities[1] = Vec3::new(1.0, 0.0, 0.0);
+        sys.set_vel(0, Vec3::new(2.0, 0.0, 0.0));
+        sys.set_vel(1, Vec3::new(1.0, 0.0, 0.0));
         let p = sys.total_momentum();
         // p_x = 1·2 + 3·1 = 5.
         assert!((p.0[0] - 5.0).abs() < 1e-12);
@@ -272,10 +272,10 @@ mod thermo_tests {
         // Two non-interacting atoms (place far apart so LJ ≈ 0): P = 2KE/(3V).
         let mut sys = System::new(SimBox::cubic(20.0));
         sys.resize(2);
-        sys.positions[0] = Vec3::new(0.0, 0.0, 0.0);
-        sys.positions[1] = Vec3::new(10.0, 10.0, 10.0);
-        sys.velocities[0] = Vec3::new(1.0, 0.0, 0.0);
-        sys.velocities[1] = Vec3::new(-1.0, 0.0, 0.0);
+        sys.set_pos(0, Vec3::new(0.0, 0.0, 0.0));
+        sys.set_pos(1, Vec3::new(10.0, 10.0, 10.0));
+        sys.set_vel(0, Vec3::new(1.0, 0.0, 0.0));
+        sys.set_vel(1, Vec3::new(-1.0, 0.0, 0.0));
         // Force model with no pairs in range → PE=0, virial=0.
         let lj = LennardJones::new(1.0, 1.0, 2.5).unwrap();
         let model = modena_core::PairForceModel::new(lj);

@@ -36,10 +36,13 @@ pub fn fcc(a: f64, replicas: [u32; 3], element: &str) -> System {
         for iy in 0..ny {
             for iz in 0..nz {
                 for b in &basis {
-                    system.positions[idx] = Vec3::new(
-                        a * (ix as f64 + b.0[0]),
-                        a * (iy as f64 + b.0[1]),
-                        a * (iz as f64 + b.0[2]),
+                    system.set_pos(
+                        idx,
+                        Vec3::new(
+                            a * (ix as f64 + b.0[0]),
+                            a * (iy as f64 + b.0[1]),
+                            a * (iz as f64 + b.0[2]),
+                        ),
                     );
                     system.elements[idx] = element.to_string();
                     idx += 1;

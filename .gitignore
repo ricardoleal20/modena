@@ -7,3 +7,6 @@
 *.dcd
 *.xtc
 *.trr
+
+# proptest persisted regression cases (test scratch)
+*.proptest-regressions

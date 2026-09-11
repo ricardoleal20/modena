@@ -69,7 +69,12 @@ fn main() -> Result<()> {
                 "  final  T = {:.6}   P = {:.6}   W = {:.6}",
                 e.temperature, e.pressure, e.virial
             );
-            let per_step_us = elapsed.as_secs_f64() / summary.steps as f64 * 1e6;
+            let c = &summary.conservation;
+            println!(
+                "  conservation  drift = {:.3e}  ({:?})",
+                c.relative_drift, c.verdict
+            );
+            let per_step_us = elapsed.as_secs_f64() / summary.steps.max(1) as f64 * 1e6;
             println!(
                 "  perf   {:.2} µs/step  ({:.0} steps/s)",
                 per_step_us,

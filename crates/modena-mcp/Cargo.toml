@@ -1,0 +1,25 @@
+[package]
+name = "modena-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Agent-native MCP interface for the MODENA molecular dynamics engine."
+
+[lib]
+name = "modena_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "modena-mcp"
+path = "src/main.rs"
+
+[dependencies]
+modena-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+toml = { workspace = true }

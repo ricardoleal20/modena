@@ -3,7 +3,7 @@
 use crate::force_model::Virial;
 use crate::system::System;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct Energies {
     pub kinetic: f64,
     pub potential: f64,

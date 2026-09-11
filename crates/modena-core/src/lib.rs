@@ -27,6 +27,7 @@
 // bearing, so we allow it crate-wide.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
+pub mod barostat;
 pub mod bonded;
 pub mod composite;
 pub mod conservation;
@@ -37,7 +38,9 @@ pub mod integrator;
 pub mod io;
 pub mod lattice;
 pub mod neighbor;
+pub mod nose_hoover;
 pub mod potential;
+pub mod replica_exchange;
 pub mod runner;
 pub mod system;
 pub mod thermo;
@@ -45,6 +48,9 @@ pub mod thermostat;
 pub mod units;
 pub mod vec3;
 
+pub use barostat::{
+    Barostat, BerendsenBarostat, MonteCarloBarostat, NoneBarostat, ParrinelloRahman,
+};
 pub use bonded::{Angle, Bond, BondedForceModel, BondedTopology, Dihedral, DihedralTerm};
 pub use composite::CompositeForceModel;
 pub use conservation::{ConservationReport, ConservationVerdict};
@@ -60,12 +66,14 @@ pub use io::log::LogWriter;
 pub use io::xyz::{read_xyz, TrajectoryWriter};
 pub use lattice::{random_alloy, AlloySpecies};
 pub use neighbor::NeighborList;
+pub use nose_hoover::NoseHooverChain;
 pub use potential::mixing::{MixingRule, PairParamTable};
 pub use potential::{
     Buckingham, BuckinghamOverride, BuckinghamTypeParams, InterpKind, LennardJones, LjOverride,
     LjTypeParams, Morse, MorseOverride, MorseTypeParams, PairPotential, SoftSphere,
     SoftSphereOverride, SoftSphereTypeParams, Tabulated,
 };
+pub use replica_exchange::{ReplicaExchange, ReplicaExchangeStats};
 pub use runner::{run_from_file, RunEvent, RunSummary, Simulation};
 pub use system::{SimBox, System};
 pub use thermo::Energies;

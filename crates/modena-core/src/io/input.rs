@@ -79,6 +79,9 @@ pub struct InputConfig {
     /// Rigid distance constraints (SHAKE/RATTLE). Optional. M3.
     #[serde(default)]
     pub constraints: Option<ConstraintsSpec>,
+    /// Pressure coupling (NPT). Optional. M5.
+    #[serde(default)]
+    pub barostat: Option<BarostatSpec>,
     pub run: RunSpec,
     /// Conversion factors used to render output back to real units. Populated by
     /// [`from_str`](Self::from_str) when `units = "real"`; `None` in reduced
@@ -357,6 +360,19 @@ pub enum IntegratorSpec {
         #[serde(default = "default_seed")]
         seed: u64,
     },
+    /// Nosé–Hoover chain (true canonical NVT). M5.
+    NoseHooverChain {
+        dt: f64,
+        target_temperature: f64,
+        #[serde(default = "default_tau")]
+        tau: f64,
+        #[serde(default = "default_chain_len")]
+        chain_len: usize,
+    },
+}
+
+fn default_chain_len() -> usize {
+    4
 }
 
 fn default_seed() -> u64 {
@@ -383,6 +399,37 @@ pub enum ThermostatSpec {
 
 fn default_tau() -> f64 {
     0.5
+}
+
+/// Pressure coupling (M5). `compressibility` is the isothermal compressibility
+/// β_T (1/pressure); in reduced LJ units a value ~1 is typical.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BarostatSpec {
+    /// Berendsen weak-coupling barostat (good for equilibration).
+    Berendsen {
+        target_pressure: f64,
+        #[serde(default = "default_tau")]
+        tau: f64,
+        #[serde(default = "default_compressibility")]
+        compressibility: f64,
+        #[serde(default)]
+        anisotropic: bool,
+    },
+    /// Parrinello–Rahman barostat (samples the NPT ensemble).
+    ParrinelloRahman {
+        target_pressure: f64,
+        #[serde(default = "default_tau")]
+        tau: f64,
+        /// Thermostat temperature for the piston mass coupling.
+        target_temperature: f64,
+        #[serde(default)]
+        anisotropic: bool,
+    },
+}
+
+fn default_compressibility() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -496,6 +543,44 @@ impl InputConfig {
                 *target_temperature = f.to_reduced_temperature(*target_temperature);
                 // gamma has units 1/time.
                 *gamma = f.to_reduced_time(1.0 / *gamma).recip();
+            }
+            IntegratorSpec::NoseHooverChain {
+                dt,
+                target_temperature,
+                tau,
+                ..
+            } => {
+                *dt = f.to_reduced_time(*dt);
+                *target_temperature = f.to_reduced_temperature(*target_temperature);
+                *tau = f.to_reduced_time(*tau);
+            }
+        }
+
+        // Barostat: target_pressure (pressure), compressibility (1/pressure),
+        // tau (time), target_temperature (temp).
+        if let Some(b) = &mut self.barostat {
+            match b {
+                BarostatSpec::Berendsen {
+                    target_pressure,
+                    tau,
+                    compressibility,
+                    ..
+                } => {
+                    *target_pressure = f.to_reduced_pressure(*target_pressure);
+                    *tau = f.to_reduced_time(*tau);
+                    // κ has units 1/pressure → κ_reduced = κ_real · P_factor.
+                    *compressibility *= f.to_real_pressure(1.0);
+                }
+                BarostatSpec::ParrinelloRahman {
+                    target_pressure,
+                    tau,
+                    target_temperature,
+                    ..
+                } => {
+                    *target_pressure = f.to_reduced_pressure(*target_pressure);
+                    *tau = f.to_reduced_time(*tau);
+                    *target_temperature = f.to_reduced_temperature(*target_temperature);
+                }
             }
         }
 

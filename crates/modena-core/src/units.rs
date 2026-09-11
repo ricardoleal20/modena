@@ -132,6 +132,12 @@ impl UnitFactors {
         t * self.time
     }
 
+    /// Convert a real pressure (atm) to reduced.
+    #[inline]
+    pub fn to_reduced_pressure(&self, p: f64) -> f64 {
+        p / self.pressure
+    }
+
     /// Convert a reduced length back to real (Å).
     #[inline]
     pub fn to_real_length(&self, l: f64) -> f64 {

@@ -257,8 +257,10 @@ impl Simulation {
     /// Scaled to real units (Å) when factors are configured.
     fn snapshot_positions(&self) -> Vec<f32> {
         let scale = self.unit_factors.map(|f| f.sigma).unwrap_or(1.0) as f32;
-        let mut s = Vec::with_capacity(self.system.n() * 3);
-        for p in &self.system.positions {
+        let n = self.system.n();
+        let mut s = Vec::with_capacity(n * 3);
+        for i in 0..n {
+            let p = self.system.pos(i);
             s.push(p.0[0] as f32 * scale);
             s.push(p.0[1] as f32 * scale);
             s.push(p.0[2] as f32 * scale);
@@ -375,14 +377,15 @@ fn init_velocities(system: &mut System, temperature: f64, seed: u64) {
         let gy: f64 = normal.sample(&mut rng);
         let gz: f64 = normal.sample(&mut rng);
         let v = Vec3::new(s * gx, s * gy, s * gz);
-        system.velocities[i] = v;
+        system.set_vel(i, v);
         p_com += v * m;
         total_m += m;
     }
     // Remove center-of-mass drift.
     let v_com = p_com * (1.0 / total_m);
     for i in 0..n {
-        system.velocities[i] -= v_com;
+        let v = system.vel(i) - v_com;
+        system.set_vel(i, v);
     }
     // Rescale to the exact target temperature (compensate for COM removal).
     let ke = system.kinetic_energy();
@@ -392,7 +395,8 @@ fn init_velocities(system: &mut System, temperature: f64, seed: u64) {
         if current_t > 0.0 {
             let lambda = (temperature / current_t).sqrt();
             for i in 0..n {
-                system.velocities[i] *= lambda;
+                let v = system.vel(i) * lambda;
+                system.set_vel(i, v);
             }
         }
     }

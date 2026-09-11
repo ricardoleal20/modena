@@ -1,73 +1,137 @@
-//! Cell-list neighbor search for orthorhombic periodic boxes.
+//! Cell-list neighbor search with a Verlet skin, for orthorhombic periodic
+//! boxes (triclinic routes through `SimBox::min_image` — M4 swaps the body).
 //!
-//! Builds a *full* neighbor list (each pair appears in both atoms' lists) by
-//! binning atoms into a uniform grid with cell edge ≥ `cutoff`, then scanning
-//! the 27-cell stencil per atom. Rebuilt every step in Phase 1 (no skin/Verlet
-//! list yet — correctness over cleverness; see roadmap M7).
+//! Builds a *half* neighbor list (each pair `(i, j)` with `i < j` stored once)
+//! and the force kernel applies Newton's third law, halving the pair work vs
+//! the Phase-1 full list. A Verlet `skin` avoids rebuilding every step: the list
+//! is rebuilt only when the largest per-atom displacement since the last build
+//! exceeds `skin / 2`, so a well-chosen skin (`~0.3σ`) amortizes the grid build
+//! over many steps. The force kernel still gates each pair by the true `cutoff`
+//! (pairs within the skin but beyond the cutoff are skipped).
+//!
+//! M7: positions read from the flat SoA buffer; minimum-image dispatch goes
+//! through `SimBox::min_image` (the triclinic seam).
 
 use crate::system::System;
 use crate::vec3::Vec3;
 
 pub struct NeighborList {
     cutoff: f64,
-    cutoff2: f64,
-    /// `neighbors[i]` = all atom indices within `cutoff` of atom `i` (i≠i).
-    neighbors: Vec<Vec<usize>>,
-    // Grid state (rebuilt each call).
+    skin: f64,
+    /// List-building cutoff = cutoff + skin.
+    list_cutoff: f64,
+    list_cutoff2: f64,
+    /// Half pairs `(i, j)` with `i < j` within `list_cutoff`.
+    pairs: Vec<(usize, usize)>,
+    /// Reference positions at the last rebuild (for the skin displacement test).
+    ref_positions: Vec<f64>,
+    built: bool,
+    // Grid state (rebuilt as needed).
     dims: [usize; 3],
-    cell_size: Vec3,
+    cell_size: [f64; 3],
     head: Vec<i32>, // first atom index in cell, -1 if empty
     next: Vec<i32>, // linked list of atoms within a cell
 }
 
 impl NeighborList {
-    pub fn new(cutoff: f64) -> Self {
+    /// New list with force cutoff `cutoff` and Verlet `skin` (skin = 0 disables
+    /// the Verlet optimization — rebuild every `build` call, matching Phase 1).
+    pub fn with_skin(cutoff: f64, skin: f64) -> Self {
         assert!(cutoff > 0.0, "neighbor cutoff must be > 0");
+        assert!(skin >= 0.0, "skin must be >= 0");
+        let list_cutoff = cutoff + skin;
         Self {
             cutoff,
-            cutoff2: cutoff * cutoff,
-            neighbors: Vec::new(),
+            skin,
+            list_cutoff,
+            list_cutoff2: list_cutoff * list_cutoff,
+            pairs: Vec::new(),
+            ref_positions: Vec::new(),
+            built: false,
             dims: [1, 1, 1],
-            cell_size: Vec3::splat(cutoff),
+            cell_size: [cutoff; 3],
             head: Vec::new(),
             next: Vec::new(),
         }
+    }
+
+    /// Phase-1-compatible constructor: no skin (rebuild every call).
+    pub fn new(cutoff: f64) -> Self {
+        Self::with_skin(cutoff, 0.0)
     }
 
     pub fn cutoff(&self) -> f64 {
         self.cutoff
     }
 
-    pub fn neighbors_of(&self, i: usize) -> &[usize] {
-        &self.neighbors[i]
+    pub fn skin(&self) -> f64 {
+        self.skin
     }
 
-    /// Rebuild the list for the current positions in `system`.
+    /// The half pair list `(i, j)` with `i < j`.
+    pub fn pairs(&self) -> &[(usize, usize)] {
+        &self.pairs
+    }
+
+    /// Number of stored half-pairs.
+    pub fn n_pairs(&self) -> usize {
+        self.pairs.len()
+    }
+
+    /// Skin-aware rebuild. Rebuilds the grid + pair list only when the largest
+    /// per-atom displacement since the last build exceeds `skin / 2`; otherwise
+    /// reuses the current list (the force kernel recomputes distances from the
+    /// live positions each step, so a stale *list* is correct as long as no pair
+    /// crossed the `list_cutoff` boundary).
     pub fn build(&mut self, system: &System) {
         let n = system.n();
-        self.neighbors.clear();
-        self.neighbors.resize(n, Vec::new());
         if n == 0 {
+            self.pairs.clear();
             return;
         }
+        if self.built && self.skin > 0.0 && !self.displacement_exceeds(system) {
+            return;
+        }
+        self.rebuild(system);
+    }
 
-        let box_size = system.box_size.size;
-        // Grid dimensions: at least 1 per axis; cell edge ≥ cutoff. If the box
-        // is smaller than the cutoff along an axis we clamp to 1 cell and rely
-        // on minimum-image distances (valid for the force, though it means an
-        // atom may interact with a periodic image of itself — avoided by the
-        // r2 < 1e-14 guard in the force loop for genuine self-pairs).
+    /// Force a rebuild regardless of skin (used by tests and the initial build).
+    pub fn force_rebuild(&mut self, system: &System) {
+        self.rebuild(system);
+    }
+
+    fn displacement_exceeds(&self, system: &System) -> bool {
+        let half_skin = 0.5 * self.skin;
+        let half_skin2 = half_skin * half_skin;
+        let n = system.n();
+        for i in 0..n {
+            let dx = system.positions[3 * i] - self.ref_positions[3 * i];
+            let dy = system.positions[3 * i + 1] - self.ref_positions[3 * i + 1];
+            let dz = system.positions[3 * i + 2] - self.ref_positions[3 * i + 2];
+            if dx * dx + dy * dy + dz * dz > half_skin2 {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn rebuild(&mut self, system: &System) {
+        let n = system.n();
+        let box_size = system.box_size;
+
+        // Grid dimensions: cell edge >= list_cutoff. Clamp to 1 cell per axis if
+        // the box is smaller than the list cutoff (valid via minimum-image).
         let mut dims = [1usize; 3];
-        let mut cell_size = [self.cutoff; 3];
+        let mut cell_size = [self.list_cutoff; 3];
         for k in 0..3 {
-            let b = box_size.0[k];
-            let d = (b / self.cutoff).floor() as usize;
+            let b = box_size.size.0[k];
+            let d = (b / self.list_cutoff).floor() as usize;
             let d = d.max(1);
             dims[k] = d;
             cell_size[k] = b / d as f64;
         }
         self.dims = dims;
-        self.cell_size = Vec3::new(cell_size[0], cell_size[1], cell_size[2]);
+        self.cell_size = cell_size;
 
         let ncells = dims[0] * dims[1] * dims[2];
         self.head.clear();
@@ -75,26 +139,23 @@ impl NeighborList {
         self.next.clear();
         self.next.resize(n, -1);
 
-        // Bin atoms into cells via a linked list.
+        // Bin atoms into cells.
         for i in 0..n {
-            let c = self.cell_of(system.positions[i]);
+            let c = self.cell_of(system.pos(i));
             self.next[i] = self.head[c];
             self.head[c] = i as i32;
         }
 
-        // Per-axis neighbor-cell offsets, *deduplicated*. With a coarse grid
-        // (fewer than 3 cells per axis) the raw {-1,0,1} stencil wraps multiple
-        // offsets onto the same cell; visiting it more than once overcounts
-        // pairs by a position-dependent factor and breaks energy conservation.
-        //   dim 1 → {0}, dim 2 → {0,1}, dim ≥ 3 → {-1,0,1}.
+        // Deduplicated per-axis stencil (see Phase-1 comment: with < 3 cells per
+        // axis the raw {-1,0,1} stencil wraps onto the same cell and overcounts).
         let dxs = stencil_deltas(dims[0]);
         let dys = stencil_deltas(dims[1]);
         let dzs = stencil_deltas(dims[2]);
 
-        // For each atom, scan the deduplicated stencil and collect neighbors.
-        let cutoff2 = self.cutoff2;
+        self.pairs.clear();
+        let lc2 = self.list_cutoff2;
         for i in 0..n {
-            let ri = system.positions[i];
+            let ri = system.pos(i);
             let ci = self.cell_of(ri);
             let (ix, iy, iz) = self.unravel(ci);
             for &dz in &dzs {
@@ -107,11 +168,12 @@ impl NeighborList {
                         let mut p = self.head[c];
                         while p >= 0 {
                             let j = p as usize;
-                            if j != i {
-                                let rj = system.positions[j];
-                                let d = (ri - rj).min_image(box_size);
-                                if d.norm2() < cutoff2 {
-                                    self.neighbors[i].push(j);
+                            // Half list: only store i < j.
+                            if j > i {
+                                let rj = system.pos(j);
+                                let d = box_size.min_image(ri - rj);
+                                if d.norm2() < lc2 {
+                                    self.pairs.push((i, j));
                                 }
                             }
                             p = self.next[j];
@@ -120,15 +182,20 @@ impl NeighborList {
                 }
             }
         }
+
+        // Snapshot reference positions for the skin test.
+        self.ref_positions.clear();
+        self.ref_positions.extend_from_slice(system.positions_raw());
+        self.built = true;
     }
 
     #[inline]
     fn cell_of(&self, r: Vec3) -> usize {
         let dims = self.dims;
         let cs = self.cell_size;
-        let ix = ((r.0[0] / cs.0[0]).floor() as i32).rem_euclid(dims[0] as i32) as usize;
-        let iy = ((r.0[1] / cs.0[1]).floor() as i32).rem_euclid(dims[1] as i32) as usize;
-        let iz = ((r.0[2] / cs.0[2]).floor() as i32).rem_euclid(dims[2] as i32) as usize;
+        let ix = ((r.0[0] / cs[0]).floor() as i32).rem_euclid(dims[0] as i32) as usize;
+        let iy = ((r.0[1] / cs[1]).floor() as i32).rem_euclid(dims[1] as i32) as usize;
+        let iz = ((r.0[2] / cs[2]).floor() as i32).rem_euclid(dims[2] as i32) as usize;
         ix * dims[1] * dims[2] + iy * dims[2] + iz
     }
 
@@ -149,7 +216,7 @@ fn wrap_cell(idx: i32, dim: usize) -> usize {
 }
 
 /// Distinct neighbor-cell offsets for one axis of length `dim`, deduplicated
-/// against periodic wraparound. See `NeighborList::build`.
+/// against periodic wraparound.
 #[inline]
 fn stencil_deltas(dim: usize) -> Vec<i32> {
     match dim {
@@ -162,70 +229,83 @@ fn stencil_deltas(dim: usize) -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::{SimBox, System};
+    use crate::system::SimBox;
+
+    fn sys_with(positions: &[Vec3], box_edge: f64) -> System {
+        let mut sys = System::new(SimBox::cubic(box_edge));
+        sys.resize(positions.len());
+        for (i, &p) in positions.iter().enumerate() {
+            sys.set_pos(i, p);
+        }
+        sys
+    }
 
     #[test]
     fn finds_neighbors_in_cubic_box() {
-        // Two atoms 1.0 apart in a 10³ box, cutoff 2.5 → mutual neighbors.
-        let mut sys = System::new(SimBox::cubic(10.0));
-        sys.resize(2);
-        sys.positions[0] = Vec3::new(0.0, 0.0, 0.0);
-        sys.positions[1] = Vec3::new(1.0, 0.0, 0.0);
+        let sys = sys_with(&[Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)], 10.0);
         let mut nl = NeighborList::new(2.5);
         nl.build(&sys);
-        assert_eq!(nl.neighbors_of(0), &[1]);
-        assert_eq!(nl.neighbors_of(1), &[0]);
+        // Half list: one pair (0,1).
+        assert_eq!(nl.pairs(), &[(0, 1)]);
     }
 
     #[test]
     fn respects_cutoff() {
-        let mut sys = System::new(SimBox::cubic(10.0));
-        sys.resize(3);
-        sys.positions[0] = Vec3::new(0.0, 0.0, 0.0);
-        sys.positions[1] = Vec3::new(1.0, 0.0, 0.0); // within 2.5
-        sys.positions[2] = Vec3::new(5.0, 0.0, 0.0); // outside 2.5
+        let sys = sys_with(
+            &[
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(5.0, 0.0, 0.0),
+            ],
+            10.0,
+        );
         let mut nl = NeighborList::new(2.5);
         nl.build(&sys);
-        assert_eq!(nl.neighbors_of(0), &[1]);
-        assert_eq!(nl.neighbors_of(2), &[] as &[usize]);
+        assert_eq!(nl.pairs(), &[(0, 1)]);
     }
 
     #[test]
     fn finds_periodic_image_neighbor() {
-        // Atom 0 at 0.1, atom 1 at 9.9 in a 10-box → min-image distance 0.2.
-        let mut sys = System::new(SimBox::cubic(10.0));
-        sys.resize(2);
-        sys.positions[0] = Vec3::new(0.1, 0.0, 0.0);
-        sys.positions[1] = Vec3::new(9.9, 0.0, 0.0);
+        let sys = sys_with(&[Vec3::new(0.1, 0.0, 0.0), Vec3::new(9.9, 0.0, 0.0)], 10.0);
         let mut nl = NeighborList::new(2.5);
         nl.build(&sys);
-        assert_eq!(nl.neighbors_of(0), &[1]);
+        assert_eq!(nl.pairs(), &[(0, 1)]);
     }
 
     #[test]
-    fn no_duplicate_neighbors_with_coarse_grid() {
-        // Box edge 5.0, cutoff 2.5 → only 2 cells per axis. The raw {-1,0,1}
-        // stencil would wrap -1 and +1 onto the same cell and double-count.
-        // Each atom must list each neighbor exactly once.
-        let mut sys = System::new(SimBox::cubic(5.0));
-        sys.resize(3);
-        sys.positions[0] = Vec3::new(0.0, 0.0, 0.0);
-        sys.positions[1] = Vec3::new(1.0, 0.0, 0.0);
-        sys.positions[2] = Vec3::new(2.0, 0.0, 0.0);
+    fn no_duplicate_pairs_with_coarse_grid() {
+        let sys = sys_with(
+            &[
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+            ],
+            5.0,
+        );
         let mut nl = NeighborList::new(2.5);
         nl.build(&sys);
-        // Atom 0 within 2.5 of atom 1 (dist 1) and atom 2 (dist 2).
-        let n0 = nl.neighbors_of(0);
-        assert_eq!(n0.len(), 2, "atom 0 neighbors: {n0:?}");
-        assert!(n0.contains(&1) && n0.contains(&2));
-        // No duplicates.
-        let mut sorted = n0.to_vec();
+        // Pairs: (0,1), (0,2), (1,2) — each once.
+        let mut sorted = nl.pairs().to_vec();
         sorted.sort();
-        sorted.dedup();
-        assert_eq!(
-            sorted.len(),
-            n0.len(),
-            "duplicate neighbors detected: {n0:?}"
-        );
+        assert_eq!(sorted, vec![(0, 1), (0, 2), (1, 2)]);
+    }
+
+    #[test]
+    fn skin_skips_rebuild_until_threshold() {
+        // skin = 1.0 → rebuild only when displacement > 0.5.
+        let mut sys = sys_with(&[Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)], 10.0);
+        let mut nl = NeighborList::with_skin(2.5, 1.0);
+        nl.build(&sys);
+        assert_eq!(nl.pairs(), &[(0, 1)]);
+
+        // Small move (< 0.5): list reused, no rebuild. Nudge atom 1.
+        sys.set_pos(1, Vec3::new(1.2, 0.0, 0.0));
+        nl.build(&sys);
+        assert_eq!(nl.pairs(), &[(0, 1)]);
+
+        // Large move (> 0.5): rebuild. Atom 1 now at 6.0 → out of cutoff.
+        sys.set_pos(1, Vec3::new(6.0, 0.0, 0.0));
+        nl.build(&sys);
+        assert!(nl.pairs().is_empty());
     }
 }

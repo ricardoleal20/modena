@@ -24,8 +24,10 @@ fn bench_step(c: &mut Criterion) {
         // Seed a non-trivial velocity so forces are exercised realistically.
         for i in 0..system.n() {
             let f = i as f64;
-            system.velocities[i] =
-                Vec3::new(0.3 * f.sin(), 0.3 * (1.7 * f).cos(), 0.3 * (0.9 * f).sin());
+            system.set_vel(
+                i,
+                Vec3::new(0.3 * f.sin(), 0.3 * (1.7 * f).cos(), 0.3 * (0.9 * f).sin()),
+            );
         }
         let mut nl = NeighborList::new(cutoff);
         let mut virial = Virial::default();

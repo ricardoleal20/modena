@@ -13,15 +13,21 @@ use crate::error::{ModenaError, Result};
 use crate::force_model::{ForceModel, PairForceModel, Virial};
 use crate::integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 use crate::io::input::{
-    InputConfig, IntegratorSpec, ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
+    InputConfig, IntegratorSpec, InterpKindSpec, ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
 };
 use crate::io::log::LogWriter;
 use crate::io::xyz::{read_xyz, TrajectoryWriter};
+use crate::lattice::{fcc, random_alloy, AlloySpecies};
 use crate::neighbor::NeighborList;
-use crate::potential::{LennardJones, PairPotential};
+use crate::potential::{
+    Buckingham, BuckinghamOverride, BuckinghamTypeParams, InterpKind, LennardJones, LjOverride,
+    LjTypeParams, Morse, MorseOverride, MorseTypeParams, PairPotential, SoftSphere,
+    SoftSphereOverride, SoftSphereTypeParams, Tabulated,
+};
 use crate::system::{SimBox, System};
 use crate::thermo::Energies;
 use crate::thermostat::{Berendsen, NoneThermostat, Thermostat, VelocityRescaling};
+use crate::units::UnitFactors;
 use crate::vec3::Vec3;
 
 pub struct Simulation {
@@ -38,6 +44,10 @@ pub struct Simulation {
     log_writer: Option<LogWriter>,
     current_pe: f64,
     current_virial: Virial,
+    /// When `Some`, output (CSV log, trajectory, events) is converted from the
+    /// internal reduced units back to real units for display. The physics stays
+    /// reduced; only the rendered observables are scaled.
+    unit_factors: Option<UnitFactors>,
 }
 
 /// Events emitted by [`Simulation::run_streaming`]. One consumer is the MCP
@@ -78,8 +88,7 @@ impl Simulation {
     /// Build a `Simulation` from a parsed config. `base_dir` resolves relative
     /// structure-file paths.
     pub fn from_config(config: &InputConfig, base_dir: &Path) -> Result<Self> {
-        let system = build_system(&config.structure, base_dir)?;
-        let mut system = system;
+        let mut system = build_system(&config.structure, base_dir)?;
 
         init_velocities(&mut system, config.run.initial_temperature, config.run.seed);
 
@@ -115,6 +124,7 @@ impl Simulation {
             log_writer,
             current_pe: pe,
             current_virial: virial,
+            unit_factors: config.unit_factors,
         })
     }
 
@@ -147,17 +157,19 @@ impl Simulation {
         let e0 = e.total;
         let mut conservation = ConservationReport::pending(e0);
 
-        // Step-0 sample (file + events).
+        // Step-0 sample (file + events). Internal `e` stays in reduced units
+        // (conservation tracking); the displayed time/energies are scaled to
+        // real units when a `unit_factors` is configured.
         self.write_sample(0, 0.0, &e)?;
         on_event(&RunEvent::Started {
             atoms: self.system.n(),
-            dt,
+            dt: self.display_time(dt),
             steps: self.steps,
         });
         on_event(&RunEvent::Thermo {
             step: 0,
             time: 0.0,
-            energies: e,
+            energies: self.display_energies(&e),
         });
 
         let mut last_step = 0usize;
@@ -178,13 +190,14 @@ impl Simulation {
             }
             conservation.observe(e.total);
 
-            let time = step as f64 * dt;
+            let time_reduced = step as f64 * dt;
+            let time = self.display_time(time_reduced);
             if step % self.log_every == 0 {
                 self.log_sample(step, time, &e)?;
                 on_event(&RunEvent::Thermo {
                     step,
                     time,
-                    energies: e,
+                    energies: self.display_energies(&e),
                 });
             }
             if step % self.trajectory_every == 0 {
@@ -209,48 +222,73 @@ impl Simulation {
         }
         let summary = RunSummary {
             steps: last_step,
-            final_energies: e,
+            final_energies: self.display_energies(&e),
             conservation,
         };
         on_event(&RunEvent::Finished { summary });
         Ok(summary)
     }
 
+    /// Scale a reduced time to real units (ps) when factors are configured.
+    fn display_time(&self, t: f64) -> f64 {
+        match self.unit_factors {
+            Some(f) => f.to_real_time(t),
+            None => t,
+        }
+    }
+
+    /// Scale reduced energies/temperature/pressure to real units when factors
+    /// are configured. The internal physics is untouched.
+    fn display_energies(&self, e: &Energies) -> Energies {
+        match self.unit_factors {
+            Some(f) => Energies {
+                kinetic: f.to_real_energy(e.kinetic),
+                potential: f.to_real_energy(e.potential),
+                total: f.to_real_energy(e.total),
+                temperature: f.to_real_temperature(e.temperature),
+                pressure: f.to_real_pressure(e.pressure),
+                virial: f.to_real_energy(e.virial),
+            },
+            None => *e,
+        }
+    }
+
     /// Flattened positions (`x,y,z` per atom) as `f32`, for `RunEvent::Frame`.
+    /// Scaled to real units (Å) when factors are configured.
     fn snapshot_positions(&self) -> Vec<f32> {
+        let scale = self.unit_factors.map(|f| f.sigma).unwrap_or(1.0) as f32;
         let mut s = Vec::with_capacity(self.system.n() * 3);
         for p in &self.system.positions {
-            s.push(p.0[0] as f32);
-            s.push(p.0[1] as f32);
-            s.push(p.0[2] as f32);
+            s.push(p.0[0] as f32 * scale);
+            s.push(p.0[1] as f32 * scale);
+            s.push(p.0[2] as f32 * scale);
         }
         s
     }
 
     fn log_sample(&mut self, step: usize, time: f64, e: &Energies) -> Result<()> {
+        let d = self.display_energies(e);
         if let Some(w) = self.log_writer.as_mut() {
             w.log(
                 step,
                 time,
-                e.kinetic,
-                e.potential,
-                e.total,
-                e.temperature,
-                e.pressure,
-                e.virial,
+                d.kinetic,
+                d.potential,
+                d.total,
+                d.temperature,
+                d.pressure,
+                d.virial,
             )?;
         }
         Ok(())
     }
 
     fn frame(&mut self, step: usize, time: f64, e: &Energies) -> Result<()> {
+        let scale = self.unit_factors.map(|f| f.sigma).unwrap_or(1.0);
+        let d = self.display_energies(e);
+        let comment = format!("E={:.6} T={:.6}", d.total, d.temperature);
         if let Some(w) = self.trajectory_writer.as_mut() {
-            w.write_frame(
-                &self.system,
-                step,
-                time,
-                &format!("E={:.6} T={:.6}", e.total, e.temperature),
-            )?;
+            w.write_frame_scaled(&self.system, step, time, &comment, scale)?;
         }
         Ok(())
     }
@@ -274,11 +312,21 @@ fn build_system(spec: &StructureSpec, base_dir: &Path) -> Result<System> {
             lattice_constant,
             replicas,
             element,
-        } => Ok(crate::lattice::fcc(*lattice_constant, *replicas, element)),
+            mass,
+        } => {
+            let mut sys = fcc(*lattice_constant, *replicas, element);
+            if let Some(m) = mass {
+                for ma in sys.masses.iter_mut() {
+                    *ma = *m;
+                }
+            }
+            Ok(sys)
+        }
         StructureSpec::Xyz {
             file,
             box_size,
             element,
+            mass,
         } => {
             let path = base_dir.join(file);
             let mut sys = read_xyz(&path, SimBox::from_array(*box_size))?;
@@ -288,7 +336,28 @@ fn build_system(spec: &StructureSpec, base_dir: &Path) -> Result<System> {
                     *el = element.clone();
                 }
             }
+            if let Some(m) = mass {
+                for ma in sys.masses.iter_mut() {
+                    *ma = *m;
+                }
+            }
             Ok(sys)
+        }
+        StructureSpec::RandomAlloy {
+            lattice_constant,
+            replicas,
+            species,
+            seed,
+        } => {
+            let alloy: Vec<AlloySpecies> = species
+                .iter()
+                .map(|s| AlloySpecies {
+                    element: s.element.clone(),
+                    mass: s.mass,
+                    concentration: s.concentration,
+                })
+                .collect();
+            random_alloy(*lattice_constant, *replicas, &alloy, *seed)
         }
     }
 }
@@ -330,17 +399,190 @@ fn init_velocities(system: &mut System, temperature: f64, seed: u64) {
 }
 
 fn build_model(spec: &ModelSpec) -> Result<(Box<dyn ForceModel>, f64)> {
-    match spec {
+    let potential: Box<dyn PairPotential> = match spec {
         ModelSpec::LennardJones {
             sigma,
             epsilon,
             cutoff,
+            types,
+            overrides,
+            ..
         } => {
-            let lj = LennardJones::new(*sigma, *epsilon, *cutoff)?;
-            let cutoff = lj.cutoff();
-            Ok((Box::new(PairForceModel::new(lj)), cutoff))
+            if !types.is_empty() {
+                let params: Vec<LjTypeParams> = types
+                    .iter()
+                    .map(|t| LjTypeParams {
+                        sigma: t.sigma,
+                        epsilon: t.epsilon,
+                    })
+                    .collect();
+                let ov: Vec<LjOverride> = overrides
+                    .iter()
+                    .map(|o| LjOverride {
+                        types: o.types,
+                        sigma: o.sigma,
+                        epsilon: o.epsilon,
+                    })
+                    .collect();
+                Box::new(LennardJones::from_types(
+                    &params,
+                    crate::potential::MixingRule::LorentzBerthelot,
+                    &ov,
+                    *cutoff,
+                )?)
+            } else {
+                let s = sigma.ok_or_else(|| {
+                    ModenaError::Config("LennardJones needs `sigma` or `types`".into())
+                })?;
+                let e = epsilon.ok_or_else(|| {
+                    ModenaError::Config("LennardJones needs `epsilon` or `types`".into())
+                })?;
+                Box::new(LennardJones::new(s, e, *cutoff)?)
+            }
         }
-    }
+        ModelSpec::Buckingham {
+            a,
+            b,
+            rho,
+            cutoff,
+            types,
+            overrides,
+        } => {
+            if !types.is_empty() {
+                let params: Vec<BuckinghamTypeParams> = types
+                    .iter()
+                    .map(|t| BuckinghamTypeParams {
+                        a: t.a,
+                        b: t.b,
+                        rho: t.rho,
+                    })
+                    .collect();
+                let ov: Vec<BuckinghamOverride> = overrides
+                    .iter()
+                    .map(|o| BuckinghamOverride {
+                        types: o.types,
+                        a: o.a,
+                        b: o.b,
+                        rho: o.rho,
+                    })
+                    .collect();
+                Box::new(Buckingham::from_types(
+                    &params,
+                    crate::potential::MixingRule::LorentzBerthelot,
+                    &ov,
+                    *cutoff,
+                )?)
+            } else {
+                let a =
+                    a.ok_or_else(|| ModenaError::Config("Buckingham needs `a` or `types`".into()))?;
+                let b =
+                    b.ok_or_else(|| ModenaError::Config("Buckingham needs `b` or `types`".into()))?;
+                let rho = rho.ok_or_else(|| {
+                    ModenaError::Config("Buckingham needs `rho` or `types`".into())
+                })?;
+                Box::new(Buckingham::new(a, b, rho, *cutoff)?)
+            }
+        }
+        ModelSpec::Morse {
+            d,
+            alpha,
+            r0,
+            cutoff,
+            types,
+            overrides,
+        } => {
+            if !types.is_empty() {
+                let params: Vec<MorseTypeParams> = types
+                    .iter()
+                    .map(|t| MorseTypeParams {
+                        d: t.d,
+                        alpha: t.alpha,
+                        r0: t.r0,
+                    })
+                    .collect();
+                let ov: Vec<MorseOverride> = overrides
+                    .iter()
+                    .map(|o| MorseOverride {
+                        types: o.types,
+                        d: o.d,
+                        alpha: o.alpha,
+                        r0: o.r0,
+                    })
+                    .collect();
+                Box::new(Morse::from_types(
+                    &params,
+                    crate::potential::MixingRule::LorentzBerthelot,
+                    &ov,
+                    *cutoff,
+                )?)
+            } else {
+                let d =
+                    d.ok_or_else(|| ModenaError::Config("Morse needs `d` or `types`".into()))?;
+                let alpha = alpha
+                    .ok_or_else(|| ModenaError::Config("Morse needs `alpha` or `types`".into()))?;
+                let r0 =
+                    r0.ok_or_else(|| ModenaError::Config("Morse needs `r0` or `types`".into()))?;
+                Box::new(Morse::new(d, alpha, r0, *cutoff)?)
+            }
+        }
+        ModelSpec::SoftSphere {
+            sigma,
+            epsilon,
+            n,
+            cutoff,
+            types,
+            overrides,
+        } => {
+            if !types.is_empty() {
+                let params: Vec<SoftSphereTypeParams> = types
+                    .iter()
+                    .map(|t| SoftSphereTypeParams {
+                        sigma: t.sigma,
+                        epsilon: t.epsilon,
+                        n: t.n,
+                    })
+                    .collect();
+                let ov: Vec<SoftSphereOverride> = overrides
+                    .iter()
+                    .map(|o| SoftSphereOverride {
+                        types: o.types,
+                        sigma: o.sigma,
+                        epsilon: o.epsilon,
+                        n: o.n,
+                    })
+                    .collect();
+                Box::new(SoftSphere::from_types(
+                    &params,
+                    crate::potential::MixingRule::LorentzBerthelot,
+                    &ov,
+                    *cutoff,
+                )?)
+            } else {
+                let s = sigma.ok_or_else(|| {
+                    ModenaError::Config("SoftSphere needs `sigma` or `types`".into())
+                })?;
+                let e = epsilon.ok_or_else(|| {
+                    ModenaError::Config("SoftSphere needs `epsilon` or `types`".into())
+                })?;
+                let n = n.unwrap_or(12);
+                Box::new(SoftSphere::new(s, e, n, *cutoff)?)
+            }
+        }
+        ModelSpec::Tabulated {
+            file,
+            interpolation,
+        } => {
+            let text = std::fs::read_to_string(file).map_err(|e| {
+                ModenaError::Input(format!("tabulated potential file `{file}`: {e}"))
+            })?;
+            let interp = match interpolation {
+                InterpKindSpec::Linear => InterpKind::Linear,
+            };
+            Box::new(Tabulated::from_text(&text, interp)?)
+        }
+    };
+    let cutoff = potential.cutoff();
+    Ok((Box::new(PairForceModel::from_boxed(potential)), cutoff))
 }
 
 fn build_integrator(spec: &IntegratorSpec) -> Box<dyn Integrator> {

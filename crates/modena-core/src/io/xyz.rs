@@ -91,6 +91,20 @@ impl TrajectoryWriter {
         time: f64,
         comment: &str,
     ) -> Result<()> {
+        self.write_frame_scaled(system, step, time, comment, 1.0)
+    }
+
+    /// Like [`write_frame`](Self::write_frame) but multiplies each position
+    /// component by `length_scale`. Used to render real-unit (Å) coordinates in
+    /// the trajectory when the core runs in reduced units (`length_scale = σ`).
+    pub fn write_frame_scaled(
+        &mut self,
+        system: &System,
+        step: usize,
+        time: f64,
+        comment: &str,
+        length_scale: f64,
+    ) -> Result<()> {
         let n = system.n();
         writeln!(self.writer, "{n}")?;
         writeln!(self.writer, "step={step} time={time:.6} {comment}")?;
@@ -100,7 +114,9 @@ impl TrajectoryWriter {
             writeln!(
                 self.writer,
                 "{el} {:.8} {:.8} {:.8}",
-                p.0[0], p.0[1], p.0[2]
+                p.0[0] * length_scale,
+                p.0[1] * length_scale,
+                p.0[2] * length_scale,
             )?;
         }
         self.writer.flush()?;

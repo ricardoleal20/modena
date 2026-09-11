@@ -33,6 +33,7 @@ pub mod composite;
 pub mod conservation;
 pub mod constraints;
 pub mod error;
+pub mod ewald;
 pub mod force_model;
 pub mod integrator;
 pub mod io;
@@ -56,15 +57,16 @@ pub use composite::CompositeForceModel;
 pub use conservation::{ConservationReport, ConservationVerdict};
 pub use constraints::{Constraint, Constraints};
 pub use error::{ModenaError, Result};
+pub use ewald::EwaldForceModel;
 pub use force_model::{ForceModel, PairForceModel, Virial};
 pub use integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 pub use io::input::{
-    BondedTopologySpec, ConstraintSpec, ConstraintsSpec, InputConfig, IntegratorSpec, ModelSpec,
-    RunSpec, StructureSpec, ThermostatSpec,
+    BondedTopologySpec, ConstraintSpec, ConstraintsSpec, EwaldSpec, InputConfig, IntegratorSpec,
+    ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
 };
 pub use io::log::LogWriter;
 pub use io::xyz::{read_xyz, TrajectoryWriter};
-pub use lattice::{random_alloy, AlloySpecies};
+pub use lattice::{random_alloy, rocksalt, AlloySpecies};
 pub use neighbor::NeighborList;
 pub use nose_hoover::NoseHooverChain;
 pub use potential::mixing::{MixingRule, PairParamTable};

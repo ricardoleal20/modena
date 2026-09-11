@@ -44,7 +44,7 @@ lengths to < 1e-8 and conserves energy on the constraint manifold (rigid
 dumbbell + constrained chain).
 
 
-## M4 — Long-range electrostatics
+## M4 — Long-range electrostatics ✅
 
 - Coulomb pair potential (1/r) with the `ewald` method: real-space sum +
   reciprocal-space sum + self correction.
@@ -52,6 +52,15 @@ dumbbell + constrained chain).
   `realfft`).
 - Triclinic boxes (general cell tensors) replacing the orthorhombic assumption.
 - Charge assignment per atom (`system.charges`).
+
+**Verified:** Ewald force = −∇U by central finite difference (every atom, all
+terms); Madelung lattice energy of NaCl converges to −α/r₀ (α = 1.74756, err
+< 0.02); triclinic minimum-image/wrap correct for a general cell tensor and
+matches the orthorhombic path for a diagonal cell; real-space force → bare
+Coulomb as κ → 0; ionic (NaCl + Ewald) NVE drift < 1e-2. Charges wired through
+the system/config/units layer with the reduced-charge convention
+`U = q_red_i q_red_j / r_red`; rocksalt lattice builder; composes with a pair
+model in `CompositeForceModel` and the runner (`tests/electrostatics.rs`).
 
 ## M5 — Ensembles & sampling ✅
 

@@ -82,6 +82,9 @@ pub struct InputConfig {
     /// Pressure coupling (NPT). Optional. M5.
     #[serde(default)]
     pub barostat: Option<BarostatSpec>,
+    /// Long-range Coulomb electrostatics (Ewald). Optional. M4.
+    #[serde(default)]
+    pub electrostatics: Option<EwaldSpec>,
     pub run: RunSpec,
     /// Conversion factors used to render output back to real units. Populated by
     /// [`from_str`](Self::from_str) when `units = "real"`; `None` in reduced
@@ -103,6 +106,9 @@ pub enum StructureSpec {
         /// to 1.0 (reduced) which is correct for single-species LJ.
         #[serde(default)]
         mass: Option<f64>,
+        /// Charge on every atom (M4 electrostatics; reduced units). Defaults to 0.
+        #[serde(default)]
+        charge: Option<f64>,
     },
     /// Read positions from an XYZ file.
     Xyz {
@@ -112,15 +118,34 @@ pub enum StructureSpec {
         element: String,
         #[serde(default)]
         mass: Option<f64>,
+        /// Charge on every atom (M4 electrostatics; reduced units). Defaults to 0.
+        #[serde(default)]
+        charge: Option<f64>,
     },
     /// FCC lattice with per-atom species assigned by concentration (random alloy).
     RandomAlloy {
         lattice_constant: f64,
         replicas: [u32; 3],
-        /// Per-species definition: element, mass, and concentration (must sum to 1).
+        /// Per-species definition: element, mass, charge, and concentration
+        /// (concentrations must sum to 1).
         species: Vec<SpeciesSpec>,
         #[serde(default = "default_seed")]
         seed: u64,
+    },
+    /// Rocksalt (NaCl) lattice: ordered cation/anion sublattices with charges.
+    /// M4 — the canonical ionic test structure. Nearest cation–anion distance
+    /// is `lattice_constant / 2`.
+    RockSalt {
+        lattice_constant: f64,
+        replicas: [u32; 3],
+        cation: String,
+        anion: String,
+        #[serde(default)]
+        cation_mass: Option<f64>,
+        #[serde(default)]
+        anion_mass: Option<f64>,
+        cation_charge: f64,
+        anion_charge: f64,
     },
 }
 
@@ -132,6 +157,10 @@ pub struct SpeciesSpec {
     pub mass: f64,
     /// Fraction of atoms assigned this species (0..1; must sum to 1 across species).
     pub concentration: f64,
+    /// Per-atom charge for this species (M4 electrostatics; reduced units).
+    /// Defaults to 0 (uncharged).
+    #[serde(default)]
+    pub charge: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +461,28 @@ fn default_compressibility() -> f64 {
     1.0
 }
 
+/// Ewald electrostatics parameters (M4). All lengths/wavenumbers are in the
+/// user's input units (Å / 1·Å for `units = "real"`; reduced for
+/// `units = "reduced"`); they are converted to reduced units at the I/O
+/// boundary. Charges are supplied per-atom via the structure spec (Fcc `charge`,
+/// `SpeciesSpec.charge`, or `RockSalt` cation/anion charges), in units of the
+/// elementary charge `e`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EwaldSpec {
+    /// Ewald screening parameter κ (1/length).
+    pub kappa: f64,
+    /// Real-space cutoff `r_c` (length).
+    pub real_cutoff: f64,
+    /// Reciprocal-space cutoff `k_c` (1/length).
+    pub kspace_cutoff: f64,
+}
+
+/// Coulomb's constant in real (kcal·Å/mol) units: `e²/(4πε₀) =
+/// 332.06371 kcal·Å/mol`. With charges in units of `e` and distances in Å, the
+/// Coulomb energy is `332.06371 · q_i q_j / r` (kcal/mol). Used to derive the
+/// reduced-charge factor `q* = q · √(COULOMB_KCAL_ANGSTROM · σ / ε)`.
+pub const COULOMB_KCAL_ANGSTROM: f64 = 332.06371;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct RunSpec {
     pub steps: usize,
@@ -493,24 +544,36 @@ impl InputConfig {
 
     /// Convert every numeric config field from real to reduced units in-place.
     fn convert_to_reduced(&mut self, f: &UnitFactors) {
-        // Structure: lattice_constant (length), masses (mass).
+        // Structure: lattice_constant (length), masses (mass), charges (charge).
         match &mut self.structure {
             StructureSpec::Fcc {
                 lattice_constant,
                 mass,
+                charge,
                 ..
             } => {
                 *lattice_constant = f.to_reduced_length(*lattice_constant);
                 if let Some(m) = mass {
                     *m = f.to_reduced_mass(*m);
                 }
+                if let Some(q) = charge {
+                    *q = f.to_reduced_charge(*q);
+                }
             }
-            StructureSpec::Xyz { box_size, mass, .. } => {
+            StructureSpec::Xyz {
+                box_size,
+                mass,
+                charge,
+                ..
+            } => {
                 for b in box_size.iter_mut() {
                     *b = f.to_reduced_length(*b);
                 }
                 if let Some(m) = mass {
                     *m = f.to_reduced_mass(*m);
+                }
+                if let Some(q) = charge {
+                    *q = f.to_reduced_charge(*q);
                 }
             }
             StructureSpec::RandomAlloy {
@@ -521,8 +584,35 @@ impl InputConfig {
                 *lattice_constant = f.to_reduced_length(*lattice_constant);
                 for s in species.iter_mut() {
                     s.mass = f.to_reduced_mass(s.mass);
+                    s.charge = f.to_reduced_charge(s.charge);
                 }
             }
+            StructureSpec::RockSalt {
+                lattice_constant,
+                cation_mass,
+                anion_mass,
+                cation_charge,
+                anion_charge,
+                ..
+            } => {
+                *lattice_constant = f.to_reduced_length(*lattice_constant);
+                if let Some(m) = cation_mass {
+                    *m = f.to_reduced_mass(*m);
+                }
+                if let Some(m) = anion_mass {
+                    *m = f.to_reduced_mass(*m);
+                }
+                *cation_charge = f.to_reduced_charge(*cation_charge);
+                *anion_charge = f.to_reduced_charge(*anion_charge);
+            }
+        }
+
+        // Electrostatics: κ and k_c are 1/length (×σ), real_cutoff is length.
+        if let Some(ew) = &mut self.electrostatics {
+            let inv_len = 1.0 / f.to_reduced_length(1.0); // 1/Å → 1/reduced-length
+            ew.kappa *= inv_len;
+            ew.kspace_cutoff *= inv_len;
+            ew.real_cutoff = f.to_reduced_length(ew.real_cutoff);
         }
 
         // Model: σ (length), ε (energy), cutoff (length), and per-type analogues.
@@ -811,6 +901,7 @@ impl StructureSpec {
             StructureSpec::RandomAlloy { species, .. } => {
                 species.first().map(|s| s.mass).unwrap_or(1.0)
             }
+            StructureSpec::RockSalt { cation_mass, .. } => cation_mass.unwrap_or(1.0),
         }
     }
 }

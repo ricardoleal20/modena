@@ -489,6 +489,7 @@ dependencies = [
 name = "modena-core"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "proptest",
  "rand 0.10.2",
  "rand_distr",

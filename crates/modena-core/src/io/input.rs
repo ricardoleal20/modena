@@ -72,6 +72,13 @@ pub struct InputConfig {
     pub integrator: IntegratorSpec,
     #[serde(default)]
     pub thermostat: Option<ThermostatSpec>,
+    /// Bonded topology (bonds/angles/dihedrals). Optional — absent for a pure
+    /// pair (non-bonded) system. M3.
+    #[serde(default)]
+    pub topology: Option<BondedTopologySpec>,
+    /// Rigid distance constraints (SHAKE/RATTLE). Optional. M3.
+    #[serde(default)]
+    pub constraints: Option<ConstraintsSpec>,
     pub run: RunSpec,
     /// Conversion factors used to render output back to real units. Populated by
     /// [`from_str`](Self::from_str) when `units = "real"`; `None` in reduced
@@ -122,6 +129,68 @@ pub struct SpeciesSpec {
     pub mass: f64,
     /// Fraction of atoms assigned this species (0..1; must sum to 1 across species).
     pub concentration: f64,
+}
+
+// ---------------------------------------------------------------------------
+// Bonded topology + constraints (M3).
+// ---------------------------------------------------------------------------
+
+/// One harmonic bond: `atoms = [i, j]`, equilibrium length `r0`, stiffness `k`.
+/// `U = ½ k (r − r0)²`.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct BondSpec {
+    pub atoms: [usize; 2],
+    pub r0: f64,
+    pub k: f64,
+}
+
+/// One harmonic angle: `atoms = [i, j, k]` (`j` is the vertex), equilibrium
+/// angle `theta0` (radians), stiffness `k`. `U = ½ k (θ − θ0)²`.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct AngleSpec {
+    pub atoms: [usize; 3],
+    pub theta0: f64,
+    pub k: f64,
+}
+
+/// One periodic dihedral term (OPLS/CHARMM form `k(1 + cos(nφ − δ))`).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct DihedralTermSpec {
+    pub n: i32,
+    pub k: f64,
+    pub delta: f64,
+}
+
+/// One dihedral: `atoms = [i, j, k, l]` plus its Fourier terms.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DihedralSpec {
+    pub atoms: [usize; 4],
+    pub terms: Vec<DihedralTermSpec>,
+}
+
+/// The full bonded topology.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BondedTopologySpec {
+    #[serde(default)]
+    pub bonds: Vec<BondSpec>,
+    #[serde(default)]
+    pub angles: Vec<AngleSpec>,
+    #[serde(default)]
+    pub dihedrals: Vec<DihedralSpec>,
+}
+
+/// One rigid distance constraint: `atoms = [i, j]`, fixed length `length`.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct ConstraintSpec {
+    pub atoms: [usize; 2],
+    pub length: f64,
+}
+
+/// A set of SHAKE/RATTLE distance constraints.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ConstraintsSpec {
+    #[serde(default)]
+    pub bonds: Vec<ConstraintSpec>,
 }
 
 fn default_element() -> String {
@@ -454,6 +523,29 @@ impl InputConfig {
 
         // Run: initial_temperature (temp).
         self.run.initial_temperature = f.to_reduced_temperature(self.run.initial_temperature);
+
+        // Bonded topology: r0/length (length), bond k (energy/length²), angle
+        // k and dihedral k (energy). Angles/dihedral phases are in radians
+        // (dimensionless).
+        if let Some(topo) = &mut self.topology {
+            for b in &mut topo.bonds {
+                b.r0 = f.to_reduced_length(b.r0);
+                b.k = f.to_reduced_energy(b.k) * f.to_reduced_length(1.0).powi(-2);
+            }
+            for a in &mut topo.angles {
+                a.k = f.to_reduced_energy(a.k);
+            }
+            for d in &mut topo.dihedrals {
+                for t in &mut d.terms {
+                    t.k = f.to_reduced_energy(t.k);
+                }
+            }
+        }
+        if let Some(cons) = &mut self.constraints {
+            for c in &mut cons.bonds {
+                c.length = f.to_reduced_length(c.length);
+            }
+        }
     }
 }
 

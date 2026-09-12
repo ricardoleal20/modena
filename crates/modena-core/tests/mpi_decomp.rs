@@ -5,10 +5,20 @@
 //! mpiexec -n 2 cargo test --features mpi --test mpi_decomp -- --nocapture
 //! ```
 //!
-//! Each rank owns the atoms in its subdomain, exchanges a ghost halo with its
-//! neighbors, evaluates its pairs, and reverse-reduces ghost forces. Rank 0
-//! gathers every owned force and compares the assembled global force field +
-//! energy + virial to the serial half-list reference — they must match exactly.
+//! A single test exercises both correctness anchors of the distributed pair
+//! driver, in sequence:
+//!
+//! 1. **Single-eval match** — rank 0 gathers every owned force and compares the
+//!    assembled global force field + energy + virial to the serial half-list
+//!    reference (relative tolerance for FP summation-order differences).
+//! 2. **NVE conservation** — a velocity-Verlet trajectory driven by the MPI
+//!    force driver across two ranks, with ghost re-exchange every step; total
+//!    energy (all-reduced across ranks) must be conserved.
+//!
+//! Both checks live in one `#[test]` deliberately: MPI tests run as one binary
+//! per rank under `mpiexec`, and a single test guarantees every rank executes
+//! the same collective calls in the same order (parallel tests / differing
+//! order across ranks deadlocks or segfaults under `MPI_THREAD_SINGLE`).
 
 #![cfg(feature = "mpi")]
 
@@ -20,21 +30,43 @@ use modena_core::{
     neighbor::NeighborList,
     potential::LennardJones,
     system::System,
+    vec3::Vec3,
 };
+use mpi::collective::SystemOperation;
 use mpi::traits::*;
 
-/// Build the full system identically on every rank.
-fn full_system() -> System {
-    lattice::fcc(1.5, [5, 5, 5], "Ar") // box 7.5, 500 atoms
-}
+// Initialize MPI for this single test. Because there is only one `#[test]` in
+// this binary (see module docs for why), `mpi::initialize` is called exactly
+// once per process — no `OnceLock` needed. The `Universe` is held locally and
+// dropped at the end of the test, **after a barrier**, so both ranks reach
+// `MPI_Finalize` together (no cross-rank teardown race, which otherwise makes
+// OpenMPI abort with a non-zero exit even when every assertion passed).
 
 fn lj() -> LennardJones {
     LennardJones::new(1.0, 1.0, 2.5).unwrap()
 }
 
+/// Build this rank's owned-atom view from the full system + its owned indices.
+fn build_owned(sys: &System, owned_idx: &[usize]) -> OwnedAtoms {
+    let mut local = System::new(sys.box_size);
+    local.resize(owned_idx.len());
+    let mut gids = Vec::with_capacity(owned_idx.len());
+    for (dst, &src) in owned_idx.iter().enumerate() {
+        local.set_pos(dst, sys.pos(src));
+        local.masses[dst] = sys.masses[src];
+        local.species[dst] = sys.species[src];
+        local.charges[dst] = sys.charges[src];
+        gids.push(src as u64);
+    }
+    OwnedAtoms {
+        system: local,
+        gids,
+    }
+}
+
 #[test]
-fn mpi_decomposition_matches_serial() {
-    let universe = mpi::initialize().unwrap();
+fn mpi_decomposition_matches_serial_and_conserves_nve() {
+    let universe = mpi::initialize().expect("MPI initialization failed");
     let world = universe.world();
     let size = world.size() as usize;
     let rank = world.rank() as usize;
@@ -46,31 +78,19 @@ fn mpi_decomposition_matches_serial() {
         return;
     }
 
-    let sys = full_system();
-    // 2×1×1 grid: subdomain edge 7.5/2 = 3.75 ≥ cutoff 2.5.
+    let sys = lattice::fcc(1.5, [5, 5, 5], "Ar"); // 500 atoms, box 7.5
+                                                  // 2×1×1 grid: subdomain edge 7.5/2 = 3.75 ≥ cutoff 2.5.
     let grid = RankGrid { nr: [2, 1, 1] };
     let decomp = DomainDecomposition::new(sys.box_size, 2.5, grid).unwrap();
-
-    // This rank's owned atoms (global box + global ids = original indices).
     let owned_idx = decomp.owned(&sys, rank);
-    let mut local = System::new(sys.box_size);
-    local.resize(owned_idx.len());
-    let mut gids = Vec::with_capacity(owned_idx.len());
-    for (dst, &src) in owned_idx.iter().enumerate() {
-        local.set_pos(dst, sys.pos(src));
-        local.masses[dst] = sys.masses[src];
-        local.species[dst] = sys.species[src];
-        local.charges[dst] = sys.charges[src];
-        gids.push(src as u64);
-    }
-    let owned = OwnedAtoms {
-        system: local,
-        gids,
-    };
 
+    // ───────────────────────────────────────────────────────────────────────
+    // Part 1: single force/energy/virial evaluation == serial reference.
+    // ───────────────────────────────────────────────────────────────────────
+    let owned = build_owned(&sys, &owned_idx);
     let (owned_forces, pe, w) = mpi_decomposed_pair_compute(&world, &decomp, &lj(), &owned);
 
-    // Pack [gid, fx, fy, fz] per owned atom for the gather.
+    // Pack [gid, fx, fy, fz] per owned atom; gather to rank 0.
     let n_owned = owned_idx.len();
     let mut pack = Vec::with_capacity(4 * n_owned);
     for i in 0..n_owned {
@@ -79,11 +99,8 @@ fn mpi_decomposition_matches_serial() {
         pack.push(owned_forces[3 * i + 1]);
         pack.push(owned_forces[3 * i + 2]);
     }
-
-    // Gather to rank 0: ranks >0 send, rank 0 receives in order.
     let mut assembled: Vec<f64> = vec![0.0; 3 * sys.n()];
     if rank == 0 {
-        // Rank 0's own contribution.
         for i in 0..n_owned {
             let gid = owned_idx[i] as usize;
             assembled[3 * gid] += owned_forces[3 * i];
@@ -104,7 +121,6 @@ fn mpi_decomposition_matches_serial() {
     }
 
     if rank == 0 {
-        // Serial reference over the full system.
         let mut s = sys.clone();
         s.zero_forces();
         let mut vir = Virial::default();
@@ -132,7 +148,117 @@ fn mpi_decomposition_matches_serial() {
             }
         }
     }
+    // Keep `pack` alive until the blocking send completes.
+    drop(pack);
 
-    // Keep `pack` alive until the send completes (blocking send already did).
-    let _ = pack;
+    // ───────────────────────────────────────────────────────────────────────
+    // Part 2: decomposed NVE trajectory — energy conserved across ranks.
+    // ───────────────────────────────────────────────────────────────────────
+    // Every rank holds the full system (positions + velocities) so it can
+    // integrate its own atoms and seed velocities identically; only the force
+    // evaluation is decomposed. Migration-free: with dt=0.004 and 300 steps the
+    // max displacement (~0.36) is far below the subdomain edge (3.75), so no
+    // atom crosses a boundary. Cross-rank migration is covered by the in-process
+    // `ownership_migration_after_displacement` test.
+    let mut sys = sys;
+    let mut p_com = Vec3::zero();
+    let mut total_m = 0.0;
+    for i in 0..sys.n() {
+        let v = Vec3::new(
+            (((i as f64 * 12.9898).sin() * 43758.5453).fract() - 0.5) * 0.3,
+            (((i as f64 * 78.233).sin() * 12543.123).fract() - 0.5) * 0.3,
+            (((i as f64 * 39.345).sin() * 9981.777).fract() - 0.5) * 0.3,
+        );
+        sys.set_vel(i, v);
+        p_com += v * sys.mass(i);
+        total_m += sys.mass(i);
+    }
+    for i in 0..sys.n() {
+        let v = sys.vel(i) - p_com * (1.0 / total_m);
+        sys.set_vel(i, v);
+    }
+
+    // Initial force eval → initial total energy.
+    let owned = build_owned(&sys, &owned_idx);
+    let (owned_forces, pe, _) = mpi_decomposed_pair_compute(&world, &decomp, &lj(), &owned);
+    sys.zero_forces();
+    for (i, &gid) in owned_idx.iter().enumerate() {
+        let f = Vec3::new(
+            owned_forces[3 * i],
+            owned_forces[3 * i + 1],
+            owned_forces[3 * i + 2],
+        );
+        sys.add_force(gid, f);
+    }
+    // KE: each rank sums its owned KE, then all-reduce.
+    let ke_local: f64 = owned_idx
+        .iter()
+        .map(|&i| 0.5 * sys.mass(i) * sys.vel(i).norm2())
+        .sum();
+    let mut ke_global = 0.0f64;
+    world.all_reduce_into(&ke_local, &mut ke_global, SystemOperation::sum());
+    let e0 = ke_global + pe;
+
+    let dt = 0.004;
+    let steps = 300;
+    let mut e_max = e0;
+    let mut e_min = e0;
+    for _ in 0..steps {
+        // Half-kick + drift on OWNED atoms only.
+        for &i in &owned_idx {
+            let m = sys.mass(i);
+            let f = sys.force(i);
+            let v = sys.vel(i) + f * (0.5 * dt / m);
+            sys.set_vel(i, v);
+            let x = sys.pos(i) + v * dt;
+            sys.set_pos(i, x);
+        }
+        sys.wrap_positions();
+
+        // Re-exchange ghosts with updated positions and recompute forces.
+        let owned = build_owned(&sys, &owned_idx);
+        let (owned_forces, pe, _) = mpi_decomposed_pair_compute(&world, &decomp, &lj(), &owned);
+        sys.zero_forces();
+        for (i, &gid) in owned_idx.iter().enumerate() {
+            let f = Vec3::new(
+                owned_forces[3 * i],
+                owned_forces[3 * i + 1],
+                owned_forces[3 * i + 2],
+            );
+            sys.add_force(gid, f);
+        }
+
+        // Half-kick on owned atoms.
+        for &i in &owned_idx {
+            let m = sys.mass(i);
+            let f = sys.force(i);
+            let v = sys.vel(i) + f * (0.5 * dt / m);
+            sys.set_vel(i, v);
+        }
+
+        // Total energy across ranks.
+        let ke_local: f64 = owned_idx
+            .iter()
+            .map(|&i| 0.5 * sys.mass(i) * sys.vel(i).norm2())
+            .sum();
+        let mut ke_global = 0.0f64;
+        world.all_reduce_into(&ke_local, &mut ke_global, SystemOperation::sum());
+        let e = ke_global + pe;
+        e_max = e_max.max(e);
+        e_min = e_min.min(e);
+    }
+
+    let drift = (e_max - e_min) / e0.abs().max(1e-12);
+    // f64 + MPI all-reduce: drift is FP summation-order noise, well below 1e-3.
+    assert!(
+        drift < 1e-3,
+        "MPI decomposed NVE drift too large: {drift:.3e}"
+    );
+
+    // Synchronize both ranks before the universe drops, so each reaches
+    // `MPI_Finalize` together — no teardown race (which OpenMPI otherwise
+    // reports as an abnormal exit despite all assertions passing).
+    world.barrier();
+    drop(world);
+    drop(universe);
 }

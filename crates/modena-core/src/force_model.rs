@@ -58,6 +58,12 @@ impl PairForceModel {
             potential: Box::new(potential),
         }
     }
+
+    /// Construct from an already-boxed potential (used by the config dispatch,
+    /// which builds the potential dynamically from `ModelSpec`).
+    pub fn from_boxed(potential: Box<dyn PairPotential>) -> Self {
+        Self { potential }
+    }
 }
 
 impl ForceModel for PairForceModel {

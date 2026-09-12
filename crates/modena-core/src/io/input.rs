@@ -1,34 +1,59 @@
 //! Input configuration (TOML). Describes one simulation declaratively; the
 //! runner builds the engine objects from it.
 //!
-//! Example:
+//! Example (reduced, single-species LJ):
 //! ```toml
 //! units = "reduced"
 //!
-//! [Structure]
+//! [structure]
 //! type = "fcc"
 //! lattice_constant = 1.5444
 //! replicas = [4, 4, 4]
 //! element = "Ar"
 //!
-//! [Model]
+//! [model]
 //! type = "lennard_jones"
 //! sigma = 1.0
 //! epsilon = 1.0
 //! cutoff = 2.5
 //!
-//! [Integrator]
+//! [integrator]
 //! type = "velocity_verlet"
 //! dt = 0.005
 //!
-//! [Run]
+//! [run]
 //! steps = 10000
 //! initial_temperature = 1.0
 //! seed = 42
-//! trajectory_file = "traj.xyz"
-//! trajectory_every = 100
-//! log_file = "energy.csv"
-//! log_every = 10
+//! ```
+//!
+//! Real units + multi-species (M2):
+//! ```toml
+//! units = "real"
+//!
+//! [structure]
+//! type = "random_alloy"
+//! lattice_constant = 5.26
+//! replicas = [4, 4, 4]
+//! seed = 42
+//! [[structure.species]]
+//! element = "Ar"
+//! mass = 39.948
+//! concentration = 0.8
+//! [[structure.species]]
+//! element = "Ne"
+//! mass = 20.180
+//! concentration = 0.2
+//!
+//! [model]
+//! type = "lennard_jones"
+//! cutoff = 12.0
+//! [[model.types]]
+//! sigma = 3.40
+//! epsilon = 0.238
+//! [[model.types]]
+//! sigma = 2.75
+//! epsilon = 0.072
 //! ```
 
 use std::path::Path;
@@ -36,7 +61,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::error::{ModenaError, Result};
-use crate::units::UnitSystem;
+use crate::units::{UnitFactors, UnitSystem};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct InputConfig {
@@ -48,6 +73,11 @@ pub struct InputConfig {
     #[serde(default)]
     pub thermostat: Option<ThermostatSpec>,
     pub run: RunSpec,
+    /// Conversion factors used to render output back to real units. Populated by
+    /// [`from_str`](Self::from_str) when `units = "real"`; `None` in reduced
+    /// mode (output is already in reduced units). Not deserialized from TOML.
+    #[serde(skip)]
+    pub unit_factors: Option<UnitFactors>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -59,6 +89,10 @@ pub enum StructureSpec {
         replicas: [u32; 3],
         #[serde(default = "default_element")]
         element: String,
+        /// Per-element mass (real units: amu; reduced: 1.0). Optional — defaults
+        /// to 1.0 (reduced) which is correct for single-species LJ.
+        #[serde(default)]
+        mass: Option<f64>,
     },
     /// Read positions from an XYZ file.
     Xyz {
@@ -66,21 +100,179 @@ pub enum StructureSpec {
         box_size: [f64; 3],
         #[serde(default = "default_element")]
         element: String,
+        #[serde(default)]
+        mass: Option<f64>,
     },
+    /// FCC lattice with per-atom species assigned by concentration (random alloy).
+    RandomAlloy {
+        lattice_constant: f64,
+        replicas: [u32; 3],
+        /// Per-species definition: element, mass, and concentration (must sum to 1).
+        species: Vec<SpeciesSpec>,
+        #[serde(default = "default_seed")]
+        seed: u64,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SpeciesSpec {
+    pub element: String,
+    /// Mass (real units: amu; reduced: relative to the reference mass).
+    #[serde(default = "default_mass")]
+    pub mass: f64,
+    /// Fraction of atoms assigned this species (0..1; must sum to 1 across species).
+    pub concentration: f64,
 }
 
 fn default_element() -> String {
     "X".to_string()
 }
 
+fn default_mass() -> f64 {
+    1.0
+}
+
+/// Mixing rule for cross-species pair parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MixingRuleSpec {
+    /// Lorentz–Berthelot (default): σ_ij = (σ_i+σ_j)/2, ε_ij = √(ε_i·ε_j).
+    #[default]
+    LorentzBerthelot,
+}
+
+/// A per-type parameter entry for a multi-species potential.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TypeSpec {
+    pub sigma: f64,
+    pub epsilon: f64,
+}
+
+/// An explicit per-pair override.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OverrideSpec {
+    pub types: [u32; 2],
+    pub sigma: f64,
+    pub epsilon: f64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ModelSpec {
+    /// Lennard-Jones 12-6. Single-species (`sigma`/`epsilon`) or multi-species
+    /// (`types` + optional `overrides`). If `types` is present it takes
+    /// precedence; the single-pair fields are the backward-compatible default.
     LennardJones {
-        sigma: f64,
-        epsilon: f64,
+        #[serde(default)]
+        sigma: Option<f64>,
+        #[serde(default)]
+        epsilon: Option<f64>,
         cutoff: f64,
+        #[serde(default)]
+        types: Vec<TypeSpec>,
+        #[serde(default)]
+        overrides: Vec<OverrideSpec>,
+        #[serde(default)]
+        mixing: MixingRuleSpec,
     },
+    /// Buckingham `A·exp(−r/ρ) − B/r⁶`.
+    Buckingham {
+        #[serde(default)]
+        a: Option<f64>,
+        #[serde(default)]
+        b: Option<f64>,
+        #[serde(default)]
+        rho: Option<f64>,
+        cutoff: f64,
+        #[serde(default)]
+        types: Vec<BuckinghamTypeSpec>,
+        #[serde(default)]
+        overrides: Vec<BuckinghamOverrideSpec>,
+    },
+    /// Morse `D·[1 − exp(−α(r−r₀))]²`.
+    Morse {
+        #[serde(default)]
+        d: Option<f64>,
+        #[serde(default)]
+        alpha: Option<f64>,
+        #[serde(default)]
+        r0: Option<f64>,
+        cutoff: f64,
+        #[serde(default)]
+        types: Vec<MorseTypeSpec>,
+        #[serde(default)]
+        overrides: Vec<MorseOverrideSpec>,
+    },
+    /// Soft-sphere `ε·(σ/r)ⁿ`.
+    SoftSphere {
+        #[serde(default)]
+        sigma: Option<f64>,
+        #[serde(default)]
+        epsilon: Option<f64>,
+        #[serde(default)]
+        n: Option<i32>,
+        cutoff: f64,
+        #[serde(default)]
+        types: Vec<SoftSphereTypeSpec>,
+        #[serde(default)]
+        overrides: Vec<SoftSphereOverrideSpec>,
+    },
+    /// Tabulated potential from a text file (`r U F` per line).
+    Tabulated {
+        file: String,
+        #[serde(default = "default_interp")]
+        interpolation: InterpKindSpec,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BuckinghamTypeSpec {
+    pub a: f64,
+    pub b: f64,
+    pub rho: f64,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct BuckinghamOverrideSpec {
+    pub types: [u32; 2],
+    pub a: f64,
+    pub b: f64,
+    pub rho: f64,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct MorseTypeSpec {
+    pub d: f64,
+    pub alpha: f64,
+    pub r0: f64,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct MorseOverrideSpec {
+    pub types: [u32; 2],
+    pub d: f64,
+    pub alpha: f64,
+    pub r0: f64,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct SoftSphereTypeSpec {
+    pub sigma: f64,
+    pub epsilon: f64,
+    pub n: i32,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct SoftSphereOverrideSpec {
+    pub types: [u32; 2],
+    pub sigma: f64,
+    pub epsilon: f64,
+    pub n: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InterpKindSpec {
+    Linear,
+}
+
+fn default_interp() -> InterpKindSpec {
+    InterpKindSpec::Linear
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -152,15 +344,296 @@ fn default_log_every() -> usize {
 }
 
 impl InputConfig {
+    /// Parse a TOML config file. If `units = "real"`, every numeric field is
+    /// converted to reduced units in-place using factors derived from the
+    /// model's reference (σ, ε) and the structure's reference mass. The core
+    /// therefore always runs in reduced units.
     pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         let text = std::fs::read_to_string(path)?;
-        let config: InputConfig = toml::from_str(&text)?;
+        Self::from_str(&text)
+    }
+
+    /// Parse a config from a TOML string (I/O-boundary unit conversion applied).
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(text: &str) -> Result<Self> {
+        let mut config: InputConfig = toml::from_str(text)?;
         if config.units == UnitSystem::Real {
-            return Err(ModenaError::Config(
-                "Real units are not wired in Phase 1; use `units = \"reduced\"`. See ROADMAP M2."
-                    .into(),
-            ));
+            let factors = config.real_unit_factors()?;
+            config.convert_to_reduced(&factors);
+            config.unit_factors = Some(factors);
         }
         Ok(config)
+    }
+
+    /// Derive the real→reduced conversion factors from the model's reference
+    /// (σ, ε) and the structure's reference mass. The reference σ/ε are taken
+    /// from the first model type (or the single-pair fields); the reference
+    /// mass from the first species (or 1.0 amu).
+    fn real_unit_factors(&self) -> Result<UnitFactors> {
+        let (sigma, epsilon) = self.model.reference_sigma_epsilon()?;
+        let mass_ref = self.structure.reference_mass();
+        Ok(UnitFactors::new(sigma, epsilon, mass_ref))
+    }
+
+    /// Convert every numeric config field from real to reduced units in-place.
+    fn convert_to_reduced(&mut self, f: &UnitFactors) {
+        // Structure: lattice_constant (length), masses (mass).
+        match &mut self.structure {
+            StructureSpec::Fcc {
+                lattice_constant,
+                mass,
+                ..
+            } => {
+                *lattice_constant = f.to_reduced_length(*lattice_constant);
+                if let Some(m) = mass {
+                    *m = f.to_reduced_mass(*m);
+                }
+            }
+            StructureSpec::Xyz { box_size, mass, .. } => {
+                for b in box_size.iter_mut() {
+                    *b = f.to_reduced_length(*b);
+                }
+                if let Some(m) = mass {
+                    *m = f.to_reduced_mass(*m);
+                }
+            }
+            StructureSpec::RandomAlloy {
+                lattice_constant,
+                species,
+                ..
+            } => {
+                *lattice_constant = f.to_reduced_length(*lattice_constant);
+                for s in species.iter_mut() {
+                    s.mass = f.to_reduced_mass(s.mass);
+                }
+            }
+        }
+
+        // Model: σ (length), ε (energy), cutoff (length), and per-type analogues.
+        self.model.convert_to_reduced(f);
+
+        // Integrator: dt (time), target_temperature (temp).
+        match &mut self.integrator {
+            IntegratorSpec::VelocityVerlet { dt } => {
+                *dt = f.to_reduced_time(*dt);
+            }
+            IntegratorSpec::LangevinBaoab {
+                dt,
+                target_temperature,
+                gamma,
+                ..
+            } => {
+                *dt = f.to_reduced_time(*dt);
+                *target_temperature = f.to_reduced_temperature(*target_temperature);
+                // gamma has units 1/time.
+                *gamma = f.to_reduced_time(1.0 / *gamma).recip();
+            }
+        }
+
+        // Thermostat: target_temperature (temp), tau (time).
+        if let Some(t) = &mut self.thermostat {
+            match t {
+                ThermostatSpec::Berendsen {
+                    target_temperature,
+                    tau,
+                } => {
+                    *target_temperature = f.to_reduced_temperature(*target_temperature);
+                    *tau = f.to_reduced_time(*tau);
+                }
+                ThermostatSpec::VelocityRescaling {
+                    target_temperature,
+                    tau,
+                    ..
+                } => {
+                    *target_temperature = f.to_reduced_temperature(*target_temperature);
+                    *tau = f.to_reduced_time(*tau);
+                }
+                ThermostatSpec::None => {}
+            }
+        }
+
+        // Run: initial_temperature (temp).
+        self.run.initial_temperature = f.to_reduced_temperature(self.run.initial_temperature);
+    }
+}
+
+impl ModelSpec {
+    /// Reference (σ, ε) for unit conversion, in real units. For multi-type
+    /// models, the first type's parameters are the reference.
+    fn reference_sigma_epsilon(&self) -> Result<(f64, f64)> {
+        match self {
+            ModelSpec::LennardJones {
+                sigma,
+                epsilon,
+                types,
+                ..
+            } => {
+                if let Some(t) = types.first() {
+                    Ok((t.sigma, t.epsilon))
+                } else if let (Some(s), Some(e)) = (sigma, epsilon) {
+                    Ok((*s, *e))
+                } else {
+                    Err(ModenaError::Config(
+                        "LennardJones needs either `types` or `sigma`/`epsilon`".into(),
+                    ))
+                }
+            }
+            ModelSpec::SoftSphere {
+                sigma,
+                epsilon,
+                types,
+                ..
+            } => {
+                if let Some(t) = types.first() {
+                    Ok((t.sigma, t.epsilon))
+                } else if let (Some(s), Some(e)) = (sigma, epsilon) {
+                    Ok((*s, *e))
+                } else {
+                    Err(ModenaError::Config(
+                        "SoftSphere needs either `types` or `sigma`/`epsilon`".into(),
+                    ))
+                }
+            }
+            // Buckingham/Morse have no single σ; use a 1 Å / 1 kcal/mol reference
+            // (the absolute scale doesn't matter for a non-LJ potential as long
+            // as the user supplies consistent units — the conversion is a no-op
+            // when σ=ε=1, which is what reduced-mode already guarantees).
+            ModelSpec::Buckingham { .. } | ModelSpec::Morse { .. } => Ok((1.0, 1.0)),
+            ModelSpec::Tabulated { .. } => Ok((1.0, 1.0)),
+        }
+    }
+
+    /// Convert model parameters from real to reduced units.
+    fn convert_to_reduced(&mut self, f: &UnitFactors) {
+        match self {
+            ModelSpec::LennardJones {
+                sigma,
+                epsilon,
+                cutoff,
+                types,
+                overrides,
+                ..
+            } => {
+                *cutoff = f.to_reduced_length(*cutoff);
+                if let Some(s) = sigma {
+                    *s = f.to_reduced_length(*s);
+                }
+                if let Some(e) = epsilon {
+                    *e = f.to_reduced_energy(*e);
+                }
+                for t in types.iter_mut() {
+                    t.sigma = f.to_reduced_length(t.sigma);
+                    t.epsilon = f.to_reduced_energy(t.epsilon);
+                }
+                for o in overrides.iter_mut() {
+                    o.sigma = f.to_reduced_length(o.sigma);
+                    o.epsilon = f.to_reduced_energy(o.epsilon);
+                }
+            }
+            ModelSpec::Buckingham {
+                a,
+                b,
+                rho,
+                cutoff,
+                types,
+                overrides,
+            } => {
+                *cutoff = f.to_reduced_length(*cutoff);
+                if let Some(v) = a {
+                    *v = f.to_reduced_energy(*v);
+                }
+                if let Some(v) = rho {
+                    *v = f.to_reduced_length(*v);
+                }
+                // B has units energy·length⁶.
+                if let Some(v) = b {
+                    *v = f.to_reduced_energy(*v) * f.to_reduced_length(1.0).powi(6);
+                }
+                for t in types.iter_mut() {
+                    t.a = f.to_reduced_energy(t.a);
+                    t.rho = f.to_reduced_length(t.rho);
+                    t.b = f.to_reduced_energy(t.b) * f.to_reduced_length(1.0).powi(6);
+                }
+                for o in overrides.iter_mut() {
+                    o.a = f.to_reduced_energy(o.a);
+                    o.rho = f.to_reduced_length(o.rho);
+                    o.b = f.to_reduced_energy(o.b) * f.to_reduced_length(1.0).powi(6);
+                }
+            }
+            ModelSpec::Morse {
+                d,
+                alpha,
+                r0,
+                cutoff,
+                types,
+                overrides,
+            } => {
+                *cutoff = f.to_reduced_length(*cutoff);
+                if let Some(v) = d {
+                    *v = f.to_reduced_energy(*v);
+                }
+                if let Some(v) = alpha {
+                    *v = f.to_reduced_length(1.0 / *v).recip();
+                }
+                if let Some(v) = r0 {
+                    *v = f.to_reduced_length(*v);
+                }
+                for t in types.iter_mut() {
+                    t.d = f.to_reduced_energy(t.d);
+                    t.alpha = f.to_reduced_length(1.0 / t.alpha).recip();
+                    t.r0 = f.to_reduced_length(t.r0);
+                }
+                for o in overrides.iter_mut() {
+                    o.d = f.to_reduced_energy(o.d);
+                    o.alpha = f.to_reduced_length(1.0 / o.alpha).recip();
+                    o.r0 = f.to_reduced_length(o.r0);
+                }
+            }
+            ModelSpec::SoftSphere {
+                sigma,
+                epsilon,
+                n,
+                cutoff,
+                types,
+                overrides,
+            } => {
+                *cutoff = f.to_reduced_length(*cutoff);
+                if let Some(v) = sigma {
+                    *v = f.to_reduced_length(*v);
+                }
+                if let Some(v) = epsilon {
+                    *v = f.to_reduced_energy(*v);
+                }
+                let _ = n;
+                for t in types.iter_mut() {
+                    t.sigma = f.to_reduced_length(t.sigma);
+                    t.epsilon = f.to_reduced_energy(t.epsilon);
+                }
+                for o in overrides.iter_mut() {
+                    o.sigma = f.to_reduced_length(o.sigma);
+                    o.epsilon = f.to_reduced_energy(o.epsilon);
+                }
+            }
+            ModelSpec::Tabulated { .. } => {
+                // The table file is read in reduced units (caller's responsibility
+                // to supply a reduced-unit table when using real units, since the
+                // tabulated form has no single reference σ/ε).
+            }
+        }
+    }
+}
+
+impl StructureSpec {
+    /// Reference mass for unit conversion (amu). The first species' mass, or
+    /// the explicit `mass` field, or 1.0 amu as a fallback.
+    fn reference_mass(&self) -> f64 {
+        match self {
+            StructureSpec::Fcc { mass, .. } | StructureSpec::Xyz { mass, .. } => {
+                mass.unwrap_or(1.0)
+            }
+            StructureSpec::RandomAlloy { species, .. } => {
+                species.first().map(|s| s.mass).unwrap_or(1.0)
+            }
+        }
     }
 }

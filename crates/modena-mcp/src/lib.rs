@@ -349,6 +349,10 @@ impl RunManager {
             StructureSpec::Fcc { element, .. } | StructureSpec::Xyz { element, .. } => {
                 element.clone()
             }
+            StructureSpec::RandomAlloy { species, .. } => species
+                .first()
+                .map(|s| s.element.clone())
+                .unwrap_or_else(|| "alloy".to_string()),
         };
         Ok(BuildSystemResult {
             atoms: n,
@@ -372,6 +376,9 @@ impl RunManager {
                 replicas,
                 ..
             } => 4 * (replicas[0] as usize) * (replicas[1] as usize) * (replicas[2] as usize),
+            StructureSpec::RandomAlloy { replicas, .. } => {
+                4 * (replicas[0] as usize) * (replicas[1] as usize) * (replicas[2] as usize)
+            }
             StructureSpec::Xyz { .. } => {
                 // Without reading the file, fall back to a nominal count.
                 build_structure(&config.structure, &self.work_dir)
@@ -717,6 +724,7 @@ fn build_structure(
             lattice_constant,
             replicas,
             element,
+            ..
         } => {
             // NaN-safe: reject non-finite and non-positive (NaN is not `> 0` and
             // not finite, so both clauses catch it).
@@ -734,6 +742,7 @@ fn build_structure(
             file,
             box_size,
             element,
+            ..
         } => {
             let path = base_dir.join(file);
             let mut sys = read_xyz(&path, SimBox::from_array(*box_size))
@@ -744,6 +753,31 @@ fn build_structure(
                 }
             }
             Ok(sys)
+        }
+        StructureSpec::RandomAlloy {
+            lattice_constant,
+            replicas,
+            species,
+            seed,
+        } => {
+            if !lattice_constant.is_finite() || *lattice_constant <= 0.0 {
+                return Err(McpError::InvalidInput(
+                    "lattice_constant must be > 0".into(),
+                ));
+            }
+            if replicas.contains(&0) {
+                return Err(McpError::InvalidInput("replicas must be >= 1".into()));
+            }
+            let alloy: Vec<modena_core::AlloySpecies> = species
+                .iter()
+                .map(|s| modena_core::AlloySpecies {
+                    element: s.element.clone(),
+                    mass: s.mass,
+                    concentration: s.concentration,
+                })
+                .collect();
+            lattice::random_alloy(*lattice_constant, *replicas, &alloy, *seed)
+                .map_err(|e| McpError::InvalidInput(e.to_string()))
         }
     }
 }
@@ -847,6 +881,7 @@ fn structure_kind(s: &StructureSpec) -> &'static str {
     match s {
         StructureSpec::Fcc { .. } => "fcc",
         StructureSpec::Xyz { .. } => "xyz",
+        StructureSpec::RandomAlloy { .. } => "random_alloy",
     }
 }
 

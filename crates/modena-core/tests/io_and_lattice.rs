@@ -174,13 +174,20 @@ seed = 42
     }
 
     #[test]
-    fn real_units_rejected_in_phase1() {
+    fn real_units_converted_to_reduced() {
+        // M2: `units = "real"` is now accepted. The config is parsed and every
+        // numeric field is converted to reduced units using factors derived from
+        // the model's (σ, ε) and the structure mass. Here σ=ε=1 (so length and
+        // energy factors are 1) but the lattice constant and cutoff are in Å and
+        // must come through unchanged on the reduced side.
         let toml = r#"
 units = "real"
 [structure]
 type = "fcc"
 lattice_constant = 5.0
 replicas = [1, 1, 1]
+element = "Ar"
+mass = 39.948
 [model]
 type = "lennard_jones"
 sigma = 1.0
@@ -188,14 +195,40 @@ epsilon = 1.0
 cutoff = 2.5
 [integrator]
 type = "velocity_verlet"
-dt = 0.005
+dt = 1.0
 [run]
 steps = 1
+initial_temperature = 120.0
 "#;
-        let path = std::env::temp_dir().join(format!("modena_real_{}.toml", nanos()));
-        std::fs::write(&path, toml).unwrap();
-        let err = modena_core::InputConfig::from_path(&path);
-        assert!(err.is_err(), "real units should be rejected in Phase 1");
+        let cfg = modena_core::InputConfig::from_str(toml).unwrap();
+        // Factors were computed and stored for output conversion.
+        assert!(cfg.unit_factors.is_some(), "real units must record factors");
+        let f = cfg.unit_factors.unwrap();
+        // σ=ε=1 → reduced == real for length/energy; T_factor = 1/kB ≈ 503.2 K.
+        assert!((f.temperature - (1.0 / 0.001987204259)).abs() < 1e-3);
+        // initial_temperature 120 K → reduced 120 / 503.2 ≈ 0.2385.
+        assert!((cfg.run.initial_temperature - 120.0 / f.temperature).abs() < 1e-9);
+        // Lattice constant 5.0 Å / σ(=1) = 5.0 reduced.
+        match &cfg.structure {
+            modena_core::StructureSpec::Fcc {
+                lattice_constant, ..
+            } => {
+                assert!((lattice_constant - 5.0).abs() < 1e-12);
+            }
+            _ => panic!("expected fcc"),
+        }
+        // dt 1 ps → reduced 1 / τ. With σ=ε=1, m=39.948: τ = 0.0488882·√39.948 ≈ 0.3089 ps.
+        let tau = 0.0488882 * 39.948_f64.sqrt();
+        match &cfg.integrator {
+            modena_core::IntegratorSpec::VelocityVerlet { dt } => {
+                assert!(
+                    (dt - 1.0 / tau).abs() < 1e-9,
+                    "dt = {dt}, expected {}",
+                    1.0 / tau
+                );
+            }
+            _ => panic!("expected velocity_verlet"),
+        }
     }
 
     fn nanos() -> u128 {

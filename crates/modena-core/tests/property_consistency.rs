@@ -223,3 +223,219 @@ fn nve_drift_within_symplectic_bound() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// M2: conservation contract over every registered pair potential.
+//
+// Each analytic/tabulated potential shipped in M2 must independently satisfy
+// dU/dr = −F(r), produce finite outputs, and be continuous at the cutoff. The
+// single-potential proptest block above covers LJ; this block sweeps the rest.
+// ---------------------------------------------------------------------------
+
+use modena_core::{Buckingham, InterpKind, Morse, SoftSphere, Tabulated};
+
+/// One test instance of each registered potential, with a sample distance range
+/// that stays clear of the r → 0 singularity and inside the cutoff. The trailing
+/// bool is whether the potential satisfies the exact `dU/dr = −F` contract:
+/// analytic potentials do; the tabulated potential interpolates `U` and `F`
+/// independently, so the contract holds only at nodes (it is excluded from the
+/// gradient test but still checked for finiteness and cutoff continuity).
+#[allow(clippy::type_complexity)]
+fn registered_potentials() -> Vec<(&'static str, Box<dyn PairPotential>, f64, f64, bool)> {
+    // (name, potential, r_min, r_max, exact_gradient) — r_max < cutoff.
+    vec![
+        (
+            "lennard_jones",
+            Box::new(LennardJones::new(1.0, 1.0, 2.5).unwrap()),
+            0.95,
+            2.49,
+            true,
+        ),
+        (
+            "buckingham",
+            Box::new(Buckingham::new(1000.0, 1.0, 0.3, 2.5).unwrap()),
+            0.8,
+            2.49,
+            true,
+        ),
+        (
+            "morse",
+            Box::new(Morse::new(1.0, 2.0, 1.0, 2.5).unwrap()),
+            0.6,
+            2.49,
+            true,
+        ),
+        (
+            "soft_sphere",
+            Box::new(SoftSphere::new(1.0, 1.0, 12, 2.5).unwrap()),
+            0.95,
+            2.49,
+            true,
+        ),
+        (
+            "tabulated",
+            Box::new(
+                Tabulated::from_text(
+                    "# r      U       F
+0.9     10.0    50.0
+1.0      5.0    20.0
+1.5      0.5     2.0
+2.0      0.05    0.2
+2.5      0.0     0.0",
+                    InterpKind::Linear,
+                )
+                .unwrap(),
+            ),
+            0.95,
+            2.49,
+            false,
+        ),
+    ]
+}
+
+#[test]
+fn all_potentials_force_is_negative_energy_gradient() {
+    // dU/dr = −F(r) by central finite difference, for every *analytic* registered
+    // potential. (Tabulated is excluded — see `registered_potentials`.)
+    for (name, pot, r_min, r_max, exact) in registered_potentials() {
+        if !exact {
+            continue;
+        }
+        let dr = 1e-6_f64;
+        let n = 40;
+        for i in 0..n {
+            let r = r_min + (r_max - r_min) * i as f64 / (n - 1) as f64;
+            let u_at = |rr: f64| pot.energy_force(rr * rr, 0, 0).0;
+            let (_, f_over_r) = pot.energy_force(r * r, 0, 0);
+            let f_radial = f_over_r * r;
+            let du_dr = (u_at(r + dr) - u_at(r - dr)) / (2.0 * dr);
+            let err = (du_dr - (-f_radial)).abs();
+            assert!(
+                err < 1e-3 * (1.0 + f_radial.abs()),
+                "{name}: dU/dr={du_dr} != -F={f_radial} at r={r} (err {err:.3e})"
+            );
+        }
+    }
+}
+
+#[test]
+fn all_potentials_outputs_finite() {
+    for (name, pot, r_min, _r_max, _exact) in registered_potentials() {
+        let rc2 = pot.cutoff2();
+        let mut r2 = (r_min * r_min).min(rc2 - 1e-6);
+        while r2 < rc2 {
+            let (u, f_over_r) = pot.energy_force(r2, 0, 0);
+            assert!(u.is_finite(), "{name}: U not finite at r2={r2}: {u}");
+            assert!(
+                f_over_r.is_finite(),
+                "{name}: f not finite at r2={r2}: {f_over_r}"
+            );
+            r2 += 0.05;
+        }
+    }
+}
+
+#[test]
+fn all_potentials_continuous_at_cutoff() {
+    // Shifted-force: U(rc) ≈ 0 and F(rc) ≈ 0 exactly; just inside, the residual
+    // is O(eps) for F and O(eps²) for U.
+    for (name, pot, _r_min, _r_max, _exact) in registered_potentials() {
+        let rc = pot.cutoff();
+        let eps = 1e-4_f64;
+        let (u_rc, f_over_r_rc) = pot.energy_force(rc * rc, 0, 0);
+        assert!(u_rc.abs() < 1e-9, "{name}: U(rc)={u_rc} != 0");
+        assert!((f_over_r_rc * rc).abs() < 1e-9, "{name}: F(rc) != 0");
+        let (u_in, f_over_r_in) = pot.energy_force((rc - eps).powi(2), 0, 0);
+        let f_in = f_over_r_in * (rc - eps);
+        // F residual is O(eps); allow a generous multiple (tabulated interpolation
+        // can have a larger constant near the last node).
+        assert!(
+            f_in.abs() < 1.0,
+            "{name}: F just inside cutoff = {f_in}, unexpectedly large"
+        );
+        let _ = u_in;
+    }
+}
+
+#[test]
+fn multi_species_lj_cross_interaction_conserves_energy() {
+    // A two-species LJ system (Ar + a larger species) on a 3×3×3 FCC lattice,
+    // run NVE. Cross interactions use Lorentz–Berthelot. Energy drift must stay
+    // within the symplectic bound — the multi-species table lookup must not
+    // break force/energy consistency.
+    use modena_core::{LjOverride, LjTypeParams, MixingRule};
+    let pot = LennardJones::from_types(
+        &[
+            LjTypeParams {
+                sigma: 1.0,
+                epsilon: 1.0,
+            },
+            LjTypeParams {
+                sigma: 1.2,
+                epsilon: 0.5,
+            },
+        ],
+        MixingRule::LorentzBerthelot,
+        &[LjOverride {
+            types: [0, 1],
+            sigma: 1.1,
+            epsilon: 0.8,
+        }],
+        2.5,
+    )
+    .unwrap();
+    let cutoff = pot.cutoff();
+    let model = PairForceModel::new(pot);
+
+    let mut system = lattice::fcc(1.6796, [3, 3, 3], "Ar");
+    // Assign half the atoms species 1.
+    for i in 0..system.n() {
+        if i % 2 == 1 {
+            system.species[i] = 1;
+            system.masses[i] = 1.5;
+        }
+    }
+    for i in 0..system.n() {
+        let fi = i as f64;
+        system.velocities[i] = Vec3::new(
+            0.3 * fi.sin(),
+            0.3 * (1.3 * fi).cos(),
+            0.3 * (0.7 * fi).sin(),
+        );
+    }
+    // Remove COM drift.
+    let mut com = Vec3::zero();
+    let mut tm = 0.0;
+    for i in 0..system.n() {
+        com += system.velocities[i] * system.masses[i];
+        tm += system.masses[i];
+    }
+    com *= 1.0 / tm;
+    for i in 0..system.n() {
+        system.velocities[i] -= com;
+    }
+
+    let mut neighbors = NeighborList::new(cutoff);
+    let mut integrator = VelocityVerlet::new();
+    let mut virial = Virial::default();
+    let _ = model.compute(&mut system, &mut virial, &mut neighbors);
+
+    let dt = 0.002_f64;
+    let mut e0 = None;
+    let mut e_last = 0.0;
+    for _ in 0..1000 {
+        let e = integrator
+            .step(&mut system, &model, &mut neighbors, dt)
+            .unwrap();
+        if e0.is_none() {
+            e0 = Some(e.total);
+        }
+        e_last = e.total;
+    }
+    let e0 = e0.unwrap();
+    let drift = ((e_last - e0) / e0.abs().max(1e-12)).abs();
+    assert!(
+        drift < 1e-3,
+        "multi-species NVE drift {drift:.3e} exceeds 1e-3"
+    );
+}

@@ -41,6 +41,16 @@ impl Vec3 {
         self.norm2().sqrt()
     }
 
+    /// Cross product `self × other`.
+    #[inline]
+    pub fn cross(self, other: Self) -> Self {
+        Self([
+            self.0[1] * other.0[2] - self.0[2] * other.0[1],
+            self.0[2] * other.0[0] - self.0[0] * other.0[2],
+            self.0[0] * other.0[1] - self.0[1] * other.0[0],
+        ])
+    }
+
     /// Apply minimum-image wrapping for an orthorhombic box along each axis:
     /// `dx -= box * round(dx / box)`.
     #[inline]

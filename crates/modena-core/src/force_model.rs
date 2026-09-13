@@ -35,9 +35,10 @@ pub struct Virial {
 /// analytical pair, many-body, bonded, or a learned ML surrogate.
 pub trait ForceModel: Send + Sync {
     /// Compute forces, potential energy, and virial. The implementation reads
-    /// `system.positions` and **overwrites** `system.forces` (every entry) when
-    /// it is the sole model; under the M3 composite contract it **accumulates**
-    /// into `system.forces` instead. Returns the total potential energy.
+    /// `system.positions` and **accumulates** into `system.forces` and `virial`
+    /// (it does *not* zero them). The caller — the integrator, or
+    /// [`crate::composite::CompositeForceModel`] — zeroes forces + virial once
+    /// before the force pass. Returns this model's potential-energy contribution.
     fn compute(
         &self,
         system: &mut System,
@@ -137,9 +138,14 @@ impl ForceModel for PairForceModel {
                 },
             );
 
-        // Single model → overwrite forces.
-        system.forces.copy_from_slice(&forces);
-        virial.w = w;
+        // M3 accumulate contract: add into `system.forces` and `virial` (the
+        // caller — integrator or `CompositeForceModel` — zeroes both once before
+        // the force pass). This lets a pair model compose with bonded / Coulomb
+        // models without one clobbering the other.
+        for (dst, &src) in system.forces.iter_mut().zip(forces.iter()).take(3 * n) {
+            *dst += src;
+        }
+        virial.w += w;
         Ok(pe)
     }
 }

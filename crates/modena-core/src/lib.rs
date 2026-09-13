@@ -27,7 +27,10 @@
 // bearing, so we allow it crate-wide.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
+pub mod bonded;
+pub mod composite;
 pub mod conservation;
+pub mod constraints;
 pub mod error;
 pub mod force_model;
 pub mod integrator;
@@ -42,12 +45,16 @@ pub mod thermostat;
 pub mod units;
 pub mod vec3;
 
+pub use bonded::{Angle, Bond, BondedForceModel, BondedTopology, Dihedral, DihedralTerm};
+pub use composite::CompositeForceModel;
 pub use conservation::{ConservationReport, ConservationVerdict};
+pub use constraints::{Constraint, Constraints};
 pub use error::{ModenaError, Result};
 pub use force_model::{ForceModel, PairForceModel, Virial};
 pub use integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 pub use io::input::{
-    InputConfig, IntegratorSpec, ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
+    BondedTopologySpec, ConstraintSpec, ConstraintsSpec, InputConfig, IntegratorSpec, ModelSpec,
+    RunSpec, StructureSpec, ThermostatSpec,
 };
 pub use io::log::LogWriter;
 pub use io::xyz::{read_xyz, TrajectoryWriter};

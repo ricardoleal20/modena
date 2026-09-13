@@ -8,12 +8,16 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, StandardNormal};
 
+use crate::bonded::{Angle, Bond, BondedForceModel, BondedTopology, Dihedral, DihedralTerm};
+use crate::composite::CompositeForceModel;
 use crate::conservation::ConservationReport;
+use crate::constraints::{Constraint, Constraints};
 use crate::error::{ModenaError, Result};
 use crate::force_model::{ForceModel, PairForceModel, Virial};
 use crate::integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 use crate::io::input::{
-    InputConfig, IntegratorSpec, InterpKindSpec, ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
+    BondedTopologySpec, ConstraintsSpec, InputConfig, IntegratorSpec, InterpKindSpec, ModelSpec,
+    RunSpec, StructureSpec, ThermostatSpec,
 };
 use crate::io::log::LogWriter;
 use crate::io::xyz::{read_xyz, TrajectoryWriter};
@@ -92,9 +96,19 @@ impl Simulation {
 
         init_velocities(&mut system, config.run.initial_temperature, config.run.seed);
 
-        let (model, cutoff) = build_model(&config.model)?;
+        let (pair_model, cutoff) = build_model(&config.model)?;
+        // M3: if a bonded topology is present, wrap the pair model in a composite
+        // (pair + bonded). Otherwise the pair model stands alone.
+        let model: Box<dyn ForceModel> = match &config.topology {
+            Some(topo_spec) => {
+                let bonded = BondedForceModel::new(build_topology(topo_spec));
+                Box::new(CompositeForceModel::new(pair_model).with_bonded(bonded))
+            }
+            None => Box::new(pair_model),
+        };
         let mut neighbors = NeighborList::new(cutoff);
-        let integrator = build_integrator(&config.integrator);
+        let constraints = config.constraints.as_ref().map(build_constraints);
+        let integrator = build_integrator(&config.integrator, constraints);
         let thermostat = build_thermostat(&config.thermostat, &config.integrator);
 
         // Initial force evaluation so F(t) is cached for the first integrator
@@ -402,7 +416,7 @@ fn init_velocities(system: &mut System, temperature: f64, seed: u64) {
     }
 }
 
-fn build_model(spec: &ModelSpec) -> Result<(Box<dyn ForceModel>, f64)> {
+fn build_model(spec: &ModelSpec) -> Result<(PairForceModel, f64)> {
     let potential: Box<dyn PairPotential> = match spec {
         ModelSpec::LennardJones {
             sigma,
@@ -586,18 +600,93 @@ fn build_model(spec: &ModelSpec) -> Result<(Box<dyn ForceModel>, f64)> {
         }
     };
     let cutoff = potential.cutoff();
-    Ok((Box::new(PairForceModel::from_boxed(potential)), cutoff))
+    Ok((PairForceModel::from_boxed(potential), cutoff))
 }
 
-fn build_integrator(spec: &IntegratorSpec) -> Box<dyn Integrator> {
+fn build_integrator(
+    spec: &IntegratorSpec,
+    constraints: Option<Constraints>,
+) -> Box<dyn Integrator> {
     match spec {
-        IntegratorSpec::VelocityVerlet { .. } => Box::new(VelocityVerlet::new()),
+        IntegratorSpec::VelocityVerlet { .. } => match constraints {
+            Some(c) if !c.is_empty() => Box::new(VelocityVerlet::with_constraints(c)),
+            _ => Box::new(VelocityVerlet::new()),
+        },
         IntegratorSpec::LangevinBaoab {
             gamma,
             target_temperature,
             seed,
             ..
-        } => Box::new(LangevinBAOAB::new(*gamma, *target_temperature, *seed)),
+        } => match constraints {
+            Some(c) if !c.is_empty() => Box::new(LangevinBAOAB::with_constraints(
+                *gamma,
+                *target_temperature,
+                *seed,
+                c,
+            )),
+            _ => Box::new(LangevinBAOAB::new(*gamma, *target_temperature, *seed)),
+        },
+    }
+}
+
+/// Translate the TOML bonded-topology spec into the core `BondedTopology`.
+fn build_topology(spec: &BondedTopologySpec) -> BondedTopology {
+    let mut topo = BondedTopology::new();
+    topo.bonds = spec
+        .bonds
+        .iter()
+        .map(|b| Bond {
+            i: b.atoms[0],
+            j: b.atoms[1],
+            r0: b.r0,
+            k: b.k,
+        })
+        .collect();
+    topo.angles = spec
+        .angles
+        .iter()
+        .map(|a| Angle {
+            i: a.atoms[0],
+            j: a.atoms[1],
+            k: a.atoms[2],
+            theta0: a.theta0,
+            ktheta: a.k,
+        })
+        .collect();
+    topo.dihedrals = spec
+        .dihedrals
+        .iter()
+        .map(|d| Dihedral {
+            i: d.atoms[0],
+            j: d.atoms[1],
+            k: d.atoms[2],
+            l: d.atoms[3],
+            terms: d
+                .terms
+                .iter()
+                .map(|t| DihedralTerm {
+                    n: t.n,
+                    k: t.k,
+                    delta: t.delta,
+                })
+                .collect(),
+        })
+        .collect();
+    topo
+}
+
+/// Translate the TOML constraints spec into the core `Constraints`.
+fn build_constraints(spec: &ConstraintsSpec) -> Constraints {
+    Constraints {
+        bonds: spec
+            .bonds
+            .iter()
+            .map(|c| Constraint {
+                i: c.atoms[0],
+                j: c.atoms[1],
+                d: c.length,
+            })
+            .collect(),
     }
 }
 

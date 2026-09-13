@@ -237,6 +237,68 @@ initial_temperature = 120.0
             .unwrap()
             .as_nanos()
     }
+
+    #[test]
+    fn topology_and_constraints_parse() {
+        // M3: a TOML config with bonded topology + SHAKE constraints.
+        let toml = r#"
+units = "reduced"
+
+[structure]
+type = "fcc"
+lattice_constant = 5.0
+replicas = [1, 1, 1]
+element = "Ar"
+
+[model]
+type = "lennard_jones"
+sigma = 1.0
+epsilon = 1.0
+cutoff = 2.5
+
+[[topology.bonds]]
+atoms = [0, 1]
+r0 = 1.0
+k = 200.0
+
+[[topology.angles]]
+atoms = [0, 1, 2]
+theta0 = 1.9
+k = 50.0
+
+[[topology.dihedrals]]
+atoms = [0, 1, 2, 3]
+[[topology.dihedrals.terms]]
+n = 2
+k = 3.0
+delta = 0.0
+
+[[constraints.bonds]]
+atoms = [0, 1]
+length = 1.0
+
+[integrator]
+type = "velocity_verlet"
+dt = 0.005
+
+[run]
+steps = 10
+"#;
+        let cfg = modena_core::InputConfig::from_str(toml).unwrap();
+        let topo = cfg.topology.as_ref().expect("topology present");
+        assert_eq!(topo.bonds.len(), 1);
+        assert_eq!(topo.bonds[0].atoms, [0, 1]);
+        assert!((topo.bonds[0].r0 - 1.0).abs() < 1e-12);
+        assert_eq!(topo.angles.len(), 1);
+        assert_eq!(topo.angles[0].atoms, [0, 1, 2]);
+        assert_eq!(topo.dihedrals.len(), 1);
+        assert_eq!(topo.dihedrals[0].terms.len(), 1);
+        assert_eq!(topo.dihedrals[0].terms[0].n, 2);
+        let cons = cfg.constraints.as_ref().expect("constraints present");
+        assert_eq!(cons.bonds.len(), 1);
+        assert_eq!(cons.bonds[0].atoms, [0, 1]);
+        assert!((cons.bonds[0].length - 1.0).abs() < 1e-12);
+    }
 }
 
 mod thermo_tests {

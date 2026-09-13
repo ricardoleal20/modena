@@ -29,13 +29,20 @@ existing trait seams intact.
   (Lorentz–Berthelot + overrides), per-type `mass`.
 - Concentration / random-alloy structure builder.
 
-## M3 — Bonded interactions
+## M3 — Bonded interactions ✅
 
 - `BondedModel` (a second `ForceModel`): harmonic bonds, angular terms,
   proper/improper dihedrals.
 - Topology input (bonds/angles/dihedrals) alongside the structure file.
 - Bonded + non-bonded composition inside one `ForceModel` (force/energy/virial
   additive). Constraints (SHAKE/RATTLE) as an integrator post-step.
+
+**Verified:** every bonded term's force equals −∇U by central finite difference
+(proptest, 32 cases); per-term forces sum to zero (translation invariance);
+composite pair+bonded NVE drift < 1e-3; SHAKE+RATTLE holds constrained bond
+lengths to < 1e-8 and conserves energy on the constraint manifold (rigid
+dumbbell + constrained chain).
+
 
 ## M4 — Long-range electrostatics
 

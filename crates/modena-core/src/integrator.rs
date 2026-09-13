@@ -15,11 +15,19 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, StandardNormal};
 
+use crate::constraints::Constraints;
 use crate::error::Result;
 use crate::force_model::{ForceModel, Virial};
 use crate::neighbor::NeighborList;
 use crate::system::System;
 use crate::thermo::Energies;
+use crate::vec3::Vec3;
+
+/// SHAKE/RATTLE convergence: residual tolerance (length² for SHAKE, velocity·
+/// length for RATTLE) and the iteration cap. Tight defaults — the constrained
+/// molecule test verifies energy conservation on the constraint manifold.
+const SHAKE_TOL: f64 = 1e-10;
+const SHAKE_MAX_ITER: usize = 100;
 
 /// Time-stepping scheme. `step` advances the system by `dt` and returns the
 /// post-step thermodynamic observables.
@@ -34,11 +42,23 @@ pub trait Integrator: Send {
 }
 
 /// Velocity-Verlet (NVE). Expects F(t) already in `system.forces`.
-pub struct VelocityVerlet;
+///
+/// With `constraints` set, applies SHAKE to the post-drift positions and RATTLE
+/// to the post-kick velocities — the symplectic RATTLE scheme on the constraint
+/// manifold.
+pub struct VelocityVerlet {
+    pub constraints: Option<Constraints>,
+}
 
 impl VelocityVerlet {
     pub fn new() -> Self {
-        Self
+        Self { constraints: None }
+    }
+
+    pub fn with_constraints(constraints: Constraints) -> Self {
+        Self {
+            constraints: Some(constraints),
+        }
     }
 }
 
@@ -62,16 +82,44 @@ impl Integrator for VelocityVerlet {
         // First half-kick: v(t+dt/2) = v(t) + (dt/2) a(t), using cached F(t).
         kick(system, n, half);
 
+        // Reference positions for SHAKE (bond vectors at the start of the step).
+        let x_ref = if self.constraints.is_some() {
+            Some(system.positions.clone())
+        } else {
+            None
+        };
+
         // Drift: x(t+dt) = x(t) + dt v(t+dt/2), then wrap.
         drift(system, n, dt);
         system.wrap_positions();
 
-        // New forces F(t+dt), potential energy, virial.
+        // SHAKE: project the predicted positions onto the constraint manifold.
+        // The half-step velocity is then made consistent with the actual
+        // (constrained) displacement: v(t+dt/2) = (x(t+dt) − x(t)) / dt.
+        if let (Some(cons), Some(x_ref)) = (&self.constraints, x_ref.as_ref()) {
+            cons.shake(system, x_ref, SHAKE_TOL, SHAKE_MAX_ITER);
+            let box_size = system.box_size;
+            for i in 0..n {
+                let dx = box_size.min_image(
+                    system.pos(i) - Vec3::new(x_ref[3 * i], x_ref[3 * i + 1], x_ref[3 * i + 2]),
+                );
+                system.set_vel(i, dx * (1.0 / dt));
+            }
+        }
+
+        // New forces F(t+dt), potential energy, virial. The model accumulates
+        // (M3 contract), so zero forces first; `virial` is freshly zeroed.
+        system.forces.fill(0.0);
         let mut virial = Virial::default();
         let pe = model.compute(system, &mut virial, neighbors)?;
 
         // Second half-kick: v(t+dt) = v(t+dt/2) + (dt/2) a(t+dt).
         kick(system, n, half);
+
+        // RATTLE: project the velocities onto the constraint tangent.
+        if let Some(cons) = &self.constraints {
+            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER);
+        }
 
         Ok(Energies::from(system, pe, &virial))
     }
@@ -87,6 +135,7 @@ pub struct LangevinBAOAB {
     pub gamma: f64,
     pub target_temperature: f64,
     rng: StdRng,
+    pub constraints: Option<Constraints>,
 }
 
 impl LangevinBAOAB {
@@ -95,6 +144,21 @@ impl LangevinBAOAB {
             gamma,
             target_temperature,
             rng: StdRng::seed_from_u64(seed),
+            constraints: None,
+        }
+    }
+
+    pub fn with_constraints(
+        gamma: f64,
+        target_temperature: f64,
+        seed: u64,
+        constraints: Constraints,
+    ) -> Self {
+        Self {
+            gamma,
+            target_temperature,
+            rng: StdRng::seed_from_u64(seed),
+            constraints: Some(constraints),
         }
     }
 }
@@ -115,6 +179,14 @@ impl Integrator for LangevinBAOAB {
 
         // B½: v += (dt/2) F/m   (using cached F(t))
         kick(system, n, half);
+
+        // Reference positions for SHAKE (start of step).
+        let x_ref = if self.constraints.is_some() {
+            Some(system.positions.clone())
+        } else {
+            None
+        };
+
         // A½: x += (dt/2) v
         drift(system, n, half);
         // O: exact OU velocity update.
@@ -134,12 +206,31 @@ impl Integrator for LangevinBAOAB {
         drift(system, n, half);
         system.wrap_positions();
 
-        // Recompute F(t+dt).
+        // SHAKE on the post-drift positions; make the half-step velocity
+        // consistent with the constrained displacement.
+        if let (Some(cons), Some(x_ref)) = (&self.constraints, x_ref.as_ref()) {
+            cons.shake(system, x_ref, SHAKE_TOL, SHAKE_MAX_ITER);
+            let box_size = system.box_size;
+            for i in 0..n {
+                let dx = box_size.min_image(
+                    system.pos(i) - Vec3::new(x_ref[3 * i], x_ref[3 * i + 1], x_ref[3 * i + 2]),
+                );
+                system.set_vel(i, dx * (1.0 / dt));
+            }
+        }
+
+        // Recompute F(t+dt). Zero forces first (M3 accumulate contract).
+        system.forces.fill(0.0);
         let mut virial = Virial::default();
         let pe = model.compute(system, &mut virial, neighbors)?;
 
         // B½: v += (dt/2) F/m
         kick(system, n, half);
+
+        // RATTLE: project velocities onto the constraint tangent.
+        if let Some(cons) = &self.constraints {
+            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER);
+        }
 
         Ok(Energies::from(system, pe, &virial))
     }

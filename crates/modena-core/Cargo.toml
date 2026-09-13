@@ -14,6 +14,7 @@ thiserror = { workspace = true }
 rayon = { workspace = true }
 rand = { workspace = true }
 rand_distr = { workspace = true }
+libm = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

@@ -47,6 +47,11 @@ pub struct UnitFactors {
     /// Pressure factor: `P_reduced = P_atm / P_factor` where
     /// `P_factor = ε/σ³` converted to atm.
     pub pressure: f64,
+    /// Charge factor: `q_reduced = q_e · charge` where
+    /// `charge = √(COULOMB_KCAL_ANGSTROM · σ / ε)` so that, in reduced units,
+    /// `U = q_reduced_i · q_reduced_j / r_reduced`. Charges are input in units
+    /// of the elementary charge `e`.
+    pub charge: f64,
 }
 
 /// Boltzmann constant in kcal/(mol·K).
@@ -68,6 +73,11 @@ impl UnitFactors {
         let time = TIME_UNIT_PS * (mass_ref * sigma * sigma / epsilon).sqrt();
         let temperature = epsilon / KB_KCAL; // K per reduced unit
         let pressure = epsilon / (sigma * sigma * sigma) * KCAL_PER_A3_TO_ATM; // atm per reduced unit
+                                                                               // Reduced-charge factor: with real Coulomb U = COULOMB · q_i q_j / r
+                                                                               // (kcal/mol, r in Å, q in e), writing U/ε = (q·charge)² / (r/σ) requires
+                                                                               // q_reduced² = q² · COULOMB · σ / ε, i.e. charge = √(COULOMB · σ / ε).
+        const COULOMB_KCAL_ANGSTROM: f64 = 332.06371;
+        let charge = (COULOMB_KCAL_ANGSTROM * sigma / epsilon).sqrt();
         Self {
             sigma,
             epsilon,
@@ -75,6 +85,7 @@ impl UnitFactors {
             time,
             temperature,
             pressure,
+            charge,
         }
     }
 
@@ -136,6 +147,14 @@ impl UnitFactors {
     #[inline]
     pub fn to_reduced_pressure(&self, p: f64) -> f64 {
         p / self.pressure
+    }
+
+    /// Convert a real charge (in units of `e`) to reduced. The reduced Coulomb
+    /// energy is then `U = q_red_i · q_red_j / r_red` (multiplicative, since
+    /// charge is a composite unit: `q_red = q_e · charge`).
+    #[inline]
+    pub fn to_reduced_charge(&self, q: f64) -> f64 {
+        q * self.charge
     }
 
     /// Convert a reduced length back to real (Å).

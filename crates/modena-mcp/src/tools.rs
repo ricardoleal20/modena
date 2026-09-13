@@ -312,6 +312,19 @@ fn structure_definitions() -> serde_json::Value {
                         "element": { "type": "string" }
                     },
                     "required": ["type", "file", "box_size"]
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "type": { "const": "rock_salt" },
+                        "lattice_constant": { "type": "number" },
+                        "replicas": { "type": "array", "items": { "type": "integer" }, "minItems": 3, "maxItems": 3 },
+                        "cation": { "type": "string" },
+                        "anion": { "type": "string" },
+                        "cation_charge": { "type": "number" },
+                        "anion_charge": { "type": "number" }
+                    },
+                    "required": ["type", "lattice_constant", "replicas", "cation_charge", "anion_charge"]
                 }
             ]
         }
@@ -356,6 +369,15 @@ fn config_definitions() -> serde_json::Value {
                         "tau": { "type": "number" },
                         "seed": { "type": "integer" }
                     }
+                },
+                "electrostatics": {
+                    "type": "object",
+                    "properties": {
+                        "kappa": { "type": "number" },
+                        "real_cutoff": { "type": "number" },
+                        "kspace_cutoff": { "type": "number" }
+                    },
+                    "required": ["kappa", "real_cutoff", "kspace_cutoff"]
                 },
                 "run": {
                     "type": "object",

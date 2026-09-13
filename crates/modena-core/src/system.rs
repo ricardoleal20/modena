@@ -12,59 +12,173 @@ use crate::vec3::Vec3;
 
 /// Simulation box.
 ///
-/// Orthorhombic in M1–M6 (stored as the per-axis edge `size`). M7 introduces
-/// the [`min_image`](Self::min_image) seam: all minimum-image dispatch in the
-/// engine routes through `SimBox::min_image`, so M4 can swap in a triclinic
-/// cell (matrix + inverse + fractional wrap) behind the same method without
-/// touching callers. The orthorhombic path is the fast path used until then.
+/// Orthorhombic by default (stored as the per-axis edge `size`). M4 adds
+/// **triclinic** support: a general cell defined by three Bravais vectors
+/// `a`, `b`, `c` (the cell matrix `h = [a b c]`, columns). All minimum-image
+/// dispatch routes through [`min_image`](Self::min_image); the triclinic body
+/// converts to fractional coordinates `s = h⁻¹ r`, wraps there, and converts
+/// back, so callers (force kernel, neighbor search) are unchanged.
+///
+/// `size` is always the **orthorhombic bounding box** of the cell — for an
+/// orthorhombic cell it *is* the cell; for a triclinic cell it is the
+/// enclosing box (edge_k = |a_k|+|b_k|+|c_k|). The cell-list neighbor search
+/// bins atoms inside this bounding box; because a pair with true (min-image)
+/// distance < cutoff has every Cartesian component < cutoff ≤ the bounding-box
+/// cell size, the ±1 stencil still finds it, so triclinic neighbor search is
+/// correct (and only slightly conservative). `volume` returns `det h` for a
+/// triclinic cell, not the bounding-box product.
+///
+/// The M5 barostats scale `size` and positions isotropically and are
+/// orthorhombic-only; combining a triclinic box with a barostat is a
+/// configuration error (the cell matrix would not stay consistent).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SimBox {
+    /// Orthorhombic bounding-box edges. For an orthorhombic cell, the cell
+    /// edges themselves.
     pub size: Vec3,
+    /// Triclinic cell vectors `[a, b, c]` (the columns of `h`); `None` for an
+    /// orthorhombic cell.
+    vectors: Option<[Vec3; 3]>,
+    /// Cached inverse `h⁻¹` rows: fractional `s_k = inv_rows[k] · r`. `None`
+    /// for an orthorhombic cell.
+    inv_rows: Option<[Vec3; 3]>,
 }
 
 impl SimBox {
     pub fn cubic(edge: f64) -> Self {
         Self {
             size: Vec3::splat(edge),
+            vectors: None,
+            inv_rows: None,
         }
     }
 
     pub fn new(size: Vec3) -> Self {
-        Self { size }
+        Self {
+            size,
+            vectors: None,
+            inv_rows: None,
+        }
     }
 
     pub fn from_array(a: [f64; 3]) -> Self {
         Self {
             size: Vec3::new(a[0], a[1], a[2]),
+            vectors: None,
+            inv_rows: None,
+        }
+    }
+
+    /// Triclinic cell from the three Bravais vectors `[a, b, c]`. The
+    /// orthorhombic bounding box is computed and cached in `size`; the inverse
+    /// `h⁻¹` (as rows) is cached for fractional-coordinate wrapping.
+    pub fn triclinic(vectors: [Vec3; 3]) -> Self {
+        let [a, b, c] = vectors;
+        // Bounding-box edges: the cell vertices range over ±a ±b ±c, so the
+        // extent along axis k is |a_k| + |b_k| + |c_k|.
+        let size = Vec3::new(
+            a.0[0].abs() + b.0[0].abs() + c.0[0].abs(),
+            a.0[1].abs() + b.0[1].abs() + c.0[1].abs(),
+            a.0[2].abs() + b.0[2].abs() + c.0[2].abs(),
+        );
+        let inv_rows = inverse_rows(a, b, c);
+        Self {
+            size,
+            vectors: Some(vectors),
+            inv_rows: Some(inv_rows),
+        }
+    }
+
+    /// Whether this is a (non-orthorhombic) triclinic cell.
+    pub fn is_triclinic(&self) -> bool {
+        self.vectors.is_some()
+    }
+
+    /// The cell vectors `[a, b, c]` if triclinic.
+    pub fn vectors(&self) -> Option<&[Vec3; 3]> {
+        self.vectors.as_ref()
+    }
+
+    /// The real-space Bravais basis `[a, b, c]` (columns of `h`). For an
+    /// orthorhombic cell these are the axis-aligned box edges; for a triclinic
+    /// cell the stored vectors. Used by Ewald to bound the k-vector sphere.
+    pub fn basis(&self) -> [Vec3; 3] {
+        match self.vectors {
+            Some(v) => v,
+            None => [
+                Vec3::new(self.size.0[0], 0.0, 0.0),
+                Vec3::new(0.0, self.size.0[1], 0.0),
+                Vec3::new(0.0, 0.0, self.size.0[2]),
+            ],
+        }
+    }
+
+    /// The inverse-cell rows `h⁻¹` (fractional `s_k = row_k · r`). For an
+    /// orthorhombic cell, `1/L_k` along each axis. These are also the
+    /// reciprocal-lattice directions: a k-vector is `2π Σ n_k · row_k`.
+    pub fn inv_basis_rows(&self) -> [Vec3; 3] {
+        match self.inv_rows {
+            Some(v) => v,
+            None => [
+                Vec3::new(1.0 / self.size.0[0], 0.0, 0.0),
+                Vec3::new(0.0, 1.0 / self.size.0[1], 0.0),
+                Vec3::new(0.0, 0.0, 1.0 / self.size.0[2]),
+            ],
         }
     }
 
     pub fn volume(&self) -> f64 {
-        self.size.0[0] * self.size.0[1] * self.size.0[2]
+        match self.vectors {
+            Some([a, b, c]) => (a.cross(b).dot(c)).abs(),
+            None => self.size.0[0] * self.size.0[1] * self.size.0[2],
+        }
     }
 
     /// Minimum-image of a displacement vector. The single dispatch point for
-    /// periodic wrapping in the engine — M4's triclinic implementation replaces
-    /// the body here; callers (force kernel, neighbor search) are unchanged.
+    /// periodic wrapping in the engine. Orthorhombic fast path: per-axis
+    /// `dx -= L·round(dx/L)`. Triclinic: wrap in fractional coordinates.
     #[inline]
     pub fn min_image(&self, d: Vec3) -> Vec3 {
-        // Orthorhombic fast path: dx -= L * round(dx / L) per axis.
-        let mut r = d.0;
-        let b = self.size.0;
-        for k in 0..3 {
-            r[k] -= b[k] * (r[k] / b[k]).round();
+        match self.inv_rows {
+            None => {
+                let mut r = d.0;
+                let b = self.size.0;
+                for k in 0..3 {
+                    r[k] -= b[k] * (r[k] / b[k]).round();
+                }
+                Vec3(r)
+            }
+            Some(inv) => {
+                // Fractional displacement, wrapped to [-0.5, 0.5).
+                let s0 = wrap_half(inv[0].dot(d));
+                let s1 = wrap_half(inv[1].dot(d));
+                let s2 = wrap_half(inv[2].dot(d));
+                let [a, b, c] = self.vectors.unwrap();
+                a * s0 + b * s1 + c * s2
+            }
         }
-        Vec3(r)
     }
 
     /// Wrap a position into the primary periodic image.
     pub fn wrap(&self, r: Vec3) -> Vec3 {
-        let mut out = r.0;
-        let b = self.size.0;
-        for k in 0..3 {
-            out[k] -= b[k] * (out[k] / b[k]).floor();
+        match self.inv_rows {
+            None => {
+                let mut out = r.0;
+                let b = self.size.0;
+                for k in 0..3 {
+                    out[k] -= b[k] * (out[k] / b[k]).floor();
+                }
+                Vec3(out)
+            }
+            Some(inv) => {
+                // Fractional position, wrapped to [0, 1).
+                let s0 = wrap_unit(inv[0].dot(r));
+                let s1 = wrap_unit(inv[1].dot(r));
+                let s2 = wrap_unit(inv[2].dot(r));
+                let [a, b, c] = self.vectors.unwrap();
+                a * s0 + b * s1 + c * s2
+            }
         }
-        Vec3(out)
     }
 
     /// Scale one box axis by `factor` (used by M5 barostats; orthorhombic).
@@ -78,6 +192,36 @@ impl SimBox {
             self.size.0[k] *= factor;
         }
     }
+}
+
+/// Wrap `x` to the range `[-0.5, 0.5)` (minimum-image convention).
+#[inline]
+fn wrap_half(x: f64) -> f64 {
+    x - x.round()
+}
+
+/// Wrap `x` to the range `[0, 1)` (primary-cell convention).
+#[inline]
+fn wrap_unit(x: f64) -> f64 {
+    x - x.floor()
+}
+
+/// Inverse of the cell matrix `h = [a b c]` (columns), returned as its **rows**:
+/// `inv_rows[0]` is the first row of `h⁻¹`, so `s_k = inv_rows[k] · r`. Computed
+/// via the adjugate: `h⁻¹ = adj(h) / det(h)`, with `det = a · (b × c)`.
+fn inverse_rows(a: Vec3, b: Vec3, c: Vec3) -> [Vec3; 3] {
+    let det = a.cross(b).dot(c);
+    // Cofactors of h (columns a,b,c). Row k of h⁻¹ = (cofactor of column k) / det.
+    // For h with columns a,b,c, the inverse rows are:
+    //   row0 = (b × c) / det
+    //   row1 = (c × a) / det
+    //   row2 = (a × b) / det
+    let inv_det = 1.0 / det;
+    [
+        b.cross(c) * inv_det,
+        c.cross(a) * inv_det,
+        a.cross(b) * inv_det,
+    ]
 }
 
 /// The many-particle system.

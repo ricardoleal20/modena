@@ -15,6 +15,21 @@ pub struct AlloySpecies {
     pub mass: f64,
     /// Fraction of atoms (0..1); must sum to 1 across all species.
     pub concentration: f64,
+    /// Per-atom charge for this species (M4 electrostatics; reduced units).
+    /// Defaults to 0 (uncharged).
+    pub charge: f64,
+}
+
+impl AlloySpecies {
+    /// Convenience constructor for an uncharged species.
+    pub fn neutral(element: &str, mass: f64, concentration: f64) -> Self {
+        Self {
+            element: element.to_string(),
+            mass,
+            concentration,
+            charge: 0.0,
+        }
+    }
 }
 
 /// Build an FCC lattice with `replicas` unit cells per axis and lattice
@@ -101,9 +116,67 @@ pub fn random_alloy(
         let s = &species[sp as usize];
         system.species[i] = sp;
         system.masses[i] = s.mass;
+        system.charges[i] = s.charge;
         system.elements[i] = s.element.clone();
     }
     Ok(system)
+}
+
+/// Build a rocksalt (NaCl) lattice: two interpenetrating FCC sublattices. The
+/// cation occupies the FCC basis; the anion occupies the same basis shifted by
+/// `(a/2, 0, 0)` (the octahedral hole). Nearest cation–anion distance is `a/2`.
+/// Cations get `cation_charge`, anions `anion_charge` (M4 electrostatics). The
+/// conventional cell holds 4 cations + 4 anions (8 atoms); `replicas` tiles it.
+#[allow(clippy::too_many_arguments)]
+pub fn rocksalt(
+    a: f64,
+    replicas: [u32; 3],
+    cation_element: &str,
+    anion_element: &str,
+    cation_mass: f64,
+    anion_mass: f64,
+    cation_charge: f64,
+    anion_charge: f64,
+) -> System {
+    let fcc_basis = [
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.5, 0.5, 0.0),
+        Vec3::new(0.5, 0.0, 0.5),
+        Vec3::new(0.0, 0.5, 0.5),
+    ];
+    let shift = Vec3::new(0.5, 0.0, 0.0);
+    let [nx, ny, nz] = replicas;
+    let box_size = SimBox::new(Vec3::new(a * nx as f64, a * ny as f64, a * nz as f64));
+    let mut system = System::new(box_size);
+    let total = (nx * ny * nz * 8) as usize;
+    system.resize(total);
+    let mut idx = 0;
+    for ix in 0..nx {
+        for iy in 0..ny {
+            for iz in 0..nz {
+                let origin = Vec3::new(a * ix as f64, a * iy as f64, a * iz as f64);
+                for b in &fcc_basis {
+                    // Cation.
+                    let p = origin + *b * a;
+                    system.set_pos(idx, p);
+                    system.masses[idx] = cation_mass;
+                    system.charges[idx] = cation_charge;
+                    system.species[idx] = 0;
+                    system.elements[idx] = cation_element.to_string();
+                    idx += 1;
+                    // Anion (cation position + (a/2,0,0)).
+                    let p = origin + (*b + shift) * a;
+                    system.set_pos(idx, p);
+                    system.masses[idx] = anion_mass;
+                    system.charges[idx] = anion_charge;
+                    system.species[idx] = 1;
+                    system.elements[idx] = anion_element.to_string();
+                    idx += 1;
+                }
+            }
+        }
+    }
+    system
 }
 
 #[cfg(test)]
@@ -125,16 +198,8 @@ mod tests {
             1.0,
             [3, 3, 3],
             &[
-                AlloySpecies {
-                    element: "Ar".into(),
-                    mass: 39.948,
-                    concentration: 0.8,
-                },
-                AlloySpecies {
-                    element: "Ne".into(),
-                    mass: 20.180,
-                    concentration: 0.2,
-                },
+                AlloySpecies::neutral("Ar", 39.948, 0.8),
+                AlloySpecies::neutral("Ne", 20.180, 0.2),
             ],
             42,
         )
@@ -160,16 +225,8 @@ mod tests {
             1.0,
             [3, 3, 3],
             &[
-                AlloySpecies {
-                    element: "Ar".into(),
-                    mass: 39.948,
-                    concentration: 0.8,
-                },
-                AlloySpecies {
-                    element: "Ne".into(),
-                    mass: 20.180,
-                    concentration: 0.2,
-                },
+                AlloySpecies::neutral("Ar", 39.948, 0.8),
+                AlloySpecies::neutral("Ne", 20.180, 0.2),
             ],
             42,
         )
@@ -179,16 +236,25 @@ mod tests {
 
     #[test]
     fn random_alloy_rejects_bad_concentration() {
-        let err = random_alloy(
-            1.0,
-            [2, 2, 2],
-            &[AlloySpecies {
-                element: "Ar".into(),
-                mass: 1.0,
-                concentration: 0.5,
-            }],
-            42,
-        );
+        let err = random_alloy(1.0, [2, 2, 2], &[AlloySpecies::neutral("Ar", 1.0, 0.5)], 42);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn rocksalt_structure_and_charges() {
+        let sys = rocksalt(2.0, [2, 2, 2], "Na", "Cl", 1.0, 1.0, 1.0, -1.0);
+        // 2×2×2 conventional cells × 8 atoms = 64 atoms; 32 cations, 32 anions.
+        assert_eq!(sys.n(), 64);
+        let n_cat = sys.charges.iter().filter(|&&q| q == 1.0).count();
+        let n_an = sys.charges.iter().filter(|&&q| q == -1.0).count();
+        assert_eq!(n_cat, 32);
+        assert_eq!(n_an, 32);
+        // Neutral.
+        let total_q: f64 = sys.charges.iter().sum();
+        assert!(total_q.abs() < 1e-12);
+        // Nearest cation–anion distance is a/2 = 1.0 (atom 0 cation at origin,
+        // atom 1 anion at (a/2,0,0)).
+        let d = sys.pos(0) - sys.pos(1);
+        assert!((d.norm() - 1.0).abs() < 1e-12);
     }
 }

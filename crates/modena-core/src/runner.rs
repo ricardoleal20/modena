@@ -14,15 +14,16 @@ use crate::composite::CompositeForceModel;
 use crate::conservation::ConservationReport;
 use crate::constraints::{Constraint, Constraints};
 use crate::error::{ModenaError, Result};
+use crate::ewald::EwaldForceModel;
 use crate::force_model::{ForceModel, PairForceModel, Virial};
 use crate::integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 use crate::io::input::{
-    BarostatSpec, BondedTopologySpec, ConstraintsSpec, InputConfig, IntegratorSpec, InterpKindSpec,
-    ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
+    BarostatSpec, BondedTopologySpec, ConstraintsSpec, EwaldSpec, InputConfig, IntegratorSpec,
+    InterpKindSpec, ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
 };
 use crate::io::log::LogWriter;
 use crate::io::xyz::{read_xyz, TrajectoryWriter};
-use crate::lattice::{fcc, random_alloy, AlloySpecies};
+use crate::lattice::{fcc, random_alloy, rocksalt, AlloySpecies};
 use crate::neighbor::NeighborList;
 use crate::nose_hoover::NoseHooverChain;
 use crate::potential::{
@@ -100,16 +101,29 @@ impl Simulation {
         init_velocities(&mut system, config.run.initial_temperature, config.run.seed);
 
         let (pair_model, cutoff) = build_model(&config.model)?;
-        // M3: if a bonded topology is present, wrap the pair model in a composite
-        // (pair + bonded). Otherwise the pair model stands alone.
-        let model: Box<dyn ForceModel> = match &config.topology {
-            Some(topo_spec) => {
-                let bonded = BondedForceModel::new(build_topology(topo_spec));
-                Box::new(CompositeForceModel::new(pair_model).with_bonded(bonded))
-            }
-            None => Box::new(pair_model),
+        let ewald = build_ewald(&config.electrostatics)?;
+        // The shared neighbor list must cover the largest cutoff any sub-model
+        // uses — the pair cutoff or the Ewald real-space cutoff.
+        let neighbor_cutoff = match &ewald {
+            Some(e) => cutoff.max(e.real_cutoff()),
+            None => cutoff,
         };
-        let mut neighbors = NeighborList::new(cutoff);
+        // Wrap in a composite only when there is something to compose (bonded
+        // topology or Ewald); otherwise the bare pair model stands alone.
+        let model: Box<dyn ForceModel> = match (&config.topology, &ewald) {
+            (None, None) => Box::new(pair_model),
+            _ => {
+                let mut comp = CompositeForceModel::new(pair_model);
+                if let Some(topo_spec) = &config.topology {
+                    comp = comp.with_bonded(BondedForceModel::new(build_topology(topo_spec)));
+                }
+                if let Some(e) = ewald {
+                    comp = comp.with_ewald(e);
+                }
+                Box::new(comp)
+            }
+        };
+        let mut neighbors = NeighborList::new(neighbor_cutoff);
         let constraints = config.constraints.as_ref().map(build_constraints);
         let integrator = build_integrator(&config.integrator, constraints);
         let thermostat = build_thermostat(&config.thermostat, &config.integrator);
@@ -352,11 +366,17 @@ fn build_system(spec: &StructureSpec, base_dir: &Path) -> Result<System> {
             replicas,
             element,
             mass,
+            charge,
         } => {
             let mut sys = fcc(*lattice_constant, *replicas, element);
             if let Some(m) = mass {
                 for ma in sys.masses.iter_mut() {
                     *ma = *m;
+                }
+            }
+            if let Some(q) = charge {
+                for c in sys.charges.iter_mut() {
+                    *c = *q;
                 }
             }
             Ok(sys)
@@ -366,6 +386,7 @@ fn build_system(spec: &StructureSpec, base_dir: &Path) -> Result<System> {
             box_size,
             element,
             mass,
+            charge,
         } => {
             let path = base_dir.join(file);
             let mut sys = read_xyz(&path, SimBox::from_array(*box_size))?;
@@ -378,6 +399,11 @@ fn build_system(spec: &StructureSpec, base_dir: &Path) -> Result<System> {
             if let Some(m) = mass {
                 for ma in sys.masses.iter_mut() {
                     *ma = *m;
+                }
+            }
+            if let Some(q) = charge {
+                for c in sys.charges.iter_mut() {
+                    *c = *q;
                 }
             }
             Ok(sys)
@@ -394,10 +420,30 @@ fn build_system(spec: &StructureSpec, base_dir: &Path) -> Result<System> {
                     element: s.element.clone(),
                     mass: s.mass,
                     concentration: s.concentration,
+                    charge: s.charge,
                 })
                 .collect();
             random_alloy(*lattice_constant, *replicas, &alloy, *seed)
         }
+        StructureSpec::RockSalt {
+            lattice_constant,
+            replicas,
+            cation,
+            anion,
+            cation_mass,
+            anion_mass,
+            cation_charge,
+            anion_charge,
+        } => Ok(rocksalt(
+            *lattice_constant,
+            *replicas,
+            cation,
+            anion,
+            cation_mass.unwrap_or(1.0),
+            anion_mass.unwrap_or(1.0),
+            *cation_charge,
+            *anion_charge,
+        )),
     }
 }
 
@@ -725,6 +771,19 @@ fn build_constraints(spec: &ConstraintsSpec) -> Constraints {
                 d: c.length,
             })
             .collect(),
+    }
+}
+
+/// Translate the TOML Ewald spec into an `EwaldForceModel`. `None` → no
+/// electrostatics (the model composes as a no-op).
+fn build_ewald(spec: &Option<EwaldSpec>) -> Result<Option<EwaldForceModel>> {
+    match spec {
+        Some(e) => Ok(Some(EwaldForceModel::new(
+            e.kappa,
+            e.real_cutoff,
+            e.kspace_cutoff,
+        )?)),
+        None => Ok(None),
     }
 }
 

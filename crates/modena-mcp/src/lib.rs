@@ -353,6 +353,9 @@ impl RunManager {
                 .first()
                 .map(|s| s.element.clone())
                 .unwrap_or_else(|| "alloy".to_string()),
+            StructureSpec::RockSalt { cation, anion, .. } => {
+                format!("{cation}-{anion}")
+            }
         };
         Ok(BuildSystemResult {
             atoms: n,
@@ -378,6 +381,9 @@ impl RunManager {
             } => 4 * (replicas[0] as usize) * (replicas[1] as usize) * (replicas[2] as usize),
             StructureSpec::RandomAlloy { replicas, .. } => {
                 4 * (replicas[0] as usize) * (replicas[1] as usize) * (replicas[2] as usize)
+            }
+            StructureSpec::RockSalt { replicas, .. } => {
+                8 * (replicas[0] as usize) * (replicas[1] as usize) * (replicas[2] as usize)
             }
             StructureSpec::Xyz { .. } => {
                 // Without reading the file, fall back to a nominal count.
@@ -774,10 +780,40 @@ fn build_structure(
                     element: s.element.clone(),
                     mass: s.mass,
                     concentration: s.concentration,
+                    charge: s.charge,
                 })
                 .collect();
             lattice::random_alloy(*lattice_constant, *replicas, &alloy, *seed)
                 .map_err(|e| McpError::InvalidInput(e.to_string()))
+        }
+        StructureSpec::RockSalt {
+            lattice_constant,
+            replicas,
+            cation,
+            anion,
+            cation_mass,
+            anion_mass,
+            cation_charge,
+            anion_charge,
+        } => {
+            if !lattice_constant.is_finite() || *lattice_constant <= 0.0 {
+                return Err(McpError::InvalidInput(
+                    "lattice_constant must be > 0".into(),
+                ));
+            }
+            if replicas.contains(&0) {
+                return Err(McpError::InvalidInput("replicas must be >= 1".into()));
+            }
+            Ok(lattice::rocksalt(
+                *lattice_constant,
+                *replicas,
+                cation,
+                anion,
+                cation_mass.unwrap_or(1.0),
+                anion_mass.unwrap_or(1.0),
+                *cation_charge,
+                *anion_charge,
+            ))
         }
     }
 }
@@ -883,6 +919,7 @@ fn structure_kind(s: &StructureSpec) -> &'static str {
         StructureSpec::Fcc { .. } => "fcc",
         StructureSpec::Xyz { .. } => "xyz",
         StructureSpec::RandomAlloy { .. } => "random_alloy",
+        StructureSpec::RockSalt { .. } => "rocksalt",
     }
 }
 

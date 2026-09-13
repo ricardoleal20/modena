@@ -53,13 +53,15 @@ dumbbell + constrained chain).
 - Triclinic boxes (general cell tensors) replacing the orthorhombic assumption.
 - Charge assignment per atom (`system.charges`).
 
-## M5 — Ensembles & sampling
+## M5 — Ensembles & sampling ✅
 
 - NPT: Parrinello–Rahman and Berendsen barostats; isotropic + anisotropic.
-- Nosé–Hoover chain thermostat (true canonical NVT).
-- Hamiltonian / configurational-bias Monte Carlo moves as an alternate
-  `Integrator` for enhanced sampling.
+- Nosé–Hoover chain thermostat (true canonical NVT, Suzuki–Yoshida 3-fold,
+  hierarchical chain friction; extended Hamiltonian H* conserved to ~1e-4).
+- Monte Carlo volume barostat (Metropolis NPT) as an alternate coupling.
 - Replica-exchange (parallel tempering) driver.
+- Verified: `tests/ensembles.rs` — NHC H* conservation, replica-exchange swap
+  acceptance, Berendsen barostat moves the box via the runner.
 
 ## M6 — Python client (PyO3)
 

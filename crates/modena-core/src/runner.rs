@@ -8,6 +8,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, StandardNormal};
 
+use crate::barostat::{Barostat, BerendsenBarostat, NoneBarostat, ParrinelloRahman};
 use crate::bonded::{Angle, Bond, BondedForceModel, BondedTopology, Dihedral, DihedralTerm};
 use crate::composite::CompositeForceModel;
 use crate::conservation::ConservationReport;
@@ -16,13 +17,14 @@ use crate::error::{ModenaError, Result};
 use crate::force_model::{ForceModel, PairForceModel, Virial};
 use crate::integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 use crate::io::input::{
-    BondedTopologySpec, ConstraintsSpec, InputConfig, IntegratorSpec, InterpKindSpec, ModelSpec,
-    RunSpec, StructureSpec, ThermostatSpec,
+    BarostatSpec, BondedTopologySpec, ConstraintsSpec, InputConfig, IntegratorSpec, InterpKindSpec,
+    ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
 };
 use crate::io::log::LogWriter;
 use crate::io::xyz::{read_xyz, TrajectoryWriter};
 use crate::lattice::{fcc, random_alloy, AlloySpecies};
 use crate::neighbor::NeighborList;
+use crate::nose_hoover::NoseHooverChain;
 use crate::potential::{
     Buckingham, BuckinghamOverride, BuckinghamTypeParams, InterpKind, LennardJones, LjOverride,
     LjTypeParams, Morse, MorseOverride, MorseTypeParams, PairPotential, SoftSphere,
@@ -39,6 +41,7 @@ pub struct Simulation {
     model: Box<dyn ForceModel>,
     integrator: Box<dyn Integrator>,
     thermostat: Box<dyn Thermostat>,
+    barostat: Box<dyn Barostat>,
     neighbors: NeighborList,
     dt: f64,
     steps: usize,
@@ -110,6 +113,7 @@ impl Simulation {
         let constraints = config.constraints.as_ref().map(build_constraints);
         let integrator = build_integrator(&config.integrator, constraints);
         let thermostat = build_thermostat(&config.thermostat, &config.integrator);
+        let barostat = build_barostat(&config.barostat);
 
         // Initial force evaluation so F(t) is cached for the first integrator
         // half-kick.
@@ -119,6 +123,7 @@ impl Simulation {
         let dt = match &config.integrator {
             IntegratorSpec::VelocityVerlet { dt } => *dt,
             IntegratorSpec::LangevinBaoab { dt, .. } => *dt,
+            IntegratorSpec::NoseHooverChain { dt, .. } => *dt,
         };
 
         let trajectory_writer = open_trajectory(&config.run, base_dir)?;
@@ -129,6 +134,7 @@ impl Simulation {
             model,
             integrator,
             thermostat,
+            barostat,
             neighbors,
             dt,
             steps: config.run.steps,
@@ -200,6 +206,15 @@ impl Simulation {
             self.thermostat.apply(&mut self.system, dt);
             if !is_none_thermostat(&*self.thermostat) {
                 // Velocities changed → recompute kinetic observables.
+                e = Energies::from(&self.system, self.current_pe, &self.current_virial);
+            }
+
+            // Pressure coupling: scales the box + positions. Only `NoneBarostat`
+            // is a true no-op; any real barostat changes V (and thus the
+            // pressure/KE observables), so recompute the thermo snapshot.
+            self.barostat
+                .apply(&mut self.system, &self.current_virial, dt);
+            if !is_none_barostat(&*self.barostat) {
                 e = Energies::from(&self.system, self.current_pe, &self.current_virial);
             }
             conservation.observe(e.total);
@@ -320,6 +335,14 @@ fn is_none_thermostat(t: &dyn Thermostat) -> bool {
     // adding a `is_noop()` method to the trait. Cheap, called once per step.
     let type_name = std::any::type_name_of_val(t);
     type_name.contains("NoneThermostat")
+}
+
+fn is_none_barostat(b: &dyn Barostat) -> bool {
+    // `NoneBarostat` is the constant-volume no-op. (`MonteCarloBarostat::apply`
+    // is also a no-op by design, but it is never constructed by `build_barostat`
+    // — MC volume moves run through its own `attempt` API, not the runner.)
+    let type_name = std::any::type_name_of_val(b);
+    type_name.contains("NoneBarostat")
 }
 
 fn build_system(spec: &StructureSpec, base_dir: &Path) -> Result<System> {
@@ -626,6 +649,21 @@ fn build_integrator(
             )),
             _ => Box::new(LangevinBAOAB::new(*gamma, *target_temperature, *seed)),
         },
+        IntegratorSpec::NoseHooverChain {
+            target_temperature,
+            tau,
+            chain_len,
+            ..
+        } => {
+            // NHC handles its own temperature control (it *is* the thermostat),
+            // so the separate `Thermostat` slot is forced to `NoneThermostat`
+            // in `build_thermostat`. Constraints compose via SHAKE/RATTLE.
+            let nhc = NoseHooverChain::new(*target_temperature, *tau, *chain_len);
+            match constraints {
+                Some(c) if !c.is_empty() => Box::new(nhc.with_constraints(c)),
+                _ => Box::new(nhc),
+            }
+        }
     }
 }
 
@@ -690,12 +728,48 @@ fn build_constraints(spec: &ConstraintsSpec) -> Constraints {
     }
 }
 
+/// Translate the TOML barostat spec into a `Barostat`. `None` → constant-volume
+/// (`NoneBarostat`), applied as a no-op each step.
+fn build_barostat(spec: &Option<BarostatSpec>) -> Box<dyn Barostat> {
+    match spec {
+        Some(BarostatSpec::Berendsen {
+            target_pressure,
+            tau,
+            compressibility,
+            anisotropic,
+        }) => {
+            let mut b = BerendsenBarostat::new(*target_pressure, *tau, *compressibility);
+            if *anisotropic {
+                b = b.anisotropic();
+            }
+            Box::new(b)
+        }
+        Some(BarostatSpec::ParrinelloRahman {
+            target_pressure,
+            tau,
+            target_temperature,
+            anisotropic,
+        }) => {
+            let mut b = ParrinelloRahman::new(*target_pressure, *tau, *target_temperature);
+            if *anisotropic {
+                b = b.anisotropic();
+            }
+            Box::new(b)
+        }
+        None => Box::new(NoneBarostat),
+    }
+}
+
 fn build_thermostat(
     spec: &Option<ThermostatSpec>,
     integrator: &IntegratorSpec,
 ) -> Box<dyn Thermostat> {
-    // Langevin handles its own temperature control; ignore any thermostat block.
-    if matches!(integrator, IntegratorSpec::LangevinBaoab { .. }) {
+    // Langevin and the Nosé–Hoover chain handle their own temperature control;
+    // ignore any thermostat block for them.
+    if matches!(
+        integrator,
+        IntegratorSpec::LangevinBaoab { .. } | IntegratorSpec::NoseHooverChain { .. }
+    ) {
         return Box::new(NoneThermostat);
     }
     match spec {

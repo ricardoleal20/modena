@@ -338,7 +338,9 @@ fn config_definitions() -> serde_json::Value {
                 "integrator": {
                     "type": "object",
                     "properties": {
-                        "type": { "enum": ["velocity_verlet", "langevin_baoab"] },
+                        "type": {
+                            "enum": ["velocity_verlet", "langevin_baoab", "nose_hoover_chain"]
+                        },
                         "dt": { "type": "number" },
                         "gamma": { "type": "number" },
                         "target_temperature": { "type": "number" },

@@ -860,6 +860,7 @@ fn integrator_kind(s: &IntegratorSpec) -> &'static str {
     match s {
         IntegratorSpec::VelocityVerlet { .. } => "velocity_verlet",
         IntegratorSpec::LangevinBaoab { .. } => "langevin_baoab",
+        IntegratorSpec::NoseHooverChain { .. } => "nose_hoover_chain",
     }
 }
 

@@ -99,12 +99,26 @@ model in `CompositeForceModel` and the runner (`tests/electrostatics.rs`).
   expensive reference periodically (Δ-learning, multi-scale).
 - Active-learning hooks (per-atom uncertainty → refit trigger).
 
-## M9 — Parallel decomposition
+## M9 — Parallel decomposition ✅
 
 - Spatial domain decomposition across MPI ranks (`mpi` crate) for >10⁶ atoms.
 - Per-rank cell lists + ghost-atom exchange.
 - Load balancing; GPU offload of the pair kernel (`wgpu`/CUDA) as a
   `ForceModel` backend.
+
+**Done.** `decomp` (default, pure Rust) partitions an orthorhombic box into a
+`nr[0]×nr[1]×nr[2]` rank grid; each rank owns its subdomain atoms and imports a
+one-shell ghost halo from the 26 periodic neighbors (subdomain edge ≥ cutoff).
+Pair work is partitioned by lower-global-id ownership, so the decomposed
+force/energy/virial summed over ranks is bit-identical to the serial half-list
+evaluation — verified in-process (`tests/decomp.rs`: single/multi-rank == serial,
+halo sufficiency, post-migration match, decomposed-NVE conservation) and across
+two real MPI ranks (`tests/mpi_decomp.rs` under `mpiexec -n 2`). The `mpi`
+feature adds a real ghost-exchange driver (deadlock-free canonical send/recv
+ordering + reverse ghost-force reduction); the `gpu` feature adds a
+`GpuPairForceModel` WGSL compute-shader LJ backend (`f32`, all-pairs) returning
+`None` when no adapter is present so CI skips gracefully. Both features are
+behind flags so the default build needs no native MPI/GPU runtime.
 
 ## Non-goals (for now)
 

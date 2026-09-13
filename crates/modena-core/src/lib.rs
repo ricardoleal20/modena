@@ -32,12 +32,17 @@ pub mod bonded;
 pub mod composite;
 pub mod conservation;
 pub mod constraints;
+pub mod decomp;
 pub mod error;
 pub mod ewald;
 pub mod force_model;
+#[cfg(feature = "gpu")]
+pub mod gpu_comm;
 pub mod integrator;
 pub mod io;
 pub mod lattice;
+#[cfg(feature = "mpi")]
+pub mod mpi_comm;
 pub mod neighbor;
 pub mod nose_hoover;
 pub mod potential;
@@ -56,9 +61,14 @@ pub use bonded::{Angle, Bond, BondedForceModel, BondedTopology, Dihedral, Dihedr
 pub use composite::CompositeForceModel;
 pub use conservation::{ConservationReport, ConservationVerdict};
 pub use constraints::{Constraint, Constraints};
+pub use decomp::{
+    Communicator, DomainDecomposition, DomainForceModel, LocalCommunicator, RankGrid,
+};
 pub use error::{ModenaError, Result};
 pub use ewald::EwaldForceModel;
 pub use force_model::{ForceModel, PairForceModel, Virial};
+#[cfg(feature = "gpu")]
+pub use gpu_comm::GpuPairForceModel;
 pub use integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 pub use io::input::{
     BondedTopologySpec, ConstraintSpec, ConstraintsSpec, EwaldSpec, InputConfig, IntegratorSpec,

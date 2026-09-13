@@ -23,14 +23,14 @@ fn pair_energy_and_forces_are_correct() {
     let (model, cutoff) = build_lj();
     let mut sys = System::new(SimBox::cubic(10.0));
     sys.resize(2);
-    sys.positions[0] = Vec3::new(0.0, 0.0, 0.0);
-    sys.positions[1] = Vec3::new(1.5, 0.0, 0.0);
+    sys.set_pos(0, Vec3::new(0.0, 0.0, 0.0));
+    sys.set_pos(1, Vec3::new(1.5, 0.0, 0.0));
 
     let mut nl = NeighborList::new(cutoff);
     let mut virial = Virial::default();
     let pe = model.compute(&mut sys, &mut virial, &mut nl).unwrap();
 
-    // Expected single-pair energy (the kernel halves the double-ended sum).
+    // Expected single-pair energy (the half list evaluates the pair once).
     let r = 1.5_f64;
     let (u_expected, _) = {
         let lj = LennardJones::new(1.0, 1.0, 2.5).unwrap();
@@ -42,8 +42,8 @@ fn pair_energy_and_forces_are_correct() {
     );
 
     // Newton's third law: equal and opposite.
-    let f0 = sys.forces[0];
-    let f1 = sys.forces[1];
+    let f0 = sys.force(0);
+    let f1 = sys.force(1);
     assert!(
         (f0 + f1).norm() < 1e-9,
         "forces not equal/opposite: {f0:?} {f1:?}"
@@ -73,16 +73,16 @@ fn nve_energy_is_conserved() {
             0.5 * (1.3 * fi).cos(),
             0.5 * (0.7 * fi).sin(),
         );
-        system.velocities[i] = v;
+        system.set_vel(i, v);
     }
     // Remove COM drift.
     let mut com = modena_core::Vec3::zero();
-    for v in &system.velocities {
-        com += *v;
+    for i in 0..system.n() {
+        com += system.vel(i);
     }
     com *= 1.0 / system.n() as f64;
-    for v in system.velocities.iter_mut() {
-        *v -= com;
+    for i in 0..system.n() {
+        system.set_vel(i, system.vel(i) - com);
     }
 
     let mut neighbors = NeighborList::new(cutoff);
@@ -129,16 +129,16 @@ fn nvt_langevin_stabilizes_temperature() {
     let (model, cutoff) = build_lj();
     let mut system = lattice::fcc(1.6796, [2, 2, 2], "Ar");
     // Hot start.
-    for v in system.velocities.iter_mut() {
-        *v = modena_core::Vec3::new(2.0, 2.0, 2.0);
+    for i in 0..system.n() {
+        system.set_vel(i, modena_core::Vec3::new(2.0, 2.0, 2.0));
     }
     let mut com = modena_core::Vec3::zero();
-    for v in &system.velocities {
-        com += *v;
+    for i in 0..system.n() {
+        com += system.vel(i);
     }
     com *= 1.0 / system.n() as f64;
-    for v in system.velocities.iter_mut() {
-        *v -= com;
+    for i in 0..system.n() {
+        system.set_vel(i, system.vel(i) - com);
     }
 
     let mut neighbors = NeighborList::new(cutoff);

@@ -62,7 +62,10 @@ pub fn read_xyz<P: AsRef<Path>>(path: P, box_size: SimBox) -> Result<System> {
 
     let mut system = System::new(box_size);
     system.resize(n);
-    system.positions = positions;
+    // Flatten the per-atom Vec3 positions into the SoA buffer.
+    for (i, p) in positions.iter().enumerate() {
+        system.set_pos(i, *p);
+    }
     system.elements = elements;
     Ok(system)
 }
@@ -110,7 +113,7 @@ impl TrajectoryWriter {
         writeln!(self.writer, "step={step} time={time:.6} {comment}")?;
         for i in 0..n {
             let el = system.elements.get(i).map(|s| s.as_str()).unwrap_or("X");
-            let p = system.positions[i];
+            let p = system.pos(i);
             writeln!(
                 self.writer,
                 "{el} {:.8} {:.8} {:.8}",

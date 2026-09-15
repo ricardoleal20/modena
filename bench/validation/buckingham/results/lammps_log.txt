@@ -1,0 +1,74 @@
+LAMMPS (22 Jul 2025 - Update 6)
+Lattice spacing in x,y,z = 3.000001 3.000001 3.000001
+Created orthogonal box = (0 0 0) to (18.000006 18.000006 18.000006)
+  1 by 1 by 1 MPI processor grid
+Created 864 atoms
+  using lattice units in orthogonal box = (0 0 0) to (18.000006 18.000006 18.000006)
+  create_atoms CPU = 0.000 seconds
+Generated 0 of 0 mixed pair_coeff terms from geometric mixing rule
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 5.3
+  ghost atom cutoff = 5.3
+  binsize = 2.65, bins = 7 7 7
+  1 neighbor lists, perpetual/occasional/extra = 1 0 0
+  (1) pair buck, perpetual
+      attributes: half, newton on
+      pair build: half/bin/atomonly/newton
+      stencil: half/bin/3d
+      bin: standard
+Setting up Verlet run ...
+  Unit style    : lj
+  Current step  : 0
+  Time step     : 0.005
+Per MPI rank memory allocation (min/avg/max) = 3.172 | 3.172 | 3.172 Mbytes
+   Step          Temp          PotEng         KinEng         TotEng         Press     
+         0   0.1            4509.2096      129.45         4638.6596      1.877823     
+       100   0.045195348    4580.1635      58.505378      4638.6689      1.8881217    
+       200   0.04645789     4578.5339      60.139738      4638.6736      1.8884724    
+       300   0.046745816    4578.1602      60.512459      4638.6727      1.8883263    
+       400   0.050444255    4573.3706      65.300087      4638.6707      1.887523     
+       500   0.047919158    4576.6394      62.03135       4638.6707      1.8879451    
+       600   0.050915112    4572.7611      65.909612      4638.6707      1.887394     
+       700   0.051149675    4572.458       66.213254      4638.6712      1.8874831    
+       800   0.045679361    4579.5396      59.131933      4638.6715      1.888407     
+       900   0.053353017    4569.6053      69.065481      4638.6708      1.8870243    
+      1000   0.048541999    4575.8339      62.837617      4638.6716      1.8879294    
+      1100   0.048800242    4575.4997      63.171913      4638.6716      1.8879407    
+      1200   0.047822949    4576.7643      61.906807      4638.6711      1.8880436    
+      1300   0.050415605    4573.4079      65.263001      4638.6709      1.8875385    
+      1400   0.050583662    4573.19        65.480551      4638.6706      1.8874777    
+      1500   0.048973787    4575.2743      63.396567      4638.6709      1.8877477    
+      1600   0.05231542     4570.9488      67.722311      4638.6711      1.8872231    
+      1700   0.050214218    4573.6689      65.002305      4638.6712      1.8876225    
+      1800   0.048261915    4576.1963      62.47505       4638.6714      1.8879097    
+      1900   0.052947413    4570.1296      68.540426      4638.67        1.8870233    
+      2000   0.050189358    4573.7006      64.970124      4638.6708      1.8875156    
+Loop time of 0.643493 on 1 procs for 2000 steps with 864 atoms
+
+Performance: 1342671.687 tau/day, 3108.036 timesteps/s, 2.685 Matom-step/s
+97.5% CPU use with 1 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.55862    | 0.55862    | 0.55862    |   0.0 | 86.81
+Neigh   | 0.059089   | 0.059089   | 0.059089   |   0.0 |  9.18
+Comm    | 0.012702   | 0.012702   | 0.012702   |   0.0 |  1.97
+Output  | 0.0010361  | 0.0010361  | 0.0010361  |   0.0 |  0.16
+Modify  | 0.0079047  | 0.0079047  | 0.0079047  |   0.0 |  1.23
+Other   |            | 0.004137   |            |       |  0.64
+
+Nlocal:            864 ave         864 max         864 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Nghost:           2565 ave        2565 max        2565 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Neighs:          36794 ave       36794 max       36794 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+
+Total # of neighbors = 36794
+Ave neighs/atom = 42.585648
+Neighbor list builds = 58
+Dangerous builds = 0
+Total wall time: 0:00:00

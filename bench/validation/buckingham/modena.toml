@@ -1,0 +1,41 @@
+# MODENA vs LAMMPS validation — Buckingham potential (non-LJ).
+# Matched to bench/validation/buckingham/in.lammps.
+#
+# Buckingham: U(r) = A*exp(-r/rho) - B/r^6, force-shifted at cutoff.
+# Reduced units (sigma=epsilon=m=1).
+#
+# Parameters chosen so that:
+#  - The potential has a shallow minimum near r ~ 4.2 (FCC a~5.9).
+#  - At the operating lattice (a=3.0, r_NN=2.12) the system is moderately
+#    compressed, giving a non-trivial PE for step-0 comparison.
+#  - At cutoff=5.0, both U(rc) and F(rc) are <1e-4, so MODENA's force-shift
+#    and LAMMPS's energy-shift (pair_modify shift yes) agree to <0.1%.
+#  - The cutoff includes 5 FCC neighbor shells (rc > a*sqrt(5/2)=4.74).
+
+units = "reduced"
+
+[structure]
+type = "fcc"
+lattice_constant = 3.0
+replicas = [6, 6, 6]   # 864 atoms
+element = "X"
+
+[model]
+type = "buckingham"
+a = 1000.0
+b = 1.0
+rho = 0.3
+cutoff = 5.0
+
+[integrator]
+type = "velocity_verlet"
+dt = 0.005
+
+[run]
+steps = 2000
+initial_temperature = 0.1
+seed = 87287
+log_file = "results/modena_thermo.csv"
+log_every = 100
+trajectory_file = "results/modena_traj.xyz"
+trajectory_every = 2000

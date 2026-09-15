@@ -1,0 +1,46 @@
+# MODENA-vs-LAMMPS validation — Buckingham potential (non-LJ).
+# Matched to bench/validation/buckingham/modena.toml: same potential form
+# (Buckingham A*exp(-r/rho) - C/r^6), same params, cutoff, units, lattice,
+# dt, steps, initial T, seed.
+#
+# LAMMPS pair_style buck: E = A*exp(-r/rho) - C/r^6.
+# MODENA Buckingham:      U = A*exp(-r/rho) - B/r^6.  (B == C)
+#
+# Shift convention:
+#   MODENA  = force-shifted:  U_sf = U(r) - U(rc) + (r-rc)*F(rc),  F_sf = F(r) - F(rc)
+#   LAMMPS  = energy-shifted: U_es = U(r) - U(rc)                   (pair_modify shift yes)
+#   Difference per pair = (r-rc)*F(rc), which is <1e-4 per pair at rc=5.0.
+#   Total correction < 0.1% of PE (see VALIDATION.md).
+
+units           lj
+atom_style      atomic
+boundary        p p p
+
+# In units lj, lattice value = number density.  rho = 4/a^3 = 4/27 = 0.148148.
+# a = 3.0, matching MODENA's lattice_constant = 3.0.
+lattice         fcc 0.148148
+region          box block 0 6 0 6 0 6
+create_box      1 box
+create_atoms    1 box
+
+mass            1 1.0
+
+# Buckingham: A=1000, rho=0.3, C=1.0, cutoff=5.0.  Matches MODENA toml.
+pair_style      buck 5.0
+pair_coeff      1 1 1000.0 0.3 1.0 5.0
+pair_modify     shift yes
+
+velocity        all create 0.1 87287 dist gaussian mom yes rot no
+
+neighbor        0.3 bin
+neigh_modify    every 1 delay 0 check yes
+
+fix             1 all nve
+
+timestep        0.005
+
+thermo          100
+thermo_style    custom step temp pe ke etotal press
+thermo_modify   norm no flush yes
+
+run             2000

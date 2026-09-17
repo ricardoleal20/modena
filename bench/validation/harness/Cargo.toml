@@ -1,0 +1,27 @@
+# Standalone measurement harness for the bench/validation decks.
+#
+# Deliberately its own workspace (NOT a member of the root workspace): this is
+# validation tooling, not engine code. It links the engine as-shipped via a
+# path dependency and exposes full-precision measurements the CLI cannot
+# express (the shipped XYZ trajectory writer emits 8 decimals, too coarse for
+# 1e-10 SHAKE residuals, and the CSV log cannot decompose the Ewald terms).
+#
+# Build:  cargo build --release (in this directory)
+# Usage:  ./target/release/validation-harness ewald-decompose
+#         ./target/release/validation-harness shake-measure
+
+[workspace]
+
+[package]
+name = "validation-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+modena-core = { path = "../../../crates/modena-core" }
+rand = "0.10"
+rand_distr = "0.6"
+
+[profile.release]
+opt-level = 3

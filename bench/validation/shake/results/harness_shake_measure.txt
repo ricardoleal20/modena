@@ -1,0 +1,22 @@
+atoms: 48
+step 0: PE = -0.000083077394  KE = 36.000000000000  E = 35.999916922606
+step  200: E = 24.0706473350  T = 0.34194554  max|r-d| this run = 4.998e-11
+step  400: E = 24.0705929239  T = 0.33866676  max|r-d| this run = 5.000e-11
+step  600: E = 24.0703122150  T = 0.33779306  max|r-d| this run = 5.000e-11
+step  800: E = 24.0705922573  T = 0.33750693  max|r-d| this run = 5.000e-11
+step 1000: E = 24.0705209318  T = 0.33602444  max|r-d| this run = 5.000e-11
+step 1200: E = 24.0705757468  T = 0.34218248  max|r-d| this run = 5.000e-11
+step 1400: E = 24.0705935994  T = 0.34456383  max|r-d| this run = 5.000e-11
+step 1600: E = 24.0706123558  T = 0.34602911  max|r-d| this run = 5.000e-11
+step 1800: E = 24.0705760862  T = 0.34898737  max|r-d| this run = 5.000e-11
+step 2000: E = 24.0705185269  T = 0.34714118  max|r-d| this run = 5.000e-11
+
+== SHAKE summary ==
+  E0 (pre-projection) : 35.999916922606
+  E step 1 (projected): 24.070719447752  (one-time RATTLE projection of the initial velocities)
+  E final             : 24.070518526919
+  E range steps>=100  : [24.067954763168, 24.073767278796]
+  rel. drift >=100    : 2.414e-4
+  bond |r-d| RMS      : 2.692967e-11  (over 96000 bond samples)
+  bond |r-d| max      : 4.999912e-11
+  RATTLE |r·v| max    : 9.999790e-11

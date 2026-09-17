@@ -1,0 +1,65 @@
+# MODENA-vs-LAMMPS validation — SHAKE/RATTLE bonded constraints.
+# Matched to bench/validation/shake/modena.toml + trimers.xyz.
+#
+# System: 16 rigid water-like trimers (O + 2 H, all masses 1.0), 48 atoms,
+# 10x10x10 periodic box. Each trimer: 2 O-H bonds (1.0) + 1 H-O-H angle
+# (109.4712206 deg = the tetrahedral angle; equivalent 1-3 H-H distance
+# 1.6329931618554521). fix shake b 1 a 1 constrains all three per trimer —
+# LAMMPS converts the angle constraint to the 1-3 distance constraint, the
+# same constraint set MODENA solves (3 distances per rigid triangle).
+# (LAMMPS fix shake requires DISCONNECTED clusters, hence isolated trimers.)
+#
+# Non-bonded: LJ sigma=1.0 epsilon=0.1 cutoff=2.5, NO exclusions
+# (special_bonds lj 1 1 1 — bonded pairs feel the full LJ, matching MODENA).
+# Bonds/angles are harmonic with k = 0 (no force; SHAKE does all the work).
+#
+# Ensemble: NVE + SHAKE, velocity-Verlet, dt = 0.005, 2000 steps,
+# initial T = 0.5, seed 87287. SHAKE tolerance 1e-10 (matches MODENA's
+# SHAKE_TOL = 1e-10), max 100 iterations.
+
+units           lj
+atom_style      molecular
+boundary        p p p
+
+read_data       data.trimers
+
+# No exclusions: include all 1-2, 1-3, 1-4 pair interactions (matches MODENA,
+# which has no bonded-exclusion mechanism).
+special_bonds   lj 1 1 1
+
+# LJ pair: epsilon=0.1, sigma=1.0, cutoff=2.5 (all type pairs identical).
+# NOTE: lj/cut pair_coeff argument order is epsilon sigma (not sigma epsilon).
+pair_style      lj/cut 2.5
+pair_coeff      1 1 0.1 1.0 2.5
+pair_coeff      1 2 0.1 1.0 2.5
+pair_coeff      2 2 0.1 1.0 2.5
+pair_modify     shift yes
+
+# k = 0 harmonic bond/angle (SHAKE uses only the equilibrium values).
+bond_style      harmonic
+bond_coeff      1 0.0 1.0
+angle_style     harmonic
+angle_coeff     1 0.0 109.47122063449069
+
+neighbor        0.3 bin
+neigh_modify    every 1 delay 0 check yes
+
+velocity        all create 0.5 87287 dist gaussian mom yes rot no
+
+fix             1 all nve
+# SHAKE: tol=1e-10, max_iter=100, no output. Constrain bond type 1 and
+# angle type 1.
+fix             2 all shake 1.0e-10 100 0 b 1 a 1
+
+timestep        0.005
+
+thermo          100
+thermo_style    custom step temp pe ke etotal press
+thermo_modify   norm no flush yes
+
+# High-precision trajectory for bond-length residual analysis (matches
+# MODENA's trajectory_every = 100).
+dump            1 all custom 100 results/lammps_trimers.lammpstrj id x y z
+dump_modify     1 format line "%d %.16g %.16g %.16g"
+
+run             2000

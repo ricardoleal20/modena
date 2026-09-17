@@ -1,0 +1,43 @@
+atoms: 216
+
+== exact lattice (x0) ==
+  engine compute() Ewald PE : -75.494792402087
+  engine energy()   Ewald PE : -75.494792402087
+  brute real        : -1.189442043693
+  brute reciprocal  : 23.186609678823  (19548 k-vectors)
+  brute self        : -97.491960037052
+  brute background  : -0.000000000000
+  brute total       : -75.494792401922
+  engine - brute    : -0.000000000165
+  engine Ewald virial W (Σ r·F, incl. reciprocal): -11.515540432501
+  brute real-space virial W_real (Σ r·F): -11.515540432335
+  engine reciprocal virial (Σ r·F form)  : -0.000000000166
+  reciprocal strain virial W_rec = Σ U_k(1-k²/2κ²): -63.979311688480
+
+== displaced x0+v*1e-6 (x1) ==
+  engine compute() Ewald PE : -75.494791399964
+  engine energy()   Ewald PE : -75.494791399964
+  brute real        : -1.189441041725
+  brute reciprocal  : 23.186609678823  (19548 k-vectors)
+  brute self        : -97.491960037052
+  brute background  : -0.000000000000
+  brute total       : -75.494791399954
+  engine - brute    : -0.000000000010
+  engine Ewald virial W (Σ r·F, incl. reciprocal): -11.515504951818
+  brute real-space virial W_real (Σ r·F): -11.515506414891
+  engine reciprocal virial (Σ r·F form)  : 0.000001463073
+  reciprocal strain virial W_rec = Σ U_k(1-k²/2κ²): -63.979311688471
+
+== Deltas (x1 - x0) ==
+  pair PE       : 0.000000000147
+  engine Ewald  : 0.000001002123  (compute path)
+  engine Ewald  : 0.000001002123  (energy-only path)
+  brute real    : 0.000001001967
+  brute recip   : 0.000000000000
+  brute total   : 0.000001001968
+
+pair PE at x0: 162.191075313207
+pair PE at x1: 162.191075313354
+
+== FD force check at x1 (engine compute() forces vs -grad energy()) ==
+  worst |F - FD|: 1.542e-3  (atom 212 axis 0: force -1.250527034e-7 vs FD -1.541884842e-3)

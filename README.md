@@ -8,10 +8,18 @@ that new physics (many-body potentials, bonded terms, long-range electrostatics)
 and new acceleration strategies (ML surrogate potentials, GPU kernels, domain
 decomposition) can be added without touching the integrator, thermostat, or I/O.
 
-> **Status — Phase 1 (PoC).** Lennard-Jones + cell lists + velocity-Verlet (NVE)
-> and BAOAB-Langevin (NVT), rayon-parallel, XYZ/CSV output, TOML input. Energy
-> conservation is verified to ~2×10⁻⁵ relative drift. See `ROADMAP.md` for what
-> comes next (bonds/angles, Coulomb+Ewald, NPT, real units, Python, ML, GPU).
+> **Status — feature-complete (v0.1).** Five shifted-force pair potentials
+> (Lennard-Jones, Buckingham, Morse, soft-sphere, tabulated) with multi-species
+> Lorentz–Berthelot mixing; bonded interactions (bonds/angles/dihedrals) with
+> SHAKE/RATTLE constraints; Coulomb + Ewald long-range electrostatics; NVE/NVT
+> (Berendsen, velocity-rescale, Nosé–Hoover chain) and NPT (Berendsen,
+> Parrinello–Rahman) ensembles; replica exchange; MPI domain decomposition and a
+> WGSL GPU pair kernel; an agent-native MCP interface; and a force/energy
+> conservation contract enforced by property-based tests. Validated against
+> LAMMPS on LJ and Buckingham potentials (<0.001% energy agreement after
+> convention correction); parallel scaling characterized on MPI and GPU. See
+> `ARCHITECTURE.md` for the methods-level description and `bench/` for the
+> measured validation and scaling reports.
 
 > **Naming.** The working name is **MODENA**. The alternate brand **RHEA**
 > (Rust High-performance Engine for Atomistics) is held in reserve; the crate is
@@ -51,37 +59,48 @@ MODENA: finished 2000 steps in 1.07s
 ```
 modena/
 ├── crates/
-│   ├── modena-core/        # the engine library (physics, I/O, runner)
-│   └── modena-cli/         # the `modena` binary
-├── examples/               # argon_nve.toml, argon_nvt.toml
+│   ├── modena-core/        # the engine library (potentials, neighbor search,
+│   │                       # integrators, thermostats/barostats, electrostatics,
+│   │                       # bonded + constraints, parallel decomposition, runner)
+│   ├── modena-cli/         # the `modena` binary (TOML input → Simulation::run)
+│   ├── modena-mcp/         # agent-native MCP server (Feature A)
+│   └── modena-bench/       # Criterion micro-benchmarks
+├── examples/               # argon_nve.toml, argon_nvt.toml, ...
+├── bench/                  # LAMMPS comparison + scaling + validation reports
+├── ARCHITECTURE.md         # methods-level description (paper precision)
 └── ROADMAP.md
 ```
 
 ## Architecture (trait seams)
 
-The engine is intentionally small and built around four traits. Implementing a
-trait is how you extend MODENA — no core code needs to change.
+The engine is intentionally small and built around a small set of traits.
+Implementing a trait is how you extend MODENA — no core code needs to change.
 
-| Trait | Responsibility | Phase 1 impl | Extension target |
-|-------|----------------|--------------|------------------|
-| `PairPotential` | short-range pair U/F | `LennardJones` (shifted-force) | Buckingham, Morse, tabulated |
-| `ForceModel` | all forces + PE + virial | `PairForceModel` (rayon) | **ML surrogates**, many-body, bonded |
-| `Integrator` | time stepping | `VelocityVerlet`, `LangevinBAOAB` | r-RESPA, leapfrog |
-| `Thermostat` | velocity rescaling | `Berendsen`, `VelocityRescaling` | Nosé–Hoover chains |
+| Trait | Responsibility | Shipped implementations |
+|-------|----------------|--------------------------|
+| `PairPotential` | short-range pair U/F | `LennardJones`, `Buckingham`, `Morse`, `SoftSphere`, `Tabulated` — all shifted-force, multi-species (Lorentz–Berthelot + overrides) |
+| `ForceModel` | all forces + PE + virial | `PairForceModel` (rayon half-list), `CompositeForceModel` (pair + bonded + Coulomb), `GpuPairForceModel` (`gpu` feature, WGSL) |
+| `Integrator` | time stepping | `VelocityVerlet` (NVE, + SHAKEL/RATTLE), `LangevinBAOAB` (NVT), `NoseHooverChain` (NVT) |
+| `Thermostat` / `Barostat` | ensemble control | Berendsen, velocity-rescale, Nosé–Hoover chain / Berendsen, Parrinello–Rahman |
 
 The **`ForceModel`** trait is the ML seam: a learned potential (NequIP/MACE
 style, or a coarse-grained tabulated force) implements `compute()` and drops
-into the existing integrator/thermostat/IO pipeline. No ML code ships in Phase
-1; the seam is in place.
+into the existing integrator/thermostat/IO pipeline without touching core code.
+A `CompositeForceModel` runs several `ForceModel`s in sequence, each
+*accumulating* into the shared force/virial arrays, so a pair model composes
+with bonded and electrostatic models.
 
-### Why shifted-force LJ
+### Why shifted-force potentials
 
 A truncated potential with only an *energy* shift has a force discontinuity at
-the cutoff, which leaks energy every time a pair crosses it. MODENA uses the
-**shifted-force** form (both U and F → 0 at the cutoff), which is what lets
-velocity-Verlet conserve energy cleanly under truncation. The cell list is also
-rebuilt with a deduplicated stencil so coarse grids (fewer than 3 cells/axis)
-don't double-count pairs.
+the cutoff, which leaks energy every time a pair crosses it. **Every** shipped
+pair potential uses the shifted-force form (both U and F → 0 at the cutoff),
+which is what lets velocity-Verlet conserve energy cleanly under truncation.
+This is also the basis of the **conservation contract** (Feature B): the
+reported potential energy is the exact integral of the reported force, so the
+NVE Hamiltonian is the true conserved quantity and energy drift is a genuine
+numerical signal — verified by property-based tests for every registered
+potential. See `ARCHITECTURE.md` §2.
 
 ## Input format (TOML)
 
@@ -120,8 +139,9 @@ log_file = "energy.csv"
 log_every = 10
 ```
 
-**Units:** reduced (LJ) in Phase 1 (σ = ε = m = 1, T in ε/kB). Real units
-(Å, kcal/mol, amu, K) arrive in M2.
+**Units:** reduced (σ = ε = m = 1, T in ε/kB) or real units (Å, kcal/mol, amu,
+K). Multi-species systems use per-type-pair `(σ, ε)` tables with
+Lorentz–Berthelot combining and optional explicit overrides.
 
 ## Programmatic use
 
@@ -145,13 +165,26 @@ for _ in 0..2000 {
 
 ## Verification
 
-`cargo test` runs:
-- LJ energy/force analytic checks (minimum, cutoff-zero, repulsive sign).
-- Cell-list correctness incl. periodic images and coarse-grid dedup.
-- **NVE energy conservation** (real kinetic energy, < 10⁻³ relative drift) and
-  momentum conservation.
-- **NVT Langevin thermalization** toward the target temperature.
-- Pair-energy/force correctness (no overcounting; Newton's third law).
+`cargo test` (~120 tests) runs:
+- Analytic energy/force checks for every pair potential (minimum, cutoff-zero,
+  repulsive sign, multi-species cross interactions).
+- **Conservation contract** (Feature B): property-based tests that
+  `F = −∇U` by finite difference, outputs are finite, and the shifted-force
+  form is continuous at the cutoff — for *every* registered potential, not just
+  LJ.
+- **NVE energy conservation** (< 10⁻³ relative drift) and momentum conservation.
+- **NVT thermalization** (Langevin BAOAB, Nosé–Hoover) toward the target
+  temperature.
+- Bonded interactions + SHAKE/RATTLE constraint satisfaction.
+- Parallel decomposition: decomposed force/energy/virial **bit-identical to
+  serial** (in-process) and across two real MPI ranks (`mpiexec -n 2`).
+- GPU pair kernel: single-precision agreement with the f64 CPU path.
+
+**LAMMPS validation** (`bench/`): LJ and Buckingham potentials agree with LAMMPS
+to <0.001% on energy after the force-shift/energy-shift convention correction,
+with near-identical NVE drift. Parallel scaling (MPI strong/weak, GPU vs CPU) is
+reported in `bench/scaling/SCALING.md`; methodology and results in
+`bench/BENCHMARKS.md` and `bench/validation/VALIDATION.md`.
 
 ## License
 

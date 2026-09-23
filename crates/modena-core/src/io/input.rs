@@ -490,6 +490,12 @@ pub struct RunSpec {
     pub initial_temperature: f64,
     #[serde(default = "default_seed")]
     pub seed: u64,
+    /// Verlet neighbor-list skin (same units as the cutoffs). The list is
+    /// rebuilt only when any atom's minimum-image displacement since the last
+    /// build exceeds `skin / 2`. `0` disables the skin (rebuild every step).
+    /// Default `0.3` (LAMMPS's default skin).
+    #[serde(default = "default_neighbor_skin")]
+    pub neighbor_skin: f64,
     #[serde(default)]
     pub trajectory_file: Option<String>,
     #[serde(default = "default_traj_every")]
@@ -502,6 +508,9 @@ pub struct RunSpec {
 
 fn default_initial_temp() -> f64 {
     1.0
+}
+fn default_neighbor_skin() -> f64 {
+    0.3
 }
 fn default_traj_every() -> usize {
     100

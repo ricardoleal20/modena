@@ -25,6 +25,11 @@ pub struct NeighborList {
     pairs: Vec<(usize, usize)>,
     /// Reference positions at the last rebuild (for the skin displacement test).
     ref_positions: Vec<f64>,
+    /// Box lengths at the last rebuild. A barostat can rescale the box without
+    /// any atom moving: the grid dimensions were computed from the old box, and
+    /// after a shrink `cell_size < list_cutoff` would silently miss pairs. A
+    /// box change therefore forces a rebuild.
+    ref_box: [f64; 3],
     built: bool,
     /// Number of grid rebuilds performed (for tests + diagnostics).
     rebuild_count: usize,
@@ -49,6 +54,7 @@ impl NeighborList {
             list_cutoff2: list_cutoff * list_cutoff,
             pairs: Vec::new(),
             ref_positions: Vec::new(),
+            ref_box: [0.0; 3],
             built: false,
             rebuild_count: 0,
             dims: [1, 1, 1],
@@ -92,10 +98,30 @@ impl NeighborList {
             self.pairs.clear();
             return;
         }
-        if self.built && self.skin > 0.0 && !self.displacement_exceeds(system) {
+        if self.built
+            && self.skin > 0.0
+            && self.state_is_current(system)
+            && !self.displacement_exceeds(system)
+        {
             return;
         }
         self.rebuild(system);
+    }
+
+    /// Whether the cached grid still matches the system shape: same atom
+    /// count and same box lengths. A barostat rescale changes the box without
+    /// moving atoms (the displacement test would pass), but the grid
+    /// dimensions and cell sizes were computed from the old box — after a
+    /// shrink `cell_size < list_cutoff` and the ±1 stencil silently misses
+    /// pairs. A changed atom count would index `ref_positions` out of bounds.
+    fn state_is_current(&self, system: &System) -> bool {
+        self.ref_positions.len() == 3 * system.n()
+            && self.ref_box
+                == [
+                    system.box_size.size.0[0],
+                    system.box_size.size.0[1],
+                    system.box_size.size.0[2],
+                ]
     }
 
     /// Force a rebuild regardless of skin (used by tests and the initial build).
@@ -201,9 +227,10 @@ impl NeighborList {
             }
         }
 
-        // Snapshot reference positions for the skin test.
+        // Snapshot reference positions and box for the skin test.
         self.ref_positions.clear();
         self.ref_positions.extend_from_slice(system.positions_raw());
+        self.ref_box = [box_size.size.0[0], box_size.size.0[1], box_size.size.0[2]];
         self.built = true;
     }
 
@@ -359,6 +386,38 @@ mod tests {
         sys.wrap_positions();
         nl.build(&sys);
         assert_eq!(nl.rebuild_count(), 2, "physical move > skin/2 must rebuild");
+    }
+
+    #[test]
+    fn skin_rebuilds_on_box_rescale_and_count_change() {
+        // A barostat rescale changes the box without moving atoms. The
+        // displacement test would pass, but the stale grid was computed from
+        // the old box — after a shrink the ±1 stencil silently misses pairs,
+        // so a box change must force a rebuild. Likewise an atom-count change
+        // (which would otherwise index ref_positions out of bounds).
+        let mut sys = sys_with(&[Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)], 10.0);
+        let mut nl = NeighborList::with_skin(2.5, 1.0);
+        nl.build(&sys);
+        assert_eq!(nl.rebuild_count(), 1);
+
+        // Isotropic shrink 10 -> 9, atoms unmoved: must rebuild.
+        sys.box_size = SimBox::cubic(9.0);
+        nl.build(&sys);
+        assert_eq!(
+            nl.rebuild_count(),
+            2,
+            "box rescale without atom motion must rebuild"
+        );
+        assert_eq!(nl.pairs(), &[(0, 1)]);
+
+        // Same box, same positions: no rebuild.
+        nl.build(&sys);
+        assert_eq!(nl.rebuild_count(), 2);
+
+        // Atom count change: must rebuild (no ref_positions OOB).
+        sys.resize(3);
+        nl.build(&sys);
+        assert_eq!(nl.rebuild_count(), 3, "atom-count change must rebuild");
     }
 
     #[test]

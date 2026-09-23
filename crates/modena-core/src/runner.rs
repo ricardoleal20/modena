@@ -123,7 +123,15 @@ impl Simulation {
                 Box::new(comp)
             }
         };
-        let mut neighbors = NeighborList::new(neighbor_cutoff);
+        // Verlet skin (config.run.neighbor_skin, default 0.3): the list is
+        // rebuilt only when an atom moves > skin/2 since the last build. Each
+        // sub-model still gates pairs by its own cutoff, so a list built at
+        // neighbor_cutoff + skin is safe for every model.
+        let skin = config.run.neighbor_skin;
+        if !(skin >= 0.0) {
+            return Err(ModenaError::Config("run.neighbor_skin must be >= 0".into()));
+        }
+        let mut neighbors = NeighborList::with_skin(neighbor_cutoff, skin);
         let constraints = config.constraints.as_ref().map(build_constraints);
         let integrator = build_integrator(&config.integrator, constraints);
         let thermostat = build_thermostat(&config.thermostat, &config.integrator);

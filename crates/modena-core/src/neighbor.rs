@@ -26,6 +26,8 @@ pub struct NeighborList {
     /// Reference positions at the last rebuild (for the skin displacement test).
     ref_positions: Vec<f64>,
     built: bool,
+    /// Number of grid rebuilds performed (for tests + diagnostics).
+    rebuild_count: usize,
     // Grid state (rebuilt as needed).
     dims: [usize; 3],
     cell_size: [f64; 3],
@@ -48,6 +50,7 @@ impl NeighborList {
             pairs: Vec::new(),
             ref_positions: Vec::new(),
             built: false,
+            rebuild_count: 0,
             dims: [1, 1, 1],
             cell_size: [cutoff; 3],
             head: Vec::new(),
@@ -100,15 +103,29 @@ impl NeighborList {
         self.rebuild(system);
     }
 
+    /// Total grid rebuilds performed since construction (tests + diagnostics).
+    pub fn rebuild_count(&self) -> usize {
+        self.rebuild_count
+    }
+
     fn displacement_exceeds(&self, system: &System) -> bool {
         let half_skin = 0.5 * self.skin;
         let half_skin2 = half_skin * half_skin;
         let n = system.n();
+        let box_size = system.box_size;
         for i in 0..n {
-            let dx = system.positions[3 * i] - self.ref_positions[3 * i];
-            let dy = system.positions[3 * i + 1] - self.ref_positions[3 * i + 1];
-            let dz = system.positions[3 * i + 2] - self.ref_positions[3 * i + 2];
-            if dx * dx + dy * dy + dz * dz > half_skin2 {
+            // Minimum-image displacement: the integrator wraps positions into
+            // the box each step, so an atom that crossed a periodic face shows
+            // a raw displacement of ~L. Comparing raw positions would flag it
+            // as "moved" forever after, forcing a rebuild every step and
+            // defeating the skin. The minimum-image displacement is the true
+            // physical displacement.
+            let d = box_size.min_image(Vec3::new(
+                system.positions[3 * i] - self.ref_positions[3 * i],
+                system.positions[3 * i + 1] - self.ref_positions[3 * i + 1],
+                system.positions[3 * i + 2] - self.ref_positions[3 * i + 2],
+            ));
+            if d.norm2() > half_skin2 {
                 return true;
             }
         }
@@ -118,6 +135,7 @@ impl NeighborList {
     fn rebuild(&mut self, system: &System) {
         let n = system.n();
         let box_size = system.box_size;
+        self.rebuild_count += 1;
 
         // Grid dimensions: cell edge >= list_cutoff. Clamp to 1 cell per axis if
         // the box is smaller than the list cutoff (valid via minimum-image).
@@ -307,5 +325,100 @@ mod tests {
         sys.set_pos(1, Vec3::new(6.0, 0.0, 0.0));
         nl.build(&sys);
         assert!(nl.pairs().is_empty());
+    }
+
+    #[test]
+    fn skin_survives_periodic_wrapping() {
+        // Regression: the displacement test must use minimum-image deltas.
+        // The integrator wraps positions into the box every step, so an atom
+        // crossing a periodic face has a raw displacement of ~L but a physical
+        // displacement of ~0. With raw comparison the skin would trigger a
+        // rebuild every step forever after — defeating the Verlet skin.
+        let mut sys = sys_with(&[Vec3::new(0.05, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)], 10.0);
+        let mut nl = NeighborList::with_skin(2.5, 1.0); // rebuild only > 0.5
+        nl.build(&sys);
+        assert_eq!(nl.rebuild_count(), 1);
+        assert_eq!(nl.pairs(), &[(0, 1)]);
+
+        // Atom 0 drifts to -0.05 and is wrapped to 9.95: physical move 0.1,
+        // raw jump 9.9. The list must be reused (no rebuild), and the pair
+        // must survive via the periodic image.
+        sys.set_pos(0, Vec3::new(-0.05, 0.0, 0.0));
+        sys.wrap_positions();
+        assert_eq!(sys.pos(0).0[0], 9.95);
+        nl.build(&sys);
+        assert_eq!(
+            nl.rebuild_count(),
+            1,
+            "periodic wrapping must not trigger a rebuild"
+        );
+        assert_eq!(nl.pairs(), &[(0, 1)]);
+
+        // A real physical move > skin/2 across the boundary still rebuilds.
+        sys.set_pos(0, Vec3::new(-0.7, 0.0, 0.0));
+        sys.wrap_positions();
+        nl.build(&sys);
+        assert_eq!(nl.rebuild_count(), 2, "physical move > skin/2 must rebuild");
+    }
+
+    #[test]
+    fn skin_list_yields_identical_forces() {
+        // Physics equivalence: for as long as no atom moves more than skin/2
+        // between rebuilds, a skinned (possibly stale) list must give the same
+        // forces/PE as a fresh skinless list — the pair sets within the force
+        // cutoff coincide; the extra skin pairs are gated out by the kernel.
+        // Not bit-identical (a stale list can enumerate pairs in a different
+        // order → different FP summation order), so compare with a tight
+        // tolerance.
+        use crate::{ForceModel, LennardJones, PairForceModel, Virial};
+
+        let mut sys0 = crate::lattice::fcc(1.6796, [3, 3, 3], "Ar");
+        // Deterministic small "velocities" (well below skin/2 per step).
+        let vels: Vec<Vec3> = (0..sys0.n())
+            .map(|i| {
+                let f = i as f64;
+                Vec3::new(
+                    0.02 * f.sin(),
+                    0.02 * (1.7 * f).cos(),
+                    0.02 * (0.9 * f).sin(),
+                )
+            })
+            .collect();
+        let model = PairForceModel::new(LennardJones::new(1.0, 1.0, 2.5).unwrap());
+
+        let mut bare = NeighborList::new(2.5); // skin 0: rebuild every call
+        let mut skinned = NeighborList::with_skin(2.5, 0.6); // rebuild > 0.3
+
+        for step in 0..10 {
+            for (i, &v) in vels.iter().enumerate() {
+                sys0.set_pos(i, sys0.pos(i) + v);
+            }
+            sys0.wrap_positions();
+            let mut s_bare = sys0.clone();
+            let mut s_skin = sys0.clone();
+            s_bare.zero_forces();
+            s_skin.zero_forces();
+            let mut w1 = Virial::default();
+            let mut w2 = Virial::default();
+            let pe1 = model.compute(&mut s_bare, &mut w1, &mut bare).unwrap();
+            let pe2 = model.compute(&mut s_skin, &mut w2, &mut skinned).unwrap();
+            assert!(
+                (pe1 - pe2).abs() < 1e-9 * (1.0 + pe1.abs()),
+                "step {step}: PE {pe1} vs {pe2}"
+            );
+            for i in 0..sys0.n() {
+                let df = s_bare.force(i) - s_skin.force(i);
+                assert!(
+                    df.norm2() < 1e-16,
+                    "step {step} atom {i}: force delta {:?}",
+                    df.norm2()
+                );
+            }
+        }
+        // The skinned list must actually have amortized: after 10 steps of
+        // ~0.02/step (cumulative ~0.2 < 0.3), at most the initial build + one
+        // rebuild — far fewer than the skinless 11 builds.
+        assert!(skinned.rebuild_count() <= 2, "{}", skinned.rebuild_count());
+        assert!(bare.rebuild_count() >= 10);
     }
 }

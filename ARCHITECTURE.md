@@ -88,7 +88,13 @@ A cell (Verlet) list with a **skin** (M7). The box is binned into cells of side
 cells (a half list — see §4). The skin extends the bin radius by a configurable
 margin so the list need not be rebuilt every step: rebuild occurs only when any
 atom has moved more than half the skin since the last build, checked cheaply via
-a per-atom displacement bound. Minimum-image distances are computed against the
+a per-atom displacement bound. The skin is set by the TOML `run.neighbor_skin`
+(default `0.3`, LAMMPS's default; `0` rebuilds every step). The displacement
+test uses the *minimum-image* per-atom displacement — the integrator wraps
+positions into the box each step, so a raw comparison would flag every atom
+that ever crossed a periodic face and force a rebuild every step. On the
+864-atom LJ benchmark the default skin cuts the step cost ~2.7× (2030 → 753
+µs/step). Minimum-image distances are computed against the
 *global* box (the `SimBox::min_image` operation), supporting orthorhombic
 periodicity. Triclinic boxes are supported at the `SimBox` seam level; the
 parallel decomposition (§5) and barostats are orthorhombic-only.

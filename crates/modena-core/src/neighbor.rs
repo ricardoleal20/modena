@@ -177,6 +177,34 @@ impl NeighborList {
         self.dims = dims;
         self.cell_size = cell_size;
 
+        // Small-box fast path (committee finding K): when every axis has ≤ 3
+        // cells the ±1 stencil (with periodic wrap) covers the entire box, so
+        // the binning buys nothing — it became a ~11× overscan of distance
+        // checks plus a cache- hostile linked-list chase (measured: the grid
+        // rebuild was ~32% of a 1-thread step at benchmark sizes). A plain
+        // contiguous j>i double loop visits the same candidate set
+        // (∏min(d,3)·N/… ≈ N²/2 here) with dense sequential access and no
+        // per-cell indirection. Same pair set, same min-image predicate.
+        if dims.iter().all(|&d| d <= 3) {
+            let lc2 = self.list_cutoff2;
+            self.pairs.clear();
+            self.pairs.reserve(n * 27);
+            for i in 0..n {
+                let ri = system.pos(i);
+                for j in (i + 1)..n {
+                    let d = box_size.min_image(ri - system.pos(j));
+                    if d.norm2() < lc2 {
+                        self.pairs.push((i, j));
+                    }
+                }
+            }
+            self.ref_positions.clear();
+            self.ref_positions.extend_from_slice(system.positions_raw());
+            self.ref_box = [box_size.size.0[0], box_size.size.0[1], box_size.size.0[2]];
+            self.built = true;
+            return;
+        }
+
         let ncells = dims[0] * dims[1] * dims[2];
         self.head.clear();
         self.head.resize(ncells, -1);

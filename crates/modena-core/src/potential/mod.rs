@@ -66,6 +66,16 @@ pub trait PairPotential: Send + Sync {
     /// **Contract:** `dU/dr = −(f_over_r · r)` (see the trait-level docs).
     fn energy_force(&self, r2: f64, ti: u32, tj: u32) -> (f64, f64);
 
+    /// Downcast hook so the pair kernel can monomorphize the hot path for a
+    /// known potential (removes the per-pair vtable call and lets LLVM inline
+    /// the pair math — the LAMMPS OPT package's templated-loop trick, 5–20%
+    /// on Pair time). Default `None`; a potential that wants the typed fast
+    /// path returns `Some(self)`. The typed path must call the same
+    /// `energy_force` arithmetic, so it is bit-identical to the dyn path.
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        None
+    }
+
     /// Number of species types the potential's per-pair table is sized for.
     /// Defaults to 1 (single-species potentials such as `Tabulated`). The
     /// runner validates `max(system.species) < n_types` at config time, so a

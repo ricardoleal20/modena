@@ -176,6 +176,10 @@ impl LennardJones {
 }
 
 impl PairPotential for LennardJones {
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        Some(self)
+    }
+
     #[inline]
     fn cutoff(&self) -> f64 {
         self.cutoff

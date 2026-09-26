@@ -538,7 +538,30 @@ impl InputConfig {
             config.convert_to_reduced(&factors);
             config.unit_factors = Some(factors);
         }
+        // `step % log_every` panics on a zero divisor mid-run (and, on the MCP
+        // path, strands the run in `Running` forever).
+        config.validate()?;
         Ok(config)
+    }
+
+    /// Semantic validation of a parsed config (independent of unit conversion).
+    fn validate(&self) -> Result<()> {
+        if self.run.log_every == 0 {
+            return Err(ModenaError::Config(
+                "run.log_every must be >= 1 (0 would divide by zero)".into(),
+            ));
+        }
+        if self.run.trajectory_every == 0 {
+            return Err(ModenaError::Config(
+                "run.trajectory_every must be >= 1 (0 would divide by zero)".into(),
+            ));
+        }
+        if self.run.initial_temperature < 0.0 {
+            return Err(ModenaError::Config(
+                "run.initial_temperature must be >= 0".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Derive the real→reduced conversion factors from the model's reference

@@ -377,7 +377,6 @@ mod box_tests {
 
 #[cfg(test)]
 mod xyz_real_units {
-    use super::*;
     use std::io::Write;
 
     fn nanos() -> u128 {
@@ -399,10 +398,8 @@ mod xyz_real_units {
         let xyz_path = {
             let dir = std::env::temp_dir().join(format!("modena_xyz_{}.xyz", nanos()));
             let mut f = std::fs::File::create(&dir).unwrap();
-            f.write_all(
-                b"1\nMODENA real-units xyz regression\nAr  4.0  0.0  0.0\n",
-            )
-            .unwrap();
+            f.write_all(b"1\nMODENA real-units xyz regression\nAr  4.0  0.0  0.0\n")
+                .unwrap();
             dir
         };
         let toml = format!(
@@ -470,5 +467,72 @@ initial_temperature = 1.0
             "reduced units must pass positions through, got {pr:?}"
         );
         let _ = std::fs::remove_file(&xyz_path);
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    #[test]
+    fn zero_log_every_is_rejected() {
+        let toml = r#"
+[structure]
+type = "fcc"
+lattice_constant = 1.6796
+replicas = [1, 1, 1]
+element = "Ar"
+[model]
+type = "lennard_jones"
+sigma = 1.0
+epsilon = 1.0
+cutoff = 2.5
+[integrator]
+type = "velocity_verlet"
+dt = 0.005
+[run]
+steps = 10
+log_every = 0
+"#;
+        let err = modena_core::InputConfig::from_str(toml).unwrap_err();
+        assert!(
+            err.to_string().contains("log_every"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rock_salt_with_single_type_model_is_rejected() {
+        // Regression (audit major): rocksalt sets species {0,1}; a 1-type model
+        // would previously panic "index out of bounds" inside the force fold.
+        let toml = r#"
+[structure]
+type = "rock_salt"
+lattice_constant = 5.0
+replicas = [1, 1, 1]
+cation = "Na"
+anion = "Cl"
+cation_charge = 1.0
+anion_charge = -1.0
+[model]
+type = "lennard_jones"
+sigma = 1.0
+epsilon = 1.0
+cutoff = 2.5
+[integrator]
+type = "velocity_verlet"
+dt = 0.002
+[run]
+steps = 1
+"#;
+        let cfg = modena_core::InputConfig::from_str(toml).unwrap();
+        // `Simulation` is not Debug; match instead of unwrap_err.
+        let err =
+            match modena_core::runner::Simulation::from_config(&cfg, std::path::Path::new(".")) {
+                Ok(_) => panic!("expected a species-range config error"),
+                Err(e) => e.to_string(),
+            };
+        assert!(
+            err.contains("species index 1") && err.contains("1 type"),
+            "unexpected error: {err}"
+        );
     }
 }

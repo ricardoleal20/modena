@@ -106,6 +106,22 @@ impl Simulation {
         init_velocities(&mut system, config.run.initial_temperature, config.run.seed);
 
         let (pair_model, cutoff) = build_model(&config.model)?;
+        // Species-range validation: a multi-species structure (rocksalt sets
+        // species {0,1}; random_alloy whatever it was asked for) fed to a
+        // single-type model would panic with "index out of bounds" inside the
+        // parallel force fold — an unhelpful crash at runtime instead of a
+        // config error.
+        if let Some(max_sp) = system.species.iter().max().copied() {
+            let n_types = pair_model.potential.n_types();
+            if max_sp as usize >= n_types {
+                return Err(ModenaError::Config(format!(
+                    "structure uses species index {max_sp}, but the pair model \
+                     has only {n_types} type{s}; configure the model with \
+                     matching [[model.types]] entries",
+                    s = if n_types == 1 { "" } else { "s" }
+                )));
+            }
+        }
         let ewald = build_ewald(&config.electrostatics)?;
         // The shared neighbor list must cover the largest cutoff any sub-model
         // uses — the pair cutoff or the Ewald real-space cutoff.

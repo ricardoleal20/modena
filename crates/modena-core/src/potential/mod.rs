@@ -65,6 +65,16 @@ pub trait PairPotential: Send + Sync {
     ///
     /// **Contract:** `dU/dr = −(f_over_r · r)` (see the trait-level docs).
     fn energy_force(&self, r2: f64, ti: u32, tj: u32) -> (f64, f64);
+
+    /// Number of species types the potential's per-pair table is sized for.
+    /// Defaults to 1 (single-species potentials such as `Tabulated`). The
+    /// runner validates `max(system.species) < n_types` at config time, so a
+    /// multi-species structure (e.g. rocksalt, which sets species {0,1}) fed
+    /// to a single-type model fails with a clear error instead of an
+    /// out-of-bounds panic in the force loop.
+    fn n_types(&self) -> usize {
+        1
+    }
 }
 
 /// Shared shifted-force helpers.

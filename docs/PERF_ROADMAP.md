@@ -1,27 +1,63 @@
 # Performance roadmap — approaching LAMMPS (and where we can win)
 
+> **IMPORTANT — superseded by measurement (2026-09-26, committee acta).**
+> A four-expositor research committee plus an audit on the actual repo made
+> these quantified corrections. See `docs/COMMITTEE_ACTA.md` for the full
+> consensus record (4/4 vote), the doubt-resolution registry, and the final
+> gated pipeline. Executive corrections:
+> - **Baseline**: the honest single-core gap is **~2.1× flat** (2.06× at 864,
+>   2.10× at 2048, pinned 1 thread), inflated to 2.5–4.6× by default-thread
+>   self-harm (rayon 11t is 31% *slower* than 1t at N=864). The "3–4.5×" and
+>   committed CSV numbers below are stale/pre-thread-fix. There is **no cache
+>   superlinearity** at 1t + skin — the earlier "17→38 ns/pair" was a rebuild
+>   artifact of the force-kernel bench (52–68% rebuild).
+> - **Charged systems**: MODENA direct-Ewald is **~34× behind LAMMPS** on the
+>   matched 216-atom deck (341.99 s vs 9.93 s for 2000 steps; 171 ms/step,
+>   ~16.9M sincos/step at ~10 ns each = the entire step). Ewald-b (±k symmetry
+>   + phase reuse) leaves ~8.6×; only per-axis trig tables (~7 FMA/sincos,
+>   +0.5–1 d) or SPME (O(N log N), post-paper) reach ~2×.
+> - **Compiler flags**: measured **0%** on aarch64 (release already
+>   `lto="thin"` + `codegen-units=1`); P1 is an appendix row, arm64-scoped.
+> - **Bit-determinism**: byte-identical at 1 thread; **not** at default threads.
+> - Pipeline order (gates G0–G5): 0 rig → 1 thread plumbing (serial-below-N,
+>   `with_min_len`, scratch reuse; the biggest default-pool lever, 1.3–2.1×) →
+>   2 kernel PR (B monomorphize — bit-identical, unblocks everything; C fused,
+>   gated; K rebuild half-stencil for dims ≤ 3) → 3 GPU-e Kahan + persistent
+>   buffers & GPU-d ladder (G3 decides the only optional "win" claim) →
+>   4 Ewald-b exact hardening → 5 freeze.
+
 Research date: 2026-09-26. Method: two-agent deep research (bibliography of
-LAMMPS optimizations + adversarial verification), synthesized below. Baseline:
-MODENA is ~2.3–4.5× behind `lmp_serial` single-core on LJ at 256–4000 atoms
-(M3 Pro, measured 2026-09-26, `bench/run_comparison.sh`).
+LAMMPS optimizations + adversarial verification), synthesized below; the
+committee (4 expositors, 2 cross-review rounds, audit, 4/4 convergence vote)
+refined it. Baseline (measured this page's date, corrected): MODENA ~2.1×
+behind `lmp_serial` single-core at 1t on LJ (864/2048), inflated to 2.5–4.6×
+by default threading.
 
-## Executive summary (honest envelope)
+## Executive summary (honest envelope, committee-corrected)
 
-- **Single-core CPU: closing 4.5× → ~1.5–2× behind LAMMPS is achievable before
-  the paper** (waste-removal × compiler flags × scalar/SIMD kernel work ≈
-  1.8–2.3× multiplicative). **Single-core parity is not a realistic first-paper
-  target**, and chasing it invites a reviewer to run one benchmark and reject
-  the paper.
-- **The defensible "we win" claim is the Apple GPU.** LAMMPS has **no Metal /
-  Apple-GPU backend** (GPU package = CUDA/HIP/OpenCL [1]; OpenCL broken on Apple
-  silicon — lammps#3531 [2]; Kokkos has no Apple backend — kokkos#8461 [3]).
-  MODENA's wgpu/Metal path is the *only* head-to-head where LAMMPS forfeits by
-  absence. Measure it at ≥10k atoms; publish that.
-- **Framing for the paper**: "correct-by-construction Rust engine, measured
-  performance gap closed from ~4.5× to ~1.5–2×, and the only engine with a
-  working Apple-GPU path." That matches what the 2025–26 literature rewards
-  (JAX-MD published while slower — differentiability; TorchSim published
-  conceding classical-speed — MLIP ergonomics [4][5]).
+- **Single-core CPU: closing focused at 1t from ~2.1× to ~1.4–1.7× is the
+  defensible pre-paper target** — via K (rebuild half-stencil, rebuild share
+  32%→<15%) × B (monomorphize, 5–20% pair time, bit-identical) × C (fused,
+  gated). The thread-plumbing lever (A) fixes the *default* pool (1.3–2.1×),
+  not the 1t baseline. **Single-core parity is not a first-paper target**;
+  chasing it invites a reviewer benchmark rejection. (Flags contribute ≈ 0%
+  on arm64.)
+- **The only optional "we win" claim is the Apple GPU**, gated on a measured
+  win (G3): wording = "the only supported/tested/validated Apple-GPU path",
+  LAMMPS has no Metal backend (GPU = CUDA/HIP/OpenCL [1]); OpenCL degraded
+  `neigh no` on Apple silicon (lammps#3531 [2]); Kokkos none (kokkos#8461
+  [3]). The current all-pairs GPU kernel likely loses to `lmp_serial`
+  everywhere (estimates: 0.87–1.43 vs ~0.25–0.35 µs/(atom·step)); the
+  cell-list kernel's ~25–100× is **unmeasured** (Metal gather-throughput spike
+  is G3).
+- **Charged systems**: direct Ewald is measured ~34× behind LAMMPS at N=216;
+  correctness-only for the paper unless Ewald-b + trig tables land (→ ~2×),
+  else SPME post-paper.
+- **Framing**: "correct-by-construction Rust engine, measured LJ gap ~2.1×
+  closed to ~1.4–1.7× (1t), charged path characterized, bit-deterministic at
+  1t, and the only supported Apple-GPU acceleration path." Matches the 2025–26
+  literature reward structure (JAX-MD published slower — differentiability;
+  TorchSim conceded classical speed — MLIP ergonomics [4][5]).
 
 ## What makes LAMMPS fast (evidence)
 
@@ -42,23 +78,30 @@ the M3 Pro before hand-SIMD** (LLVM may already vectorize the SoA loop).
 
 ## Prioritized roadmap
 
-### P0 — Delete pure waste (½–1 day, zero contract risk, multiplicative)
+### P0 — Measure first, then delete (committee-corrected ordering)
 
-1. **Ewald k-vectors: regenerate only on box change, reuse the buffer.** The
-   k-space grid depends only on box + cutoffs; it is re-enumerated and
-   re-allocated every step (audit-flagged). Hoist it into the `EwaldForceModel`
-   state.
-2. **One neighbor-list build per composite step.** The audit found
-   `PairForceModel` and `EwaldForceModel` each call `neighbors.build()`; the
-   second is a no-op only when the skin absorbed it — pass the same built list
-   to both kernels.
-3. **Single-pass U+F with shared intermediates for LJ** (and the analytic
-   potentials): compute r⁻⁶ once, reuse for U, F, and the shift terms; drop
-   redundant `powi`/`sqrt` (dreid-kernel shows ~40% on the combined pass [12]).
-4. **Kill per-step allocations** in the hot loop (neighbor buffers, forces —
-   audit-flagged).
+> Note: the original P0 items were **re-scoped by measurement**. The Ewald
+> k-vector regeneration is <1% of Ewald time (and Ewald is absent from every
+> LJ deck) → hygiene inside Ewald-b; the "second neighbor build" is already a
+> no-op in production (skin) → docs note. The real first moves are A (thread
+> plumbing — the default-pool lever) and K (rebuild half-stencil), because the
+> rig proved orchestration/rebuild, not FP codegen, dominate.
 
-Expected: **1.3–1.5×** on existing benchmarks.
+1. **Thread/orchestration (Stage 1, G1)**: serial path below a size threshold;
+   `with_min_len` so ~17k pairs don't fan into 11+ subtasks; reuse per-thread
+   scratch instead of per-fold `vec![0.0; 3n]`. Measured ceiling: 1.31× (864)
+   to 2.33× (2048) on the default pool; 1t trajectory stays byte-identical.
+2. **Rebuild half-stencil (Stage 2, K, G2)**: at dims ≤ 3 per axis the ±1
+   stencil covers the whole box → ~11× overscan of distance checks. dims-aware
+   rebuild (plain contiguous j>i scan when dims ≤ 3, or finer cells with a
+   computed stencil radius). Rebuild share 32%→<15% of 1t step.
+3. **Monomorphize the potential (Stage 2, B, G2)**: kill the per-pair vtable
+   call and four table indirections; bit-identical, unblocks inlining.
+4. **Fused single-pass U+F with shared intermediates (Stage 2, C, gated)**:
+   r⁻⁶ once for U, F, virial (dreid-kernel ~40% on the combined pass [12]).
+
+Expected (1t path): **~1.4–1.7×** cumulative (K × B × C); default-pool path
+additionally **1.3–2.1×** from A.
 
 ### P1 — Compiler flags, measured (½ day)
 

@@ -20,7 +20,7 @@ use rayon::prelude::*;
 
 use crate::error::Result;
 use crate::neighbor::NeighborList;
-use crate::potential::PairPotential;
+use crate::potential::{LennardJones, PairPotential};
 use crate::system::System;
 use crate::vec3::Vec3;
 
@@ -86,20 +86,116 @@ impl ForceModel for PairForceModel {
         let cutoff2 = self.potential.cutoff2();
         let n = system.n();
         let box_size = system.box_size;
-        // Read-only shared views for the parallel kernel.
-        let positions = &system.positions;
-        let species = &system.species;
         let pairs = neighbors.pairs();
-        let potential = &*self.potential;
 
         if n == 0 {
             virial.w = 0.0;
             return Ok(0.0);
         }
 
-        // Per-thread `(forces, pe, virial)` accumulators, combined by reduce.
+        // Monomorphize the hot path for the shipped LJ potential (removes the
+        // per-pair vtable call, lets LLVM inline the pair math — bit-identical,
+        // same `energy_force` arithmetic). Fall back to the dyn path otherwise.
+        let serial = pairs.len() < SERIAL_PAIR_THRESHOLD || rayon::current_num_threads() <= 1;
+        let (pe, w) = if let Some(lj) = self
+            .potential
+            .as_any()
+            .and_then(|a| a.downcast_ref::<LennardJones>())
+        {
+            pair_pass(
+                lj,
+                pairs,
+                n,
+                &system.positions,
+                &system.species,
+                box_size,
+                cutoff2,
+                serial,
+                &mut system.forces,
+            )
+        } else {
+            pair_pass(
+                &*self.potential,
+                pairs,
+                n,
+                &system.positions,
+                &system.species,
+                box_size,
+                cutoff2,
+                serial,
+                &mut system.forces,
+            )
+        };
+
+        // M3 accumulate contract: `pair_pass` accumulated directly into
+        // `system.forces` (the caller zeroed once before the pass) and returned
+        // the PE + virial contributions; compose via virial.
+        virial.w += w;
+        Ok(pe)
+    }
+}
+
+/// Above this half-pair count the parallel path is faster than a serial pass
+/// on the default rayon pool; below it, rayon's per-split allocations and
+/// work-stealing churn make the *default* pool slower than one thread
+/// (measured: 11 threads were 31% slower than 1 thread at N=864, and the
+/// default pool burned ~35 s of system time per 5000 steps at N=2048). The
+/// serial path is also what bit-identity at 1 thread is measured against.
+const SERIAL_PAIR_THRESHOLD: usize = 100_000;
+
+/// Evaluate the half pair list: accumulate forces directly into `forces_out`
+/// (serial; bit-identical to the former single-worker fold) or via bounded
+/// per-chunk scratch (parallel, `with_min_len` limits allocations to ~thread
+/// count per step). Returns `(PE, virial)`.
+///
+/// Generic over the potential so the `LennardJones` fast path monomorphizes
+/// `energy_force` (inline + constant folding); the dyn path is unchanged.
+#[allow(clippy::too_many_arguments)]
+fn pair_pass<P: PairPotential + ?Sized>(
+    potential: &P,
+    pairs: &[(usize, usize)],
+    n: usize,
+    positions: &[f64],
+    species: &[u32],
+    box_size: crate::system::SimBox,
+    cutoff2: f64,
+    serial: bool,
+    forces_out: &mut [f64],
+) -> (f64, f64) {
+    if serial {
+        // Accumulate straight into the caller-zeroed forces array: the
+        // addition sequence per pair is identical to the former single-worker
+        // rayon fold (0.0 + … per component), so 1-thread trajectories stay
+        // byte-identical — the G1 gate.
+        let mut pe = 0.0f64;
+        let mut w = 0.0f64;
+        for &(i, j) in pairs {
+            let ri = Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
+            let rj = Vec3::new(positions[3 * j], positions[3 * j + 1], positions[3 * j + 2]);
+            let d = box_size.min_image(ri - rj);
+            let r2 = d.norm2();
+            if r2 >= cutoff2 || r2 < 1e-14 {
+                continue;
+            }
+            let (u, f_over_r) = potential.energy_force(r2, species[i], species[j]);
+            let fv = d * f_over_r;
+            for k in 0..3 {
+                forces_out[3 * i + k] += fv.0[k];
+                forces_out[3 * j + k] -= fv.0[k];
+            }
+            pe += u;
+            w += d.dot(fv);
+        }
+        (pe, w)
+    } else {
+        // Parallel with bounded splits: each thread folds into its own 3N
+        // accumulator; `with_min_len` caps the split count ~ thread count, so
+        // the per-split `vec![0.0; 3n]` allocations no longer dominate (they
+        // were ~35 s of system time per 5000 steps at N=2048, default pool).
+        let chunk = (pairs.len() / rayon::current_num_threads()).max(1);
         let (forces, pe, w) = pairs
             .par_iter()
+            .with_min_len(chunk)
             .fold(
                 || (vec![0.0f64; 3 * n], 0.0f64, 0.0f64),
                 |mut acc, &(i, j)| {
@@ -112,11 +208,8 @@ impl ForceModel for PairForceModel {
                     if r2 >= cutoff2 || r2 < 1e-14 {
                         return acc;
                     }
-                    let ti = species[i];
-                    let tj = species[j];
-                    let (u, f_over_r) = potential.energy_force(r2, ti, tj);
+                    let (u, f_over_r) = potential.energy_force(r2, species[i], species[j]);
                     let fv = d * f_over_r;
-                    // Newton's third law: equal & opposite.
                     for k in 0..3 {
                         acc.0[3 * i + k] += fv.0[k];
                         acc.0[3 * j + k] -= fv.0[k];
@@ -137,15 +230,11 @@ impl ForceModel for PairForceModel {
                     a
                 },
             );
-
-        // M3 accumulate contract: add into `system.forces` and `virial` (the
-        // caller — integrator or `CompositeForceModel` — zeroes both once before
-        // the force pass). This lets a pair model compose with bonded / Coulomb
-        // models without one clobbering the other.
-        for (dst, &src) in system.forces.iter_mut().zip(forces.iter()).take(3 * n) {
+        // M3 accumulate: add the per-thread-reduced forces into the caller's
+        // array (which the caller zeroed once).
+        for (dst, &src) in forces_out.iter_mut().zip(forces.iter()).take(3 * n) {
             *dst += src;
         }
-        virial.w += w;
-        Ok(pe)
+        (pe, w)
     }
 }

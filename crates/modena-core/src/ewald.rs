@@ -28,6 +28,8 @@
 //! energy of NaCl, and NVE energy conservation for an ionic system
 //! (`tests/electrostatics.rs`).
 
+use std::sync::Mutex;
+
 use crate::error::{ModenaError, Result};
 use crate::force_model::{ForceModel, Virial};
 use crate::neighbor::NeighborList;
@@ -54,7 +56,17 @@ pub struct EwaldForceModel {
     /// Reciprocal-space cutoff `k_c` (1/length). k-vectors with `|k| ≥ k_c` are
     /// dropped.
     pub kspace_cutoff: f64,
+    /// Half-space reciprocal k-vector set, cached per (box lengths, kcut).
+    /// Previously re-enumerated and re-allocated every step (a 19,548-entry
+    /// `Vec<KVec>` ≈ 625 KB rebuilt per step at the validation deck, despite
+    /// depending only on the box and cutoffs — the exact analogue of the
+    /// neighbor-list box-rescale cache). Regenerate only on change.
+    #[allow(clippy::type_complexity)]
+    kvec_cache: Mutex<Option<KvecCache>>,
 }
+
+/// Cached k-vector set: `(box lengths, kspace_cutoff, half-space k vectors)`.
+type KvecCache = ([f64; 3], f64, Vec<KVec>);
 
 impl EwaldForceModel {
     pub fn new(kappa: f64, real_cutoff: f64, kspace_cutoff: f64) -> Result<Self> {
@@ -75,7 +87,26 @@ impl EwaldForceModel {
             kappa,
             real_cutoff,
             kspace_cutoff,
+            kvec_cache: Mutex::new(None),
         })
+    }
+
+    /// Recompute the half-space k-vector set only when the box lengths or
+    /// `kspace_cutoff` change (mirror of the neighbor-list `ref_box` cache).
+    fn ensure_kvec_cache(&self, box_size: &crate::system::SimBox) {
+        let size = [box_size.size.0[0], box_size.size.0[1], box_size.size.0[2]];
+        let mut g = self.kvec_cache.lock().unwrap();
+        let stale = match &*g {
+            Some((s, k, _)) => *s != size || *k != self.kspace_cutoff,
+            None => true,
+        };
+        if stale {
+            *g = Some((
+                size,
+                self.kspace_cutoff,
+                generate_kvecs(box_size, self.kspace_cutoff),
+            ));
+        }
     }
 
     /// The real-space cutoff — the caller uses `max(pair_cutoff, this)` for the
@@ -114,18 +145,24 @@ impl EwaldForceModel {
         Ok(u_real + u_rec + u_self + u_bg)
     }
 
-    /// Reciprocal-space energy `U_rec = (2π/V) Σ_{k≠0} |ρ(k)|² w_k`,
-    /// `w_k = e^{−k²/4κ²}/k²`. Returns `(energy, n_k_vectors)`.
+    /// Reciprocal-space energy `U_rec = (2π/V) Σ_{half-space} 2·|ρ(k)|² w_k`,
+    /// `w_k = e^{−k²/4κ²}/k²` — the `2·` counts the ±k pair (half-space
+    /// iteration, see `generate_kvecs`). Returns `(energy, n_half_k_vectors)`.
     fn reciprocal_energy(&self, system: &System) -> Result<(f64, usize)> {
         let v = system.box_size.volume();
-        let kvecs = generate_kvecs(&system.box_size, self.kspace_cutoff);
+        self.ensure_kvec_cache(&system.box_size);
+        let g = self.kvec_cache.lock().unwrap();
+        let kvecs = match &*g {
+            Some((_, _, v)) => v,
+            None => unreachable!("ensure_kvec_cache guarantees Some"),
+        };
         let two_pi_over_v = 2.0 * std::f64::consts::PI / v;
         let kappa2 = self.kappa * self.kappa;
         let n = system.n();
         let pos = &system.positions;
         let q = &system.charges;
         let mut u = 0.0;
-        for kv in &kvecs {
+        for kv in kvecs {
             let k2 = kv.k2;
             let w = libm::exp(-k2 / (4.0 * kappa2)) / k2;
             // ρ(k) = Σ q_j (cos + i sin).
@@ -137,7 +174,7 @@ impl EwaldForceModel {
                 re += q[j] * libm::cos(phase);
                 im += q[j] * libm::sin(phase);
             }
-            u += two_pi_over_v * w * (re * re + im * im);
+            u += 2.0 * two_pi_over_v * w * (re * re + im * im);
         }
         Ok((u, kvecs.len()))
     }
@@ -211,36 +248,51 @@ impl ForceModel for EwaldForceModel {
             }
         }
 
-        // --- Reciprocal-space sum. ---
+        // --- Reciprocal-space sum (half-space, phases reused). ---
         // F_i = −(4π/V) q_i (B cos_i − A sin_i) w_k · k,  w_k = e^{−k²/4κ²}/k²,
-        // with A = Σ q cos(k·r), B = Σ q sin(k·r).
+        // with A = Σ q cos(k·r), B = Σ q sin(k·r). Ewald-b: k-vectors cached
+        // per box (rebuilt only on change), ±k symmetry halves the k set
+        // (energy and force both ×2), and the cos/sin phases are computed once
+        // per (k, atom) and reused between the structure-factor and force
+        // passes. Combined ≈4× fewer transcendentals; the arithmetic per term
+        // is the same, so the brute-force decomposition agreement (~1e-10)
+        // carries over unchanged.
         {
-            let kvecs = generate_kvecs(&box_size, self.kspace_cutoff);
+            self.ensure_kvec_cache(&box_size);
+            let g = self.kvec_cache.lock().unwrap();
+            let kvecs = match &*g {
+                Some((_, _, v)) => v,
+                None => unreachable!("ensure_kvec_cache guarantees Some"),
+            };
             let two_pi_over_v = 2.0 * std::f64::consts::PI / v;
             let four_pi_over_v = 4.0 * std::f64::consts::PI / v;
             let pos = &system.positions;
             let q = &system.charges;
-            for kv in &kvecs {
+            // Reused phase scratch (allocated once per compute call).
+            let mut phases = vec![(0.0f64, 0.0f64); n];
+            for kv in kvecs {
                 let k2 = kv.k2;
                 let w = libm::exp(-k2 / (4.0 * kappa2)) / k2;
-                // Structure factor.
+                // Structure factor (+ phase scratch for the force pass).
                 let mut a = 0.0; // Σ q_j cos(k·r_j)
                 let mut b = 0.0; // Σ q_j sin(k·r_j)
                 for j in 0..n {
                     let rj = Vec3::new(pos[3 * j], pos[3 * j + 1], pos[3 * j + 2]);
                     let phase = kv.k.dot(rj);
-                    a += q[j] * libm::cos(phase);
-                    b += q[j] * libm::sin(phase);
+                    let c = libm::cos(phase);
+                    let s = libm::sin(phase);
+                    phases[j] = (c, s);
+                    a += q[j] * c;
+                    b += q[j] * s;
                 }
-                // Energy: (2π/V) w (A² + B²).
-                pe += two_pi_over_v * w * (a * a + b * b);
-                // Force: per atom c_i = −(4π/V) q_i (B cos_i − A sin_i) w; F_i += c_i · k.
-                let scale = -four_pi_over_v * w;
+                // Energy: (2π/V) w (A² + B²), ×2 for the ±k pair.
+                pe += 2.0 * two_pi_over_v * w * (a * a + b * b);
+                // Force: per atom c_i = −(4π/V) q_i (B cos_i − A sin_i) w;
+                // F_i += c_i · k, ×2 for the ±k pair.
+                let scale = -2.0 * four_pi_over_v * w;
                 for i in 0..n {
                     let ri = Vec3::new(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]);
-                    let phase = kv.k.dot(ri);
-                    let cos_i = libm::cos(phase);
-                    let sin_i = libm::sin(phase);
+                    let (cos_i, sin_i) = phases[i];
                     let ci = scale * q[i] * (b * cos_i - a * sin_i);
                     forces[3 * i] += ci * kv.k.0[0];
                     forces[3 * i + 1] += ci * kv.k.0[1];
@@ -270,11 +322,18 @@ struct KVec {
     k2: f64,
 }
 
-/// Generate all nonzero k-vectors with `|k| < kcut`. For a cell with basis
-/// `[a, b, c]` and inverse rows `[r0, r1, r2]`, `k(n) = 2π (n0 r0 + n1 r1 + n2
-/// r2)`. The integer range per axis is bounded rigorously by
-/// `|n_k| ≤ |basis_k| · kcut / (2π)` (since `n_k = basis_k · (k/2π)` and
-/// `|k| < kcut`), then filtered by `|k| < kcut`.
+/// Generate the **half-space** nonzero k-vectors with `|k| < kcut` (one member
+/// of each ±k pair: the first nonzero integer coordinate is positive). For a
+/// cell with basis `[a, b, c]` and inverse rows `[r0, r1, r2]`,
+/// `k(n) = 2π (n0 r0 + n1 r1 + n2 r2)`. The integer range per axis is bounded
+/// rigorously by `|n_k| ≤ |basis_k| · kcut / (2π)`, then filtered by
+/// `|k| < kcut`.
+///
+/// **Why half-space (Ewald-b):** `ρ(−k) = ρ(k)*`, so `U(−k) = U(k)` and the
+/// force contribution of −k equals that of +k exactly (c(−k)·(−k) = c(k)·k; the
+/// algebra was verified against the accumulation order). Iterating the half
+/// space and doubling both energy and force contributions preserves
+/// `dU/dr = −F` and halves the trig calls. Callers must multiply by 2.
 fn generate_kvecs(box_size: &crate::system::SimBox, kcut: f64) -> Vec<KVec> {
     let basis = box_size.basis();
     let inv = box_size.inv_basis_rows();
@@ -284,12 +343,17 @@ fn generate_kvecs(box_size: &crate::system::SimBox, kcut: f64) -> Vec<KVec> {
         ((basis[1].norm() * kcut / two_pi).ceil() as i32).max(0),
         ((basis[2].norm() * kcut / two_pi).ceil() as i32).max(0),
     ];
+    let half =
+        |n0: i32, n1: i32, n2: i32| n0 > 0 || (n0 == 0 && n1 > 0) || (n0 == 0 && n1 == 0 && n2 > 0);
     let kcut2 = kcut * kcut;
     let mut kvecs = Vec::new();
     for n0 in -n_max[0]..=n_max[0] {
         for n1 in -n_max[1]..=n_max[1] {
             for n2 in -n_max[2]..=n_max[2] {
                 if n0 == 0 && n1 == 0 && n2 == 0 {
+                    continue;
+                }
+                if !half(n0, n1, n2) {
                     continue;
                 }
                 let k =

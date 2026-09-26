@@ -105,7 +105,7 @@ impl Simulation {
 
         init_velocities(&mut system, config.run.initial_temperature, config.run.seed);
 
-        let (pair_model, cutoff) = build_model(&config.model)?;
+        let (pair_model, cutoff) = build_model(&config.model, base_dir)?;
         // Species-range validation: a multi-species structure (rocksalt sets
         // species {0,1}; random_alloy whatever it was asked for) fed to a
         // single-type model would panic with "index out of bounds" inside the
@@ -527,7 +527,7 @@ fn init_velocities(system: &mut System, temperature: f64, seed: u64) {
     }
 }
 
-fn build_model(spec: &ModelSpec) -> Result<(PairForceModel, f64)> {
+fn build_model(spec: &ModelSpec, base_dir: &Path) -> Result<(PairForceModel, f64)> {
     let potential: Box<dyn PairPotential> = match spec {
         ModelSpec::LennardJones {
             sigma,
@@ -701,8 +701,13 @@ fn build_model(spec: &ModelSpec) -> Result<(PairForceModel, f64)> {
             file,
             interpolation,
         } => {
-            let text = std::fs::read_to_string(file).map_err(|e| {
-                ModenaError::Input(format!("tabulated potential file `{file}`: {e}"))
+            // Resolve relative to the input file's directory like every other
+            // path in the schema (XYZ structure, trajectory, log outputs).
+            let text = std::fs::read_to_string(base_dir.join(file)).map_err(|e| {
+                ModenaError::Input(format!(
+                    "tabulated potential file `{}`: {e}",
+                    base_dir.join(file).display()
+                ))
             })?;
             let interp = match interpolation {
                 InterpKindSpec::Linear => InterpKind::Linear,

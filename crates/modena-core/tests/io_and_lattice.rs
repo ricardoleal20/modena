@@ -374,3 +374,101 @@ mod box_tests {
         assert!((SimBox::cubic(3.0).volume() - 27.0).abs() < 1e-12);
     }
 }
+
+#[cfg(test)]
+mod xyz_real_units {
+    use super::*;
+    use std::io::Write;
+
+    fn nanos() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    }
+
+    #[test]
+    fn xyz_positions_are_converted_under_real_units() {
+        // Regression (audit critical C2): under units = "real", an XYZ file's
+        // positions were never converted to reduced units — box_size/mass/
+        // charge were scaled but the coordinates come from the file and were
+        // left in Å, silently scattering atoms relative to the reduced box.
+        // Write an Å-scale XYZ (1 atom at (4, 0, 0) Å in a 10 Å box) with
+        // σ = 2.0 (length factor 1/σ = 0.5) and require the built system's
+        // position to be (2, 0, 0) reduced.
+        let xyz_path = {
+            let dir = std::env::temp_dir().join(format!("modena_xyz_{}.xyz", nanos()));
+            let mut f = std::fs::File::create(&dir).unwrap();
+            f.write_all(
+                b"1\nMODENA real-units xyz regression\nAr  4.0  0.0  0.0\n",
+            )
+            .unwrap();
+            dir
+        };
+        let toml = format!(
+            r#"
+units = "real"
+[structure]
+type = "xyz"
+file = "{}"
+box_size = [10.0, 10.0, 10.0]
+element = "Ar"
+[model]
+type = "lennard_jones"
+sigma = 2.0
+epsilon = 1.0
+cutoff = 5.0
+[integrator]
+type = "velocity_verlet"
+dt = 1.0
+[run]
+steps = 0
+initial_temperature = 1.0
+"#,
+            xyz_path.display()
+        );
+        let cfg = modena_core::InputConfig::from_str(&toml).unwrap();
+        let base = xyz_path.parent().unwrap();
+        let sim = modena_core::runner::Simulation::from_config(&cfg, base).unwrap();
+        let sys = sim.system();
+        assert_eq!(sys.n(), 1);
+        // 10 Å box / σ(=2) = 5 reduced; atom at 4 Å → 2 reduced.
+        assert!(sys.box_size.size.0[0] - 5.0 < 1e-12);
+        let p = sys.pos(0);
+        assert!(
+            (p - modena_core::Vec3::new(2.0, 0.0, 0.0)).norm() < 1e-12,
+            "atom must be at the reduced (2,0,0), got {p:?}"
+        );
+        // And under reduced units (no factor), positions pass through untouched.
+        let toml_reduced = format!(
+            r#"
+units = "reduced"
+[structure]
+type = "xyz"
+file = "{}"
+box_size = [10.0, 10.0, 10.0]
+element = "Ar"
+[model]
+type = "lennard_jones"
+sigma = 2.0
+epsilon = 1.0
+cutoff = 5.0
+[integrator]
+type = "velocity_verlet"
+dt = 0.005
+[run]
+steps = 0
+initial_temperature = 1.0
+"#,
+            xyz_path.display()
+        );
+        let cfg_r = modena_core::InputConfig::from_str(&toml_reduced).unwrap();
+        let sim_r = modena_core::runner::Simulation::from_config(&cfg_r, base).unwrap();
+        let pr = sim_r.system().pos(0);
+        assert!(
+            (pr - modena_core::Vec3::new(4.0, 0.0, 0.0)).norm() < 1e-12,
+            "reduced units must pass positions through, got {pr:?}"
+        );
+        let _ = std::fs::remove_file(&xyz_path);
+    }
+}

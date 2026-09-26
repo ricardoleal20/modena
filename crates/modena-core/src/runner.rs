@@ -96,7 +96,12 @@ impl Simulation {
     /// Build a `Simulation` from a parsed config. `base_dir` resolves relative
     /// structure-file paths.
     pub fn from_config(config: &InputConfig, base_dir: &Path) -> Result<Self> {
-        let mut system = build_system(&config.structure, base_dir)?;
+        let to_reduced_length = config
+            .unit_factors
+            .as_ref()
+            .map(|f| f.to_reduced_length(1.0))
+            .unwrap_or(1.0);
+        let mut system = build_system(&config.structure, base_dir, to_reduced_length)?;
 
         init_velocities(&mut system, config.run.initial_temperature, config.run.seed);
 
@@ -367,7 +372,8 @@ fn is_none_barostat(b: &dyn Barostat) -> bool {
     type_name.contains("NoneBarostat")
 }
 
-fn build_system(spec: &StructureSpec, base_dir: &Path) -> Result<System> {
+fn build_system(spec: &StructureSpec, base_dir: &Path, to_reduced_length: f64) -> Result<System> {
+    debug_assert!(to_reduced_length > 0.0);
     match spec {
         StructureSpec::Fcc {
             lattice_constant,
@@ -398,6 +404,18 @@ fn build_system(spec: &StructureSpec, base_dir: &Path) -> Result<System> {
         } => {
             let path = base_dir.join(file);
             let mut sys = read_xyz(&path, SimBox::from_array(*box_size))?;
+            // Real units: `box_size`/masses/charges were converted to reduced
+            // units by `convert_to_reduced`, but the *positions live in the
+            // file* and were never converted — an Å-scale XYZ file under
+            // units = "real" silently placed atoms ~1/σ outside the reduced
+            // box, scattering them under wrapping. Scale them by the same
+            // length factor. (Fcc/random-alloy/rocksalt build positions from
+            // the already-converted `lattice_constant`, so they are fine.)
+            if to_reduced_length != 1.0 {
+                for p in sys.positions.iter_mut() {
+                    *p *= to_reduced_length;
+                }
+            }
             // Ensure element labels are populated.
             for el in sys.elements.iter_mut() {
                 if el == "X" {

@@ -207,6 +207,13 @@ pub struct BondedTopologySpec {
     pub bonds: Vec<BondSpec>,
     #[serde(default)]
     pub angles: Vec<AngleSpec>,
+    /// Exclude bonded 1-2/1-3/1-4 pairs from the *pair* model (a protein force
+    /// field's topology excludes its own covalent neighbors from the
+    /// non-bonded sum). `false` by default — the validation decks (e.g. the
+    /// SHAKE trimers, whose bonded pairs deliberately feel the full LJ)
+    /// rely on the current behavior.
+    #[serde(default)]
+    pub exclude_bonded: bool,
     #[serde(default)]
     pub dihedrals: Vec<DihedralSpec>,
 }

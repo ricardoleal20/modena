@@ -11,8 +11,13 @@
 //!
 //! The shader computes in `f32`; the CPU path is `f64`. The two therefore agree
 //! to single precision (~1e-5 relative), not bit-for-bit. This is the standard
-//! GPU MD trade-off and is acceptable for a throughput backend; a future
-//! `SHADER_FLOAT64` variant is gated behind adapter support.
+//! GPU MD trade-off (LAMMPS's GPU package does the same). Accumulation uses
+//! Kahan compensation in-f32, so the summation error is O(1) instead of
+//! O(n·eps) over the all-pairs loop; the host reduces f32 outputs into f64
+//! (mixed-mode style). A double-precision shader is **not possible on Apple
+//! silicon** (WGSL has no f64 over Metal — gpuweb#2805), so the f32 tier is the
+//! shipped form, validated as a separate single-precision path in
+//! `tests/gpu_pair.rs`.
 //!
 //! ## Scope
 //!
@@ -88,8 +93,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let ri = vec3<f32>(positions[3u*i], positions[3u*i + 1u], positions[3u*i + 2u]);
 
     var f = vec3<f32>(0.0);
+    var f_comp = vec3<f32>(0.0);
     var pe = 0.0;
+    var pe_comp = 0.0;
     var vir = 0.0;
+    var vir_comp = 0.0;
 
     let sigma2 = sigma * sigma;
     for (var j = 0u; j < n; j = j + 1u) {
@@ -112,9 +120,23 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let u = u_raw - u_rc + (r - cutoff) * f_rc;
         let f_over_r = (f_raw - f_rc) / r;
         let fv = d * f_over_r;
-        f = f + fv;
-        pe = pe + 0.5 * u;        // each pair counted from both ends
-        vir = vir + 0.5 * dot(d, fv);
+        let u2 = 0.5 * u;        // each pair counted from both ends
+        let v2 = 0.5 * dot(d, fv);
+        // Kahan (compensated) accumulation: f32 registers, O(1) error instead
+        // of O(n·eps) over the all-pairs loop. Host-side f64 reduction still
+        // applies (LAMMPS mixed-mode style).
+        let fy = fv - f_comp;
+        let ft = f + fy;
+        f_comp = (ft - f) - fy;
+        f = ft;
+        let pey = u2 - pe_comp;
+        let pet = pe + pey;
+        pe_comp = (pet - pe) - pey;
+        pe = pet;
+        let viry = v2 - vir_comp;
+        let virt = vir + viry;
+        vir_comp = (virt - vir) - viry;
+        vir = virt;
     }
 
     forces[3u*i]      = f.x;
@@ -129,14 +151,31 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 ///
 /// Construct with [`new`](Self::new); returns `None` when no usable GPU adapter
 /// exists (so CI without a GPU skips gracefully). The model owns the `wgpu`
-/// device/queue and a pre-compiled compute pipeline; per-call buffers (sized to
-/// the atom count) are created in [`compute`](ForceModel::compute).
+/// device/queue and a pre-compiled compute pipeline; work buffers + bind group
+/// are cached per atom count (see [`ensure_buffers`](Self::ensure_buffers)) — a
+/// previous per-call `create_buffer`×4 cost ~2 ms/step and made the GPU slower
+/// than the CPU below ~1k atoms.
 pub struct GpuPairForceModel {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::ComputePipeline,
     uniform: wgpu::Buffer,
     params: GpuParams,
+    /// Buffers + bind group cached per atom count: creating four buffers and a
+    /// bind group per `compute()` call cost ~2 ms/step (the reason the GPU is
+    /// slower than the CPU below ~1k atoms). Reallocated only when `n`
+    /// changes.
+    buffers: std::sync::Mutex<Option<GpuBuffers>>,
+}
+
+/// Persistent GPU work-set, sized for `n` atoms.
+struct GpuBuffers {
+    n: usize,
+    pos_buf: wgpu::Buffer,
+    force_buf: wgpu::Buffer,
+    aux_buf: wgpu::Buffer,
+    staging: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
 }
 
 impl GpuPairForceModel {
@@ -245,7 +284,73 @@ impl GpuPairForceModel {
             pipeline,
             uniform,
             params,
+            buffers: std::sync::Mutex::new(None),
         })
+    }
+
+    /// Allocate (or re-allocate, only when `n` changed) the buffers + bind
+    /// group. Everything is created once per atom count and reused across
+    /// steps — the per-call `create_buffer`×4 + `create_bind_group` churn that
+    /// cost ~2 ms/step is gone.
+    fn ensure_buffers(&self, n: usize) -> Result<std::sync::MutexGuard<'_, Option<GpuBuffers>>> {
+        let mut g = self.buffers.lock().unwrap();
+        if g.as_ref().is_none_or(|b| b.n != n) {
+            let pos_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("modena gpu pos"),
+                size: (3 * n * 4) as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let force_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("modena gpu forces"),
+                size: (3 * n * 4) as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let aux_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("modena gpu aux"),
+                size: (2 * n * 4) as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("modena gpu staging"),
+                size: (5 * n * 4) as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("modena gpu bg"),
+                layout: &self.pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: pos_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: force_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: aux_buf.as_entire_binding(),
+                    },
+                ],
+            });
+            *g = Some(GpuBuffers {
+                n,
+                pos_buf,
+                force_buf,
+                aux_buf,
+                staging,
+                bind_group,
+            });
+        }
+        Ok(g)
     }
 }
 
@@ -297,57 +402,11 @@ impl ForceModel for GpuPairForceModel {
             pos_f32[3 * i + 1] = p.0[1] as f32;
             pos_f32[3 * i + 2] = p.0[2] as f32;
         }
-        let pos_buf = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("modena gpu pos"),
-                contents: bytemuck::cast_slice(&pos_f32),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
-        let force_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("modena gpu forces"),
-            size: (3 * n * 4) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let aux_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("modena gpu aux"),
-            size: (2 * n * 4) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("modena gpu bg"),
-            layout: &self.pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: pos_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: force_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: aux_buf.as_entire_binding(),
-                },
-            ],
-        });
-
-        // Staging buffer: [forces (3n) | aux (2n)] f32, read back in one map.
-        let staging_size = (5 * n * 4) as wgpu::BufferAddress;
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("modena gpu staging"),
-            size: staging_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // Persistent buffers + bind group, sized (and only reallocated) for n.
+        let bg = self.ensure_buffers(n)?;
+        let buffers = bg.as_ref().expect("ensure_buffers always leaves Some");
+        self.queue
+            .write_buffer(&buffers.pos_buf, 0, bytemuck::cast_slice(&pos_f32));
 
         let mut encoder = self
             .device
@@ -360,14 +419,20 @@ impl ForceModel for GpuPairForceModel {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_bind_group(0, &buffers.bind_group, &[]);
             pass.dispatch_workgroups((n as u32).div_ceil(64), 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&force_buf, 0, &staging, 0, (3 * n * 4) as u64);
         encoder.copy_buffer_to_buffer(
-            &aux_buf,
+            &buffers.force_buf,
             0,
-            &staging,
+            &buffers.staging,
+            0,
+            (3 * n * 4) as u64,
+        );
+        encoder.copy_buffer_to_buffer(
+            &buffers.aux_buf,
+            0,
+            &buffers.staging,
             (3 * n * 4) as u64,
             (2 * n * 4) as u64,
         );
@@ -375,7 +440,8 @@ impl ForceModel for GpuPairForceModel {
 
         // Blocking map (mpsc wakes when the copy + map complete).
         let (tx, rx) = std::sync::mpsc::channel();
-        staging
+        buffers
+            .staging
             .slice(..)
             .map_async(wgpu::MapMode::Read, move |res| {
                 let _ = tx.send(res);
@@ -387,7 +453,7 @@ impl ForceModel for GpuPairForceModel {
             .map_err(|e| ModenaError::Config(format!("wgpu map channel closed: {e}")))?
             .map_err(|e| ModenaError::Config(format!("wgpu buffer map failed: {e}")))?;
 
-        let bytes = staging.slice(..).get_mapped_range();
+        let bytes = buffers.staging.slice(..).get_mapped_range();
         let all: &[f32] = bytemuck::cast_slice(&bytes[..]);
         let forces_f32 = &all[..3 * n];
         let aux_f32 = &all[3 * n..5 * n];
@@ -406,6 +472,9 @@ impl ForceModel for GpuPairForceModel {
         }
         virial.w += w;
         drop(bytes);
+        // Required before the next submit reuses the persistent staging
+        // buffer (the buffers are now cached across steps).
+        buffers.staging.unmap();
         Ok(pe)
     }
 }

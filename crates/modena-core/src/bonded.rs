@@ -272,7 +272,6 @@ fn dihedral_term(
     // aliasing to a no-op for even n. The gradient of φ is unchanged by a
     // constant shift, so the analytic gradient below (derived for `phi`)
     // is correct with it.
-    let phi = phi;
 
     // Energy and dU/dφ (standard convention: cis = 0, trans = π).
     let mut u = 0.0;

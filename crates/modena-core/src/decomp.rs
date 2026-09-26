@@ -15,8 +15,9 @@
 //! force is written to the local ghost copy and reduced back to its owner by
 //! [`Communicator::reverse_ghost_reduce`]). Each pair has exactly one evaluator
 //! and each atom exactly one force accumulator, so the decomposed
-//! force/energy/virial summed over ranks is bit-identical to the serial
-//! half-list evaluation — the correctness anchor in `tests/decomp.rs`.
+//! force/energy/virial summed over ranks equals the serial half-list
+//! evaluation up to floating-point summation order (the tests assert ~1e-9
+//! agreement) — the correctness anchor in `tests/decomp.rs`.
 //!
 //! The [`Communicator`] trait abstracts the transport. The default
 //! [`LocalCommunicator`] simulates `P` ranks in one process (forces written
@@ -304,8 +305,8 @@ impl Communicator for LocalCommunicator {
 
 /// Evaluate the pair force/energy/virial for a single `rank` of a
 /// [`DomainDecomposition`], using the in-process shared `System`. This is the
-/// per-rank kernel underlying [`DomainForceModel`]; summed over all ranks it is
-/// bit-identical to the serial half-list evaluation.
+/// per-rank kernel underlying [`DomainForceModel`]; summed over all ranks it
+/// equals the serial half-list evaluation up to floating-point summation order.
 ///
 /// The rank builds a local view (owned atoms first, then ghosts), a local cell
 /// list over that view (using the *global* box for minimum-image), and evaluates
@@ -398,10 +399,10 @@ fn rank_pair_compute(
 ///
 /// Wraps a [`PairPotential`] and a [`RankGrid`]; `compute` loops over every rank
 /// in the grid (using a [`LocalCommunicator`]), gathering owned + ghost atoms,
-/// building a per-rank cell list, and evaluating the rank's pairs. The result is
-/// bit-identical to [`crate::force_model::PairForceModel`] for any grid
-/// (including multi-rank grids) — the decomposition only partitions the work,
-/// verified in `tests/decomp.rs`.
+/// building a per-rank cell list, and evaluating the rank's pairs. The result
+/// equals [`crate::force_model::PairForceModel`] up to floating-point summation
+/// order for any grid (including multi-rank grids) — the decomposition only
+/// partitions the work, verified in `tests/decomp.rs`.
 ///
 /// This is the in-process reference: it demonstrates and tests the
 /// decomposition algorithm (ownership, ghost halo, per-rank cell lists,

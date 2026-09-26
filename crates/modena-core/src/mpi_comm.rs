@@ -17,10 +17,10 @@
 //!    rank boundaries).
 //! 4. **All-reduce** — potential energy and virial are summed across ranks.
 //!
-//! The result is bit-identical to the serial half-list evaluation: each pair is
-//! evaluated once (by the rank owning the lower-gid atom) and each atom's force
-//! is accumulated exactly once. Verified by `tests/mpi_decomp.rs` under
-//! `mpiexec -n N`.
+//! The result equals the serial half-list evaluation up to floating-point
+//! summation order: each pair is evaluated once (by the rank owning the
+//! lower-gid atom) and each atom's force is accumulated exactly once. Verified
+//! by `tests/mpi_decomp.rs` under `mpiexec -n N` at ~1e-9 agreement.
 //!
 //! Deadlock-free point-to-point exchange: with each neighbor, the higher-ranked
 //! process sends first and the lower-ranked receives first (canonical ordering),

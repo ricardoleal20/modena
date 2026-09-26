@@ -96,11 +96,32 @@ impl Simulation {
     /// Build a `Simulation` from a parsed config. `base_dir` resolves relative
     /// structure-file paths.
     pub fn from_config(config: &InputConfig, base_dir: &Path) -> Result<Self> {
-        let mut system = build_system(&config.structure, base_dir)?;
+        let to_reduced_length = config
+            .unit_factors
+            .as_ref()
+            .map(|f| f.to_reduced_length(1.0))
+            .unwrap_or(1.0);
+        let mut system = build_system(&config.structure, base_dir, to_reduced_length)?;
 
         init_velocities(&mut system, config.run.initial_temperature, config.run.seed);
 
-        let (pair_model, cutoff) = build_model(&config.model)?;
+        let (pair_model, cutoff) = build_model(&config.model, base_dir)?;
+        // Species-range validation: a multi-species structure (rocksalt sets
+        // species {0,1}; random_alloy whatever it was asked for) fed to a
+        // single-type model would panic with "index out of bounds" inside the
+        // parallel force fold — an unhelpful crash at runtime instead of a
+        // config error.
+        if let Some(max_sp) = system.species.iter().max().copied() {
+            let n_types = pair_model.potential.n_types();
+            if max_sp as usize >= n_types {
+                return Err(ModenaError::Config(format!(
+                    "structure uses species index {max_sp}, but the pair model \
+                     has only {n_types} type{s}; configure the model with \
+                     matching [[model.types]] entries",
+                    s = if n_types == 1 { "" } else { "s" }
+                )));
+            }
+        }
         let ewald = build_ewald(&config.electrostatics)?;
         // The shared neighbor list must cover the largest cutoff any sub-model
         // uses — the pair cutoff or the Ewald real-space cutoff.
@@ -367,7 +388,8 @@ fn is_none_barostat(b: &dyn Barostat) -> bool {
     type_name.contains("NoneBarostat")
 }
 
-fn build_system(spec: &StructureSpec, base_dir: &Path) -> Result<System> {
+fn build_system(spec: &StructureSpec, base_dir: &Path, to_reduced_length: f64) -> Result<System> {
+    debug_assert!(to_reduced_length > 0.0);
     match spec {
         StructureSpec::Fcc {
             lattice_constant,
@@ -398,6 +420,18 @@ fn build_system(spec: &StructureSpec, base_dir: &Path) -> Result<System> {
         } => {
             let path = base_dir.join(file);
             let mut sys = read_xyz(&path, SimBox::from_array(*box_size))?;
+            // Real units: `box_size`/masses/charges were converted to reduced
+            // units by `convert_to_reduced`, but the *positions live in the
+            // file* and were never converted — an Å-scale XYZ file under
+            // units = "real" silently placed atoms ~1/σ outside the reduced
+            // box, scattering them under wrapping. Scale them by the same
+            // length factor. (Fcc/random-alloy/rocksalt build positions from
+            // the already-converted `lattice_constant`, so they are fine.)
+            if to_reduced_length != 1.0 {
+                for p in sys.positions.iter_mut() {
+                    *p *= to_reduced_length;
+                }
+            }
             // Ensure element labels are populated.
             for el in sys.elements.iter_mut() {
                 if el == "X" {
@@ -493,7 +527,7 @@ fn init_velocities(system: &mut System, temperature: f64, seed: u64) {
     }
 }
 
-fn build_model(spec: &ModelSpec) -> Result<(PairForceModel, f64)> {
+fn build_model(spec: &ModelSpec, base_dir: &Path) -> Result<(PairForceModel, f64)> {
     let potential: Box<dyn PairPotential> = match spec {
         ModelSpec::LennardJones {
             sigma,
@@ -667,8 +701,13 @@ fn build_model(spec: &ModelSpec) -> Result<(PairForceModel, f64)> {
             file,
             interpolation,
         } => {
-            let text = std::fs::read_to_string(file).map_err(|e| {
-                ModenaError::Input(format!("tabulated potential file `{file}`: {e}"))
+            // Resolve relative to the input file's directory like every other
+            // path in the schema (XYZ structure, trajectory, log outputs).
+            let text = std::fs::read_to_string(base_dir.join(file)).map_err(|e| {
+                ModenaError::Input(format!(
+                    "tabulated potential file `{}`: {e}",
+                    base_dir.join(file).display()
+                ))
             })?;
             let interp = match interpolation {
                 InterpKindSpec::Linear => InterpKind::Linear,

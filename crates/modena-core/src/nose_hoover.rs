@@ -171,7 +171,13 @@ fn propagate_chain(
 ) {
     let m = p_xi.len();
     for &w in &SY3 {
-        let ddt = w * dt / SY3.len() as f64;
+        // Suzuki–Yoshida 3rd order: the composition S₂(wᵢ·dt) advances the
+        // chain by Σ wᵢ·dt = dt in total. The weights already sum to 1, so an
+        // extra `/ SY3.len()` divided the whole propagate by 3 — every NHC run
+        // silently used τ_eff = 3·τ (the user-facing response time was 3× too
+        // slow). The extended-Hamiltonian conservation test cannot catch this
+        // (its bookkeeping balances per substep regardless of the time scale).
+        let ddt = w * dt;
         if ddt == 0.0 {
             continue;
         }

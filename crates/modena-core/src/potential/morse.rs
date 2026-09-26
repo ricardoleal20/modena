@@ -170,6 +170,10 @@ impl PairPotential for Morse {
     fn cutoff(&self) -> f64 {
         self.cutoff
     }
+    #[inline]
+    fn n_types(&self) -> usize {
+        self.n_types
+    }
 
     #[inline]
     fn cutoff2(&self) -> f64 {

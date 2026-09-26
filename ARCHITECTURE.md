@@ -132,7 +132,7 @@ which makes a **single shell** of neighbor subdomains a sufficient ghost halo: a
 pair with true minimum-image distance `< cutoff` has both partners present as
 owned-or-ghost on the owning rank.
 
-### 5.2 Work partition — bit-identical to serial
+### 5.2 Work partition — equal up to floating-point summation order
 
 Pair work is partitioned by ownership of the **lower-global-id atom**: rank `r`
 evaluates pair `(i, j)` (with `gid(i) < gid(j)`) iff atom `i` is owned by `r`.
@@ -140,8 +140,10 @@ The partner `j` is either owned by `r` (a *local* pair — Newton's third law
 writes both `f_i` and `f_j`) or a *ghost* on `r` (its force is written to the
 local ghost-force buffer and reduced back to its owner). **Each pair has exactly
 one evaluator and each atom exactly one force accumulator**, so the decomposed
-force/energy/virial summed over ranks is bit-identical to the serial half-list
-evaluation — the correctness anchor verified in `tests/decomp.rs` (single- and
+force/energy/virial summed over ranks equals the serial half-list evaluation up
+to floating-point summation order (the same pair set, accumulated in
+rank-dependent order — the tests assert agreement at ~10⁻⁹, not bit-equality).
+This is the correctness anchor verified in `tests/decomp.rs` (single- and
 multi-rank == serial, halo sufficiency, post-migration match, decomposed-NVE
 conservation) and across two real MPI ranks in `tests/mpi_decomp.rs`.
 
@@ -212,8 +214,12 @@ independent replicas.
 The streaming runner (`Simulation::run_streaming`) emits a step-level
 `RunEvent` stream (`Started`, `Thermo`, `Frame`, `Finished`, `Failed`) and
 accepts an early-stop flag. The `modena-mcp` crate exposes this over MCP, so an
-LLM agent can launch a run, observe thermodynamic samples and trajectory frames
-as they are produced, and interrupt. File output (CSV log, XYZ trajectory) is
+LLM agent can launch a run, observe thermodynamic samples as they are
+produced, and interrupt. (Frame events carry display-oriented positions whose
+step is forwarded; the trajectory itself is written to disk at full precision,
+exactly as in the blocking CLI path — the trajectory file is the faithful
+record, the MCP layer surfaces the thermochemistry.) File output (CSV log, XYZ
+trajectory) is
 written exactly as in the blocking CLI path, in addition to the callback — so a
 run observed by an agent produces the same on-disk artifacts as a CLI run. The
 blocking `run()` is `run_streaming` with no stop flag and a no-op sink.
@@ -223,11 +229,12 @@ blocking `run()` is `run_streaming` with no stop flag and a no-op sink.
 The force/energy consistency invariant (§2) is encoded as a trait-level
 contract and verified by property-based tests for every potential, not just the
 production LJ. The `ConservationReport` classifies a run's energy drift
-(`Conserved` / `Drifting` / `Diverging`) with explicit thresholds, so a drift
-signal is surfaced as a first-class verdict rather than buried in a log. The
-contract is what makes the parallel decomposition's "bit-identical to serial"
-claim meaningful: if the decomposed forces were not conservative, NVE
-conservation would break even though the one-shot force match passed.
+(`Healthy` / `Warning` / `Drifting`, thresholds 10⁻⁴ / 10⁻³) with explicit
+thresholds, so a drift signal is surfaced as a first-class verdict rather than
+buried in a log. The contract is what makes the parallel decomposition's
+"equal up to FP summation order" claim meaningful: if the decomposed forces
+were not conservative, NVE conservation would break even though the one-shot
+force match passed.
 
 ## 8. Reproducibility
 

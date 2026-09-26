@@ -50,7 +50,10 @@ dumbbell + constrained chain).
   reciprocal-space sum + self correction.
 - PPPM / SPME (particle-mesh) on the roadmap once FFT is wired (`rustfft` /
   `realfft`).
-- Triclinic boxes (general cell tensors) replacing the orthorhombic assumption.
+- Triclinic boxes (general cell tensors) — seam-level only: `SimBox::triclinic`
+  with correct min-image/wrap/inverse, verified against the orthorhombic path.
+  The TOML schema and the parallel decomposition remain orthorhombic; the
+  cell-list ±1 stencil is not safe for sheared cells.
 - Charge assignment per atom (`system.charges`).
 
 **Verified:** Ewald force = −∇U by central finite difference (every atom, all
@@ -124,4 +127,6 @@ behind flags so the default build needs no native MPI/GPU runtime.
 
 - Quantum dynamics / path-integral MD (PIMD) — revisit post-M5.
 - Continuum / finite-element coupling — out of scope until the core is solid.
-- A GUI; the CLI + Python client are the interfaces.
+- A GUI is not the current focus; the CLI and the agent-native MCP interface
+  are the shipped interfaces (the `modena-mcp` crate doubles as the internal
+  surface a future GUI would sit on).

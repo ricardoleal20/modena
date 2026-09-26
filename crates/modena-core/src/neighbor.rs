@@ -33,6 +33,9 @@ pub struct NeighborList {
     built: bool,
     /// Number of grid rebuilds performed (for tests + diagnostics).
     rebuild_count: usize,
+    /// Bonded exclusions: pairs that must never interact through this model
+    /// (1-2/1-3/1-4 in a protein force field).
+    exclusions: ExclSet,
     // Grid state (rebuilt as needed).
     dims: [usize; 3],
     cell_size: [f64; 3],
@@ -40,13 +43,38 @@ pub struct NeighborList {
     next: Vec<i32>, // linked list of atoms within a cell
 }
 
+/// Half-open pair-exclusion set via a sorted mini-scan (exclusion lists are
+/// short — 1-2/1-3/1-4 per residue — a `HashSet` costs more below ~10²).
+#[derive(Default, Clone)]
+struct ExclSet(Vec<(u32, u32)>);
+
+impl ExclSet {
+    fn contains(&self, i: u32, j: u32) -> bool {
+        let (a, b) = if i < j { (i, j) } else { (j, i) };
+        self.0.iter().any(|&(x, y)| x == a && y == b)
+    }
+}
+
 impl NeighborList {
     /// New list with force cutoff `cutoff` and Verlet `skin` (skin = 0 disables
     /// the Verlet optimization — rebuild every `build` call, matching Phase 1).
     pub fn with_skin(cutoff: f64, skin: f64) -> Self {
+        Self::with_skin_exclusions(cutoff, skin, &[])
+    }
+
+    /// Like [`with_skin`](Self::with_skin), with bonded-exclusion pairs that
+    /// the pair kernel must never see (`exclusions` are normalized to
+    /// `(min, max)` internally).
+    pub fn with_skin_exclusions(cutoff: f64, skin: f64, exclusions: &[(u32, u32)]) -> Self {
         assert!(cutoff > 0.0, "neighbor cutoff must be > 0");
         assert!(skin >= 0.0, "skin must be >= 0");
         let list_cutoff = cutoff + skin;
+        let excl = ExclSet(
+            exclusions
+                .iter()
+                .map(|&(i, j)| if i < j { (i, j) } else { (j, i) })
+                .collect(),
+        );
         Self {
             cutoff,
             skin,
@@ -57,6 +85,7 @@ impl NeighborList {
             ref_box: [0.0; 3],
             built: false,
             rebuild_count: 0,
+            exclusions: excl,
             dims: [1, 1, 1],
             cell_size: [cutoff; 3],
             head: Vec::new(),
@@ -192,6 +221,9 @@ impl NeighborList {
             for i in 0..n {
                 let ri = system.pos(i);
                 for j in (i + 1)..n {
+                    if self.exclusions.contains(i as u32, j as u32) {
+                        continue;
+                    }
                     let d = box_size.min_image(ri - system.pos(j));
                     if d.norm2() < lc2 {
                         self.pairs.push((i, j));
@@ -240,8 +272,8 @@ impl NeighborList {
                         let mut p = self.head[c];
                         while p >= 0 {
                             let j = p as usize;
-                            // Half list: only store i < j.
-                            if j > i {
+                            // Half list: only store i < j, skipping exclusions.
+                            if j > i && !self.exclusions.contains(i as u32, j as u32) {
                                 let rj = system.pos(j);
                                 let d = box_size.min_image(ri - rj);
                                 if d.norm2() < lc2 {
@@ -446,6 +478,38 @@ mod tests {
         sys.resize(3);
         nl.build(&sys);
         assert_eq!(nl.rebuild_count(), 3, "atom-count change must rebuild");
+    }
+
+    #[test]
+    fn exclusions_remove_pairs_in_both_paths() {
+        // Three atoms in a 10-box: (0,1) excluded. Both the dims<=3 brute path
+        // and the binned path must skip it.
+        let sys = sys_with(
+            &[
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(0.5, 0.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+            ],
+            10.0,
+        );
+        // dims = floor(10 / 2.5) = 4 -> binned path.
+        let mut nl = NeighborList::with_skin_exclusions(2.5, 0.0, &[(0, 1)]);
+        nl.build(&sys);
+        let mut sorted = nl.pairs().to_vec();
+        sorted.sort();
+        assert_eq!(sorted, vec![(0, 2), (1, 2)], "binned path exclusion");
+        // Small box -> dims <= 3 brute path; reversed declaration must normalize.
+        let mut nl2 = NeighborList::with_skin_exclusions(2.5, 0.0, &[(1, 0)]);
+        let mut sys2 = sys.clone();
+        sys2.box_size = SimBox::cubic(6.0);
+        nl2.build(&sys2);
+        assert!(
+            !nl2.pairs()
+                .iter()
+                .any(|&(a, b)| (a == 0 && b == 1) || (a == 1 && b == 0)),
+            "brute-path exclusion must hold regardless of normalization; got {:?}",
+            nl2.pairs()
+        );
     }
 
     #[test]

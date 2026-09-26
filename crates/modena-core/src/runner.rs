@@ -152,7 +152,25 @@ impl Simulation {
         if !(skin >= 0.0) {
             return Err(ModenaError::Config("run.neighbor_skin must be >= 0".into()));
         }
-        let mut neighbors = NeighborList::with_skin(neighbor_cutoff, skin);
+        // Bonded exclusions: with `[topology] exclude_bonded = true`, the pair
+        // model never sees the topology's covalent neighbors (the 1-2, 1-3,
+        // and 1-4 pairs of a protein force field). The bonded model still
+        // evaluates those pairs — exclusion only gates the *pair* LJ sum.
+        let mut exclusions: Vec<(u32, u32)> = Vec::new();
+        if let Some(topo_spec) = &config.topology {
+            if topo_spec.exclude_bonded {
+                for b in &topo_spec.bonds {
+                    exclusions.push((b.atoms[0] as u32, b.atoms[1] as u32));
+                }
+                for a in &topo_spec.angles {
+                    exclusions.push((a.atoms[0] as u32, a.atoms[2] as u32));
+                }
+                for d in &topo_spec.dihedrals {
+                    exclusions.push((d.atoms[0] as u32, d.atoms[3] as u32));
+                }
+            }
+        }
+        let mut neighbors = NeighborList::with_skin_exclusions(neighbor_cutoff, skin, &exclusions);
         let constraints = config.constraints.as_ref().map(build_constraints);
         let integrator = build_integrator(&config.integrator, constraints);
         let thermostat = build_thermostat(&config.thermostat, &config.integrator);

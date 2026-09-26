@@ -135,6 +135,60 @@ impl ForceModel for PairForceModel {
     }
 }
 
+impl PairForceModel {
+    /// Deterministic force evaluation: identical numerics regardless of
+    /// thread count or machine, because the pair sum is accumulated in a fixed
+    /// serial order (the parallel path's chunked reduction is not
+    /// order-deterministic at >1 thread — OpenMM solves the same problem with
+    /// `CpuDeterministicForces`). Slightly slower at large N; for the paper,
+    /// run-to-run identifiability is worth it when it matters.
+    pub fn compute_deterministic(
+        &self,
+        system: &mut System,
+        virial: &mut Virial,
+        neighbors: &mut NeighborList,
+    ) -> Result<f64> {
+        neighbors.build(system);
+        let cutoff2 = self.potential.cutoff2();
+        let n = system.n();
+        if n == 0 {
+            virial.w = 0.0;
+            return Ok(0.0);
+        }
+        let (pe, w) = if let Some(lj) = self
+            .potential
+            .as_any()
+            .and_then(|a| a.downcast_ref::<LennardJones>())
+        {
+            pair_pass(
+                lj,
+                neighbors.pairs(),
+                n,
+                &system.positions,
+                &system.species,
+                system.box_size,
+                cutoff2,
+                true, // serial
+                &mut system.forces,
+            )
+        } else {
+            pair_pass(
+                &*self.potential,
+                neighbors.pairs(),
+                n,
+                &system.positions,
+                &system.species,
+                system.box_size,
+                cutoff2,
+                true, // serial
+                &mut system.forces,
+            )
+        };
+        virial.w += w;
+        Ok(pe)
+    }
+}
+
 /// Above this half-pair count the parallel path is faster than a serial pass
 /// on the default rayon pool; below it, rayon's per-split allocations and
 /// work-stealing churn make the *default* pool slower than one thread

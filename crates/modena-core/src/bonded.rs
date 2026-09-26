@@ -115,6 +115,7 @@ impl ForceModel for BondedForceModel {
                 system.pos(a.k),
                 a.theta0,
                 a.ktheta,
+                box_size,
             );
             system.add_force(a.i, fi);
             system.add_force(a.j, fj);
@@ -175,9 +176,20 @@ fn bond_term(
 // ---------------------------------------------------------------------------
 
 #[inline]
-fn angle_term(ri: Vec3, rj: Vec3, rk: Vec3, theta0: f64, k: f64) -> (f64, Vec3, Vec3, Vec3, f64) {
-    let r1 = ri - rj; // j → i
-    let r2 = rk - rj; // j → k
+fn angle_term(
+    ri: Vec3,
+    rj: Vec3,
+    rk: Vec3,
+    theta0: f64,
+    k: f64,
+    box_size: crate::system::SimBox,
+) -> (f64, Vec3, Vec3, Vec3, f64) {
+    // Minimum-image bond vectors like bond/dihedral: an angle whose atoms
+    // straddle a periodic face (e.g. vertex j at x=3.99, atom i at x=0.01 in a
+    // box of 4.0) would otherwise compute |r1| ≈ 3.98 instead of 0.02 and
+    // produce a garbage angle with huge forces.
+    let r1 = box_size.min_image(ri - rj); // j → i
+    let r2 = box_size.min_image(rk - rj); // j → k
     let a = r1.norm();
     let b = r2.norm();
     let c = (r1.dot(r2) / (a * b)).clamp(-1.0, 1.0);
@@ -251,20 +263,24 @@ fn dihedral_term(
     let sinphi = (m.cross(n)).dot(r_kj) / (mm * nn * r);
     let phi = sinphi.atan2(cosphi);
 
-    // Convention: the raw cross-product angle (`phi` above) is offset by π from
-    // the standard IUPAC/GROMACS dihedral (it gives 0 for trans, π for cis).
-    // Shift to the standard convention (trans = π, cis = 0). The gradient of φ
-    // is unchanged by adding a constant, so the analytic gradient below (derived
-    // for `phi`) is also the gradient of `phi_std`.
-    let phi_std = phi + std::f64::consts::PI;
+    // Convention: `phi` from `atan2(sinφ, cosφ)` is already the standard
+    // IUPAC/GROMACS/OPLS dihedral with cis = 0 and trans = π (verified: a
+    // planar trans arrangement i–j–k–l gives sinφ = 0, cosφ = −1 → φ = π;
+    // planar cis gives cosφ = +1 → φ = 0). No shift is applied — a spurious
+    // +π shift previously inverted the convention, rotating the energy
+    // landscape by π for n = 1 terms (and 180°/n for n-fold terms) while
+    // aliasing to a no-op for even n. The gradient of φ is unchanged by a
+    // constant shift, so the analytic gradient below (derived for `phi`)
+    // is correct with it.
+    let phi = phi;
 
-    // Energy and dU/dφ (standard convention).
+    // Energy and dU/dφ (standard convention: cis = 0, trans = π).
     let mut u = 0.0;
     let mut du_dphi = 0.0;
     for t in terms {
         let nf = t.n as f64;
-        u += t.k * (1.0 + (nf * phi_std - t.delta).cos());
-        du_dphi += -t.k * nf * (nf * phi_std - t.delta).sin();
+        u += t.k * (1.0 + (nf * phi - t.delta).cos());
+        du_dphi += -t.k * nf * (nf * phi - t.delta).sin();
     }
 
     // --- exact gradient of φ w.r.t. the bond vectors ---
@@ -333,11 +349,32 @@ mod tests {
             Vec3::new(0.0, 1.0, 0.0),
             1.7,
             5.0,
+            box10(),
         );
         assert!(u >= 0.0);
         assert!(
             (fi + fj + fk).norm() < 1e-9,
             "angle forces must sum to zero"
+        );
+    }
+
+    #[test]
+    fn angle_correct_across_periodic_boundary() {
+        // Regression: the angle term must use minimum-image bond vectors.
+        // Vertex j sits at the box edge; atom i wrapped to the far side. The
+        // true r1 = (0.02, 0, 0) gives θ = 90°; a raw subtraction gives
+        // |r1| ≈ 3.98 and a wrong angle (near 180°).
+        let (u, _, _, _, _) = angle_term(
+            Vec3::new(0.02, 0.0, 0.0),
+            Vec3::new(3.99, 0.0, 0.0),
+            Vec3::new(3.99, 1.0, 0.0),
+            std::f64::consts::FRAC_PI_2,
+            5.0,
+            SimBox::cubic(4.0),
+        );
+        assert!(
+            u.abs() < 1e-10,
+            "right-angle across the PBC boundary should be nearly at-rest, got U = {u}"
         );
     }
 
@@ -359,5 +396,99 @@ mod tests {
             (fi + fj + fk + fl).norm() < 1e-9,
             "dihedral forces must sum to zero"
         );
+    }
+
+    #[test]
+    fn dihedral_convention_trans_is_pi() {
+        // Regression for the spurious +π shift: with the code's own vector
+        // definitions, a planar trans chain i–j–k–l gives φ = π and a planar
+        // cis chain gives φ = 0 (the standard IUPAC/OPLS convention). An n = 1,
+        // δ = 0 term must therefore have its MINIMUM at trans (U = 0) and its
+        // maximum at cis (U = 2k). Under the buggy +π shift, trans came out as
+        // the maximum — the energy landscape was inverted.
+        let terms = vec![DihedralTerm {
+            n: 1,
+            k: 2.0,
+            delta: 0.0,
+        }];
+        // Planar trans: i and l on opposite sides of the j–k bond.
+        let trans = (
+            Vec3::new(-1.0, 1.0, 0.0),
+            Vec3::zero(),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(2.0, -1.0, 0.0),
+        );
+        let (u_trans, fi, fj, fk, fl, _) =
+            dihedral_term(trans.0, trans.1, trans.2, trans.3, &terms, box10());
+        assert!(
+            u_trans.abs() < 1e-12,
+            "trans must be the n=1 minimum (U = 0), got U = {u_trans}"
+        );
+        assert!(
+            (fi + fj + fk + fl).norm() < 1e-9 && fi.norm() < 1e-9,
+            "trans is an equilibrium of the n=1 term"
+        );
+        // Planar cis: i and l on the same side.
+        let cis = (
+            Vec3::new(-1.0, 1.0, 0.0),
+            Vec3::zero(),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(2.0, 1.0, 0.0),
+        );
+        let (u_cis, _, _, _, _, _) = dihedral_term(cis.0, cis.1, cis.2, cis.3, &terms, box10());
+        assert!(
+            (u_cis - 2.0 * terms[0].k).abs() < 1e-12,
+            "cis must be the n=1 maximum (U = 2k), got U = {u_cis}"
+        );
+    }
+
+    #[test]
+    fn dihedral_n3_minima_at_60_180_300() {
+        // An n = 3, δ = 0 term has minima at φ = 60°, 180°, 300°. The buggy
+        // +π shift rotated this landscape by 60° — trans (180°) became a
+        // maximum instead of a minimum. (Even-n terms alias the shift to a
+        // no-op, which is why the existing tests never caught it.)
+        let terms = vec![DihedralTerm {
+            n: 3,
+            k: 1.0,
+            delta: 0.0,
+        }];
+        // Build a chain with dihedral exactly `phi`: start from the trans
+        // geometry (l = (2,−1,0) relative to k) and rotate l about the j–k
+        // axis by `phi − π` (trans is φ = π).
+        let (ri, rj, rk, rl_base) = (
+            Vec3::new(-1.0, 1.0, 0.0),
+            Vec3::zero(),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(2.0, -1.0, 0.0),
+        );
+        let jk = rk - rj;
+        let axis = jk * (1.0 / jk.norm());
+        let u_at = |phi: f64| -> f64 {
+            let w = rotate_about(rl_base - rk, axis, phi - std::f64::consts::PI);
+            dihedral_term(ri, rj, rk, rk + w, &terms, box10()).0
+        };
+        // Minima at 60°, 180°, 300°; maxima at 0°, 120°, 240° (U = k(1+cos3φ)).
+        assert!(
+            u_at(std::f64::consts::PI / 3.0).abs() < 1e-9,
+            "60° must be a minimum (U=0)"
+        );
+        assert!(
+            u_at(std::f64::consts::PI).abs() < 1e-9,
+            "180°/trans must be a minimum (U=0)"
+        );
+        assert!(
+            u_at(5.0 * std::f64::consts::PI / 3.0).abs() < 1e-9,
+            "300° must be a minimum (U=0)"
+        );
+        assert!(
+            (u_at(0.0) - 2.0).abs() < 1e-9,
+            "0°/cis must be a maximum (U=2)"
+        );
+    }
+
+    // Rotation of `v` about the unit axis `k0` by angle `a` (Rodrigues).
+    fn rotate_about(v: Vec3, k0: Vec3, a: f64) -> Vec3 {
+        v * a.cos() + k0.cross(v) * a.sin() + k0 * (k0.dot(v)) * (1.0 - a.cos())
     }
 }

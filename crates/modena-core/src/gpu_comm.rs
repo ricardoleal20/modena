@@ -294,7 +294,7 @@ impl GpuPairForceModel {
     /// cost ~2 ms/step is gone.
     fn ensure_buffers(&self, n: usize) -> Result<std::sync::MutexGuard<'_, Option<GpuBuffers>>> {
         let mut g = self.buffers.lock().unwrap();
-        if g.as_ref().map_or(true, |b| b.n != n) {
+        if g.as_ref().is_none_or(|b| b.n != n) {
             let pos_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("modena gpu pos"),
                 size: (3 * n * 4) as wgpu::BufferAddress,

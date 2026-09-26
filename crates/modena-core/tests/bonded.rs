@@ -135,11 +135,13 @@ proptest! {
     /// Per-atom bonded force == −∇U, by central finite difference on total PE.
     #[test]
     fn bonded_force_is_negative_gradient_of_energy(
-        jx in any::<f64>(), jy in any::<f64>(), jz in any::<f64>(),
+        jx in 0.0f64..1.0f64, jy in 0.0f64..1.0f64, jz in 0.0f64..1.0f64,
     ) {
         let (mut sys, topo) = molecule();
         // Jitter every atom by a small random amount so the configuration is
         // generic (avoids measure-zero coincidences like θ = θ0 or φ at an extremum).
+        // Bounded generators: `any::<f64>()` overflows `jx * seed` to ±Inf for
+        // |jx| ~ 1e308 → NaN jitter → FD NaN (flaky CI failure, fixed).
         let j = 0.08;
         for i in 0..sys.n() {
             let seed = (i as f64) * 0.37;

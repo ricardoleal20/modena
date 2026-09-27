@@ -372,7 +372,9 @@ impl ForceModel for SpmeForceModel {
 /// Cached per-k-point influence factors: `fac = α·e^{−k²/4κ²}/(k²·b²)` and
 /// the strain-virial factor `vfac = 1 − k²/(2κ²)`. Pure functions of (κ, box,
 /// mesh) — computed once and reused every step (the same pattern as the direct
-/// Ewald's k-vector cache). `fac = 0` masks the k = 0 plane.
+/// Ewald's k-vector cache). `fac = 0` masks the k = 0 plane. Stored in the
+/// transposed L1 layout `[n2][n1][n0]` — the layout the k-pass runs in (see
+/// [`spme_reciprocal_forces`]).
 struct InfluenceFactors {
     fac: Vec<f64>,
     vfac: Vec<f64>,
@@ -418,22 +420,23 @@ fn influence_factors(kappa: f64, box_size: &SimBox, mesh: [usize; 3]) -> Arc<Inf
         |kh: i64, nn: usize| -> f64 { (4.0 + 2.0 * (two_pi * kh as f64 / nn as f64).cos()) / 6.0 };
     let mut fac = vec![0.0f64; ntot];
     let mut vfac = vec![0.0f64; ntot];
-    for n0i in 0..n0 {
-        let kx = khat(n0, n0i);
-        let phx = two_pi * kx as f64 / l[0];
+    // L1 layout: idx = (n2i*n1 + n1i)*n0 + n0i.
+    for n2i in 0..n2 {
+        let kz = khat(n2, n2i);
+        let phz = two_pi * kz as f64 / l[2];
         for n1i in 0..n1 {
             let ky = khat(n1, n1i);
             let phy = two_pi * ky as f64 / l[1];
-            for n2i in 0..n2 {
-                let kz = khat(n2, n2i);
+            for n0i in 0..n0 {
+                let kx = khat(n0, n0i);
                 if kx == 0 && ky == 0 && kz == 0 {
                     continue; // masked (fac stays 0)
                 }
-                let phz = two_pi * kz as f64 / l[2];
+                let phx = two_pi * kx as f64 / l[0];
                 let k2 = phx * phx + phy * phy + phz * phz;
                 let w = libm::exp(-k2 / (4.0 * kappa2)) / k2;
                 let b = b3(kx, n0) * b3(ky, n1) * b3(kz, n2);
-                let idx = (n0i * n1 + n1i) * n2 + n2i;
+                let idx = (n2i * n1 + n1i) * n0 + n0i;
                 fac[idx] = alpha * w / (b * b);
                 vfac[idx] = 1.0 - k2 / (2.0 * kappa2);
             }
@@ -448,71 +451,78 @@ fn influence_factors(kappa: f64, box_size: &SimBox, mesh: [usize; 3]) -> Arc<Inf
 /// the transform cost on the small test meshes).
 const FFT_SERIAL_POINTS: usize = 1 << 16;
 
-/// In-place 3D FFT along one axis. Axis 2 is contiguous (chunk per line) and
-/// axis 1 splits into independent `i0` slabs — both parallelize across rays;
-/// axis 0 lines span the whole grid and stay serial (transpose is future
-/// work). Each ray owns its scratch + transpose line buffers.
-fn fft_axis(grid: &mut [Complex<f64>], plan: &dyn Fft<f64>, axis: usize, dims: [usize; 3]) {
-    let [n0, n1, n2] = dims;
-    let parallel = n0 * n1 * n2 >= FFT_SERIAL_POINTS;
+/// In-place FFT over a grid viewed as contiguous rows of length `len` — axis
+/// 2 in the L0 layout, axis 0 in the transposed L1 layout. Rows are disjoint,
+/// so rays split cleanly; each ray owns its scratch.
+fn fft_contiguous(grid: &mut [Complex<f64>], plan: &dyn Fft<f64>, len: usize, parallel: bool) {
     let scratch_len = plan.get_inplace_scratch_len().max(1);
-    match axis {
-        2 => {
-            if parallel {
-                grid.par_chunks_exact_mut(n2).for_each(|row| {
-                    let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
-                    plan.process_with_scratch(row, &mut scratch);
-                });
-            } else {
-                let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
-                for row in grid.chunks_exact_mut(n2) {
-                    plan.process_with_scratch(row, &mut scratch);
-                }
-            }
-        }
-        1 => {
-            // Slab i0 = grid[i0*n1*n2 .. (i0+1)*n1*n2): every axis-1 line with
-            // that i0 lives inside the slab, so slabs are disjoint &mut.
-            let slab = n1 * n2;
-            let slab_pass = |slab_grid: &mut [Complex<f64>],
-                             scratch: &mut Vec<Complex<f64>>| {
-                let mut line = vec![Complex::new(0.0, 0.0); n1];
-                for i2 in 0..n2 {
-                    for (t, i1) in (0..n1).enumerate() {
-                        line[t] = slab_grid[i1 * n2 + i2];
-                    }
-                    plan.process_with_scratch(&mut line, scratch);
-                    for (i1, v) in line.iter().enumerate() {
-                        slab_grid[i1 * n2 + i2] = *v;
-                    }
-                }
-            };
-            if parallel {
-                grid.par_chunks_mut(slab).for_each(|slab_grid| {
-                    let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
-                    slab_pass(slab_grid, &mut scratch);
-                });
-            } else {
-                let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
-                for slab_grid in grid.chunks_mut(slab) {
-                    slab_pass(slab_grid, &mut scratch);
-                }
-            }
-        }
-        _ => {
+    if parallel {
+        grid.par_chunks_exact_mut(len).for_each(|row| {
             let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
-            let mut line = vec![Complex::new(0.0, 0.0); n0];
-            for i1 in 0..n1 {
-                for i2 in 0..n2 {
-                    for (t, i0) in (0..n0).enumerate() {
-                        line[t] = grid[(i0 * n1 + i1) * n2 + i2];
-                    }
-                    plan.process_with_scratch(&mut line, &mut scratch);
-                    for (i0, v) in line.iter().enumerate() {
-                        grid[(i0 * n1 + i1) * n2 + i2] = *v;
-                    }
-                }
+            plan.process_with_scratch(row, &mut scratch);
+        });
+    } else {
+        let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
+        for row in grid.chunks_exact_mut(len) {
+            plan.process_with_scratch(row, &mut scratch);
+        }
+    }
+}
+
+/// Axis-1 pass on the L0 layout. Slab i0 = grid[i0*n1*n2 .. (i0+1)*n1*n2]:
+/// every axis-1 line with that i0 lives inside the slab, so slabs are
+/// disjoint &mut and rays split cleanly.
+fn fft_axis1(grid: &mut [Complex<f64>], plan: &dyn Fft<f64>, dims: [usize; 3], parallel: bool) {
+    let [_n0, n1, n2] = dims;
+    let scratch_len = plan.get_inplace_scratch_len().max(1);
+    let slab = n1 * n2;
+    let slab_pass = |slab_grid: &mut [Complex<f64>], scratch: &mut Vec<Complex<f64>>| {
+        let mut line = vec![Complex::new(0.0, 0.0); n1];
+        for i2 in 0..n2 {
+            for (t, i1) in (0..n1).enumerate() {
+                line[t] = slab_grid[i1 * n2 + i2];
             }
+            plan.process_with_scratch(&mut line, scratch);
+            for (i1, v) in line.iter().enumerate() {
+                slab_grid[i1 * n2 + i2] = *v;
+            }
+        }
+    };
+    if parallel {
+        grid.par_chunks_mut(slab).for_each(|slab_grid| {
+            let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
+            slab_pass(slab_grid, &mut scratch);
+        });
+    } else {
+        let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
+        for slab_grid in grid.chunks_mut(slab) {
+            slab_pass(slab_grid, &mut scratch);
+        }
+    }
+}
+
+/// Transpose L0 `[n0][n1][n2]` → L1 `[n2][n1][n0]`:
+/// `dst[(i2*n1+i1)*n0 + i0] = src[(i0*n1+i1)*n2 + i2]`. An involution when
+/// called with the dims reversed — the same function transposes back.
+/// Parallel over L1 slabs (contiguous writes, strided reads).
+fn transpose_021(src: &[Complex<f64>], dst: &mut [Complex<f64>], dims: [usize; 3], parallel: bool) {
+    let [n0, n1, n2] = dims;
+    let l1_slab = n1 * n0;
+    let trans = |i2: usize, dst_slab: &mut [Complex<f64>]| {
+        for i1 in 0..n1 {
+            let dst_row = &mut dst_slab[i1 * n0..(i1 + 1) * n0];
+            for (i0, d) in dst_row.iter_mut().enumerate() {
+                *d = src[(i0 * n1 + i1) * n2 + i2];
+            }
+        }
+    };
+    if parallel {
+        dst.par_chunks_mut(l1_slab)
+            .enumerate()
+            .for_each(|(i2, slab)| trans(i2, slab));
+    } else {
+        for (i2, slab) in dst.chunks_mut(l1_slab).enumerate() {
+            trans(i2, slab);
         }
     }
 }
@@ -560,7 +570,9 @@ pub fn spme_reciprocal_forces(
         }
     }
 
-    // --- 2. forward FFT ---
+    // --- 2. forward FFT: axes 2/1 on the L0 grid, then transpose to L1 ---
+    // ([n2][n1][n0]) and transform axis 0 contiguously — no serial axis pass
+    // remains; one extra grid buffer per call.
     let mut grid: Vec<Complex<f64>> = q.iter().map(|&x| Complex::new(x, 0.0)).collect();
     let mut planner = FftPlanner::<f64>::new();
     let fwd = [
@@ -573,30 +585,33 @@ pub fn spme_reciprocal_forces(
         planner.plan_fft_inverse(n1),
         planner.plan_fft_inverse(n2),
     ];
-    for axis in [2usize, 1, 0] {
-        fft_axis(&mut grid, fwd[axis].as_ref(), axis, mesh);
-    }
+    let parallel = ntot >= FFT_SERIAL_POINTS;
+    fft_contiguous(&mut grid, fwd[2].as_ref(), n2, parallel);
+    fft_axis1(&mut grid, fwd[1].as_ref(), mesh, parallel);
+    let mut l1: Vec<Complex<f64>> = vec![Complex::new(0.0, 0.0); ntot];
+    transpose_021(&grid, &mut l1, mesh, parallel);
+    fft_contiguous(&mut l1, fwd[0].as_ref(), n0, parallel);
 
-    // --- 3. k-pass: energy + strain virial + Q̂' for the force field ---
-    // (influence factors cached per (κ, box, mesh)).
+    // --- 3. k-pass (in the L1 layout): energy + strain virial + Q̂' in place.
+    // (influence factors cached per (κ, box, mesh), in L1 order). ---
     let infl = influence_factors(kappa, box_size, mesh);
-    let mut qa: Vec<Complex<f64>> = vec![Complex::new(0.0, 0.0); ntot];
     let mut e = 0.0f64;
     let mut wr = 0.0f64;
-    for idx in 0..ntot {
-        let f = infl.fac[idx];
-        let qhat = grid[idx];
+    for (dst, (f, vf)) in l1.iter_mut().zip(infl.fac.iter().zip(infl.vfac.iter())) {
+        let qhat = *dst;
         let u_k = f * qhat.norm_sqr();
         e += u_k;
-        wr += u_k * infl.vfac[idx];
-        qa[idx] = qhat * f;
+        wr += u_k * vf;
+        *dst = qhat * f;
     }
 
-    // --- 4. inverse FFT → Re[Φ] (the real-space force field factor). ---
-    let mut phi = qa;
-    for axis in [2usize, 1, 0] {
-        fft_axis(&mut phi, bwd[axis].as_ref(), axis, mesh);
-    }
+    // --- 4. inverse FFT: axis 0 contiguous on L1, transpose back into the
+    // spread grid's allocation, axes 1/2 on L0 → Re[Φ]. ---
+    fft_contiguous(&mut l1, bwd[0].as_ref(), n0, parallel);
+    transpose_021(&l1, &mut grid, [n2, n1, n0], parallel);
+    fft_axis1(&mut grid, bwd[1].as_ref(), mesh, parallel);
+    fft_contiguous(&mut grid, bwd[2].as_ref(), n2, parallel);
+    let phi = grid;
 
     // --- 5. force assembly via the B-spline weight derivatives. ---
     // F_i = −2·q_i·Σ_{m∈stencil} ∂W_i(m)/∂r_i · Re[Φ(m)].

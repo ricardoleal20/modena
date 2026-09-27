@@ -93,6 +93,13 @@ pub struct RunSummary {
 }
 
 impl Simulation {
+    /// Begin a fluent, code-typed configuration (the Rust "modena-language"):
+    /// `Simulation::builder().fcc(..).lj(..).velocity_verlet(..).steps(..).build()?`
+    /// produces the same validated `InputConfig` a TOML file produces.
+    pub fn builder() -> crate::config::SimulationBuilder {
+        crate::config::SimulationBuilder::new()
+    }
+
     /// Build a `Simulation` from a parsed config. `base_dir` resolves relative
     /// structure-file paths.
     pub fn from_config(config: &InputConfig, base_dir: &Path) -> Result<Self> {

@@ -513,6 +513,23 @@ pub struct RunSpec {
     pub log_every: usize,
 }
 
+impl Default for RunSpec {
+    /// The same defaults the TOML parser applies (`trajectory_every` 100,
+    /// `log_every` 10, `neighbor_skin` 0.3, seed 42, T 1.0).
+    fn default() -> Self {
+        Self {
+            steps: 100,
+            initial_temperature: 1.0,
+            seed: 42,
+            neighbor_skin: 0.3,
+            trajectory_file: None,
+            trajectory_every: 100,
+            log_file: None,
+            log_every: 10,
+        }
+    }
+}
+
 fn default_initial_temp() -> f64 {
     1.0
 }
@@ -552,7 +569,7 @@ impl InputConfig {
     }
 
     /// Semantic validation of a parsed config (independent of unit conversion).
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.run.log_every == 0 {
             return Err(ModenaError::Config(
                 "run.log_every must be >= 1 (0 would divide by zero)".into(),

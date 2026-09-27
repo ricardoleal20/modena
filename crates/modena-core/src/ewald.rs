@@ -148,7 +148,7 @@ impl EwaldForceModel {
     /// Reciprocal-space energy `U_rec = (2π/V) Σ_{half-space} 2·|ρ(k)|² w_k`,
     /// `w_k = e^{−k²/4κ²}/k²` — the `2·` counts the ±k pair (half-space
     /// iteration, see `generate_kvecs`). Returns `(energy, n_half_k_vectors)`.
-    fn reciprocal_energy(&self, system: &System) -> Result<(f64, usize)> {
+    pub(crate) fn reciprocal_energy(&self, system: &System) -> Result<(f64, usize)> {
         let v = system.box_size.volume();
         self.ensure_kvec_cache(&system.box_size);
         let g = self.kvec_cache.lock().unwrap();

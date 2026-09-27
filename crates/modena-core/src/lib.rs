@@ -60,7 +60,7 @@ pub use barostat::{
     Barostat, BerendsenBarostat, MonteCarloBarostat, NoneBarostat, ParrinelloRahman,
 };
 pub use bonded::{Angle, Bond, BondedForceModel, BondedTopology, Dihedral, DihedralTerm};
-pub use composite::CompositeForceModel;
+pub use composite::{CompositeForceModel, LongRangeForceModel};
 pub use conservation::{ConservationReport, ConservationVerdict};
 pub use constraints::{Constraint, Constraints};
 pub use decomp::{
@@ -73,8 +73,8 @@ pub use force_model::{ForceModel, PairForceModel, Virial};
 pub use gpu_comm::GpuPairForceModel;
 pub use integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 pub use io::input::{
-    BondedTopologySpec, ConstraintSpec, ConstraintsSpec, EwaldSpec, InputConfig, IntegratorSpec,
-    ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
+    BondedTopologySpec, ConstraintSpec, ConstraintsSpec, EwaldMethod, EwaldSpec, InputConfig,
+    IntegratorSpec, ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
 };
 pub use io::log::LogWriter;
 pub use io::xyz::{read_xyz, TrajectoryWriter};
@@ -89,6 +89,7 @@ pub use potential::{
 };
 pub use replica_exchange::{ReplicaExchange, ReplicaExchangeStats};
 pub use runner::{run_from_file, RunEvent, RunSummary, Simulation};
+pub use spme::SpmeForceModel;
 pub use system::{SimBox, System};
 pub use thermo::Energies;
 pub use thermostat::{Berendsen, NoneThermostat, Thermostat, VelocityRescaling};

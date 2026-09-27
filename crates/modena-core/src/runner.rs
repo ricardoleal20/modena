@@ -11,6 +11,7 @@ use rand_distr::{Distribution, StandardNormal};
 use crate::barostat::{Barostat, BerendsenBarostat, NoneBarostat, ParrinelloRahman};
 use crate::bonded::{Angle, Bond, BondedForceModel, BondedTopology, Dihedral, DihedralTerm};
 use crate::composite::CompositeForceModel;
+use crate::composite::LongRangeForceModel;
 use crate::conservation::ConservationReport;
 use crate::constraints::{Constraint, Constraints};
 use crate::error::{ModenaError, Result};
@@ -18,8 +19,8 @@ use crate::ewald::EwaldForceModel;
 use crate::force_model::{ForceModel, PairForceModel, Virial};
 use crate::integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 use crate::io::input::{
-    BarostatSpec, BondedTopologySpec, ConstraintsSpec, EwaldSpec, InputConfig, IntegratorSpec,
-    InterpKindSpec, ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
+    BarostatSpec, BondedTopologySpec, ConstraintsSpec, EwaldMethod, EwaldSpec, InputConfig,
+    IntegratorSpec, InterpKindSpec, ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
 };
 use crate::io::log::LogWriter;
 use crate::io::xyz::{read_xyz, TrajectoryWriter};
@@ -31,6 +32,7 @@ use crate::potential::{
     LjTypeParams, Morse, MorseOverride, MorseTypeParams, PairPotential, SoftSphere,
     SoftSphereOverride, SoftSphereTypeParams, Tabulated,
 };
+use crate::spme::SpmeForceModel;
 use crate::system::{SimBox, System};
 use crate::thermo::Energies;
 use crate::thermostat::{Berendsen, NoneThermostat, Thermostat, VelocityRescaling};
@@ -129,7 +131,7 @@ impl Simulation {
                 )));
             }
         }
-        let ewald = build_ewald(&config.electrostatics)?;
+        let ewald = build_electrostatics(&config.electrostatics)?;
         // The shared neighbor list must cover the largest cutoff any sub-model
         // uses — the pair cutoff or the Ewald real-space cutoff.
         let neighbor_cutoff = match &ewald {
@@ -145,8 +147,10 @@ impl Simulation {
                 if let Some(topo_spec) = &config.topology {
                     comp = comp.with_bonded(BondedForceModel::new(build_topology(topo_spec)));
                 }
-                if let Some(e) = ewald {
-                    comp = comp.with_ewald(e);
+                match ewald {
+                    Some(LongRangeForceModel::Ewald(e)) => comp = comp.with_ewald(e),
+                    Some(LongRangeForceModel::Spme(s)) => comp = comp.with_spme(s),
+                    None => {}
                 }
                 Box::new(comp)
             }
@@ -846,15 +850,26 @@ fn build_constraints(spec: &ConstraintsSpec) -> Constraints {
     }
 }
 
-/// Translate the TOML Ewald spec into an `EwaldForceModel`. `None` → no
+/// Translate the TOML electrostatics spec into the selected long-range model
+/// (`method = "spme"` → mesh SPME; anything else → direct Ewald). `None` → no
 /// electrostatics (the model composes as a no-op).
-fn build_ewald(spec: &Option<EwaldSpec>) -> Result<Option<EwaldForceModel>> {
+fn build_electrostatics(spec: &Option<EwaldSpec>) -> Result<Option<LongRangeForceModel>> {
     match spec {
-        Some(e) => Ok(Some(EwaldForceModel::new(
-            e.kappa,
-            e.real_cutoff,
-            e.kspace_cutoff,
-        )?)),
+        Some(e) => {
+            let model = match e.method {
+                EwaldMethod::Ewald => LongRangeForceModel::Ewald(EwaldForceModel::new(
+                    e.kappa,
+                    e.real_cutoff,
+                    e.kspace_cutoff,
+                )?),
+                EwaldMethod::Spme => LongRangeForceModel::Spme(SpmeForceModel::new(
+                    e.kappa,
+                    e.real_cutoff,
+                    e.kspace_cutoff,
+                )?),
+            };
+            Ok(Some(model))
+        }
         None => Ok(None),
     }
 }

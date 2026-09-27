@@ -474,8 +474,24 @@ fn default_compressibility() -> f64 {
 /// boundary. Charges are supplied per-atom via the structure spec (Fcc `charge`,
 /// `SpeciesSpec.charge`, or `RockSalt` cation/anion charges), in units of the
 /// elementary charge `e`.
+/// Long-range electrostatics method: `ewald` (direct reciprocal sum, the
+/// default) or `spme` (mesh-based Smooth Particle Ewald, O(N log N) — the
+/// only viable path past a few thousand charged atoms).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum EwaldMethod {
+    /// Direct reciprocal-space Ewald sum (O(N²) in k-vectors × atoms).
+    #[default]
+    Ewald,
+    /// Smooth Particle-Mesh Ewald (B-spline spread + 3D FFT).
+    Spme,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct EwaldSpec {
+    /// Long-range method (`"ewald"` default, `"spme"` for mesh).
+    #[serde(default)]
+    pub method: EwaldMethod,
     /// Ewald screening parameter κ (1/length).
     pub kappa: f64,
     /// Real-space cutoff `r_c` (length).

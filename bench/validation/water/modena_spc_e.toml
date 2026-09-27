@@ -1,0 +1,55 @@
+# MODENA rigid SPC/E liquid water — Tier B item 6 pathfinder deck.
+#
+# 64 rigid SPC/E waters (192 atoms) on a simple-cubic lattice at 0.997 g/cm³
+# with balanced alternating-dipole orientations (no RNG), electrostatic SPME,
+# intra-molecular pairs excluded (the erf correction cancels the mesh part),
+# and the exact per-molecule rigid-water constraint projection.
+#
+# IMPORTANT — the builder emits a COLD lattice. A cold random-orientation
+# lattice collapses violently (MODENA and LAMMPS agree on the huge initial
+# energy — the effect is the model's, not the engine's). Workflow for a
+# liquid benchmark:
+#   1. Equilibrate: add a thermostat block (velocity_rescaling, 298.15 K,
+#      tau ~ 0.1 ps) and run 20k+ steps at dt = 0.0005 ps.
+#   2. Measure: drop the thermostat and run NVE from the equilibrated state
+#      (a resume/restart feature is the pending piece for a one-command flow).
+#
+# Matches the LAMMPS SPC/E reference deck in spirit (O LJ 3.166 Å / 0.1553
+# kcal/mol, q_O = −0.8476 e, q_H = +0.4238 e, r_OH = 1.0 Å, 109.47°); the
+# exact static-energy head-to-head needs a proper LAMMPS bonded+SHAKE deck
+# (special_bonds 0/0/0 + kspace) — documented follow-up.
+
+units = "real"
+
+[structure]
+type = "water"
+n_waters = 64
+density = 0.997
+seed = 7
+
+[model]
+type = "lennard_jones"
+cutoff = 9.0
+[[model.types]]
+sigma = 3.166
+epsilon = 0.1553
+[[model.types]]
+sigma = 3.166
+epsilon = 0.0
+
+[electrostatics]
+method = "spme"
+kappa = 0.34
+real_cutoff = 9.0
+kspace_cutoff = 4.0
+
+[integrator]
+type = "velocity_verlet"
+dt = 0.0005
+
+[run]
+steps = 100
+initial_temperature = 0.0
+seed = 87287
+log_file = "results/modena_thermo.csv"
+log_every = 50

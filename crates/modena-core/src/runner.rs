@@ -13,7 +13,7 @@ use crate::bonded::{Angle, Bond, BondedForceModel, BondedTopology, Dihedral, Dih
 use crate::composite::CompositeForceModel;
 use crate::composite::LongRangeForceModel;
 use crate::conservation::ConservationReport;
-use crate::constraints::{Constraint, Constraints};
+use crate::constraints::{Constraint, Constraints, RigidWater};
 use crate::error::{ModenaError, Result};
 use crate::ewald::EwaldForceModel;
 use crate::force_model::{ForceModel, PairForceModel, Virial};
@@ -24,7 +24,7 @@ use crate::io::input::{
 };
 use crate::io::log::LogWriter;
 use crate::io::xyz::{read_xyz, TrajectoryWriter};
-use crate::lattice::{fcc, random_alloy, rocksalt, AlloySpecies};
+use crate::lattice::{fcc, random_alloy, rocksalt, water_lattice, AlloySpecies};
 use crate::neighbor::NeighborList;
 use crate::nose_hoover::NoseHooverChain;
 use crate::potential::{
@@ -131,7 +131,55 @@ impl Simulation {
                 )));
             }
         }
-        let ewald = build_electrostatics(&config.electrostatics)?;
+        // Bonded exclusions: with `[topology] exclude_bonded = true`, the pair
+        // model never sees the topology's covalent neighbors (the 1-2, 1-3,
+        // and 1-4 pairs of a protein force field). The bonded model still
+        // evaluates those pairs — exclusion only gates the *pair* LJ sum —
+        // while the electrostatics models cancel the excluded charged pairs'
+        // mesh part via the erf correction.
+        let mut exclusions: Vec<(u32, u32)> = Vec::new();
+        if let Some(topo_spec) = &config.topology {
+            if topo_spec.exclude_bonded {
+                for b in &topo_spec.bonds {
+                    exclusions.push((b.atoms[0] as u32, b.atoms[1] as u32));
+                }
+                for a in &topo_spec.angles {
+                    exclusions.push((a.atoms[0] as u32, a.atoms[2] as u32));
+                }
+                for d in &topo_spec.dihedrals {
+                    exclusions.push((d.atoms[0] as u32, d.atoms[3] as u32));
+                }
+            }
+        }
+        // Rigid water: the structure implies its constraints (exact
+        // per-molecule projection) and its intramolecular exclusions.
+        let mut water_constraints: Option<Constraints> = None;
+        if let StructureSpec::Water {
+            n_waters,
+            d_oh,
+            hoh_angle,
+            ..
+        } = &config.structure
+        {
+            let d_hh = 2.0 * d_oh * (hoh_angle.to_radians() * 0.5).sin();
+            let mut waters = Vec::with_capacity(*n_waters as usize);
+            for w in 0..*n_waters as usize {
+                let first = 3 * w;
+                waters.push(RigidWater {
+                    first,
+                    d_oh: *d_oh,
+                    d_hh,
+                });
+                exclusions.push((first as u32, (first + 1) as u32));
+                exclusions.push((first as u32, (first + 2) as u32));
+                exclusions.push(((first + 1) as u32, (first + 2) as u32));
+            }
+            water_constraints = Some(Constraints {
+                bonds: Vec::new(),
+                waters,
+            });
+        }
+        let ewald = build_electrostatics(&config.electrostatics, &exclusions)?;
         // The shared neighbor list must cover the largest cutoff any sub-model
         // uses — the pair cutoff or the Ewald real-space cutoff.
         let neighbor_cutoff = match &ewald {
@@ -163,26 +211,13 @@ impl Simulation {
         if !(skin >= 0.0) {
             return Err(ModenaError::Config("run.neighbor_skin must be >= 0".into()));
         }
-        // Bonded exclusions: with `[topology] exclude_bonded = true`, the pair
-        // model never sees the topology's covalent neighbors (the 1-2, 1-3,
-        // and 1-4 pairs of a protein force field). The bonded model still
-        // evaluates those pairs — exclusion only gates the *pair* LJ sum.
-        let mut exclusions: Vec<(u32, u32)> = Vec::new();
-        if let Some(topo_spec) = &config.topology {
-            if topo_spec.exclude_bonded {
-                for b in &topo_spec.bonds {
-                    exclusions.push((b.atoms[0] as u32, b.atoms[1] as u32));
-                }
-                for a in &topo_spec.angles {
-                    exclusions.push((a.atoms[0] as u32, a.atoms[2] as u32));
-                }
-                for d in &topo_spec.dihedrals {
-                    exclusions.push((d.atoms[0] as u32, d.atoms[3] as u32));
-                }
-            }
-        }
         let mut neighbors = NeighborList::with_skin_exclusions(neighbor_cutoff, skin, &exclusions);
-        let constraints = config.constraints.as_ref().map(build_constraints);
+        let mut constraints = config.constraints.as_ref().map(build_constraints);
+        match (&mut constraints, water_constraints) {
+            (Some(c), Some(wc)) => c.waters.extend(wc.waters),
+            (None, Some(wc)) => constraints = Some(wc),
+            _ => {}
+        }
         let integrator = build_integrator(&config.integrator, constraints);
         let thermostat = build_thermostat(&config.thermostat, &config.integrator);
         let barostat = build_barostat(&config.barostat);
@@ -515,6 +550,28 @@ fn build_system(spec: &StructureSpec, base_dir: &Path, to_reduced_length: f64) -
             *cation_charge,
             *anion_charge,
         )),
+        StructureSpec::Water {
+            n_waters,
+            density,
+            d_oh,
+            hoh_angle,
+            q_o,
+            q_h,
+            m_o,
+            m_h,
+            seed,
+        } => water_lattice(
+            *n_waters as usize,
+            *density,
+            *d_oh,
+            *hoh_angle,
+            *q_o,
+            *q_h,
+            *m_o,
+            *m_h,
+            *seed,
+            to_reduced_length,
+        ),
     }
 }
 
@@ -847,26 +904,32 @@ fn build_constraints(spec: &ConstraintsSpec) -> Constraints {
                 d: c.length,
             })
             .collect(),
+        waters: Vec::new(),
     }
 }
 
 /// Translate the TOML electrostatics spec into the selected long-range model
 /// (`method = "spme"` → mesh SPME; anything else → direct Ewald). `None` → no
 /// electrostatics (the model composes as a no-op).
-fn build_electrostatics(spec: &Option<EwaldSpec>) -> Result<Option<LongRangeForceModel>> {
+fn build_electrostatics(
+    spec: &Option<EwaldSpec>,
+    exclusions: &[(u32, u32)],
+) -> Result<Option<LongRangeForceModel>> {
+    let excluded: Vec<(usize, usize)> = exclusions
+        .iter()
+        .map(|&(i, j)| (i as usize, j as usize))
+        .collect();
     match spec {
         Some(e) => {
             let model = match e.method {
-                EwaldMethod::Ewald => LongRangeForceModel::Ewald(EwaldForceModel::new(
-                    e.kappa,
-                    e.real_cutoff,
-                    e.kspace_cutoff,
-                )?),
-                EwaldMethod::Spme => LongRangeForceModel::Spme(SpmeForceModel::new(
-                    e.kappa,
-                    e.real_cutoff,
-                    e.kspace_cutoff,
-                )?),
+                EwaldMethod::Ewald => LongRangeForceModel::Ewald(
+                    EwaldForceModel::new(e.kappa, e.real_cutoff, e.kspace_cutoff)?
+                        .with_excluded_pairs(excluded),
+                ),
+                EwaldMethod::Spme => LongRangeForceModel::Spme(
+                    SpmeForceModel::new(e.kappa, e.real_cutoff, e.kspace_cutoff)?
+                        .with_excluded_pairs(excluded),
+                ),
             };
             Ok(Some(model))
         }

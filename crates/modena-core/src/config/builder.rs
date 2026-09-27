@@ -15,7 +15,7 @@
 use crate::error::{ModenaError, Result};
 use crate::io::input::{
     BarostatSpec, BondedTopologySpec, ConstraintsSpec, EwaldSpec, InputConfig, IntegratorSpec,
-    MixingRuleSpec, ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
+    ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
 };
 use crate::units::UnitSystem;
 

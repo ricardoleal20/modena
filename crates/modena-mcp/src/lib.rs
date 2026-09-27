@@ -356,6 +356,7 @@ impl RunManager {
             StructureSpec::RockSalt { cation, anion, .. } => {
                 format!("{cation}-{anion}")
             }
+            StructureSpec::Water { .. } => "SPC/E-water".to_string(),
         };
         Ok(BuildSystemResult {
             atoms: n,
@@ -382,6 +383,7 @@ impl RunManager {
             StructureSpec::RandomAlloy { replicas, .. } => {
                 4 * (replicas[0] as usize) * (replicas[1] as usize) * (replicas[2] as usize)
             }
+            StructureSpec::Water { n_waters, .. } => 3 * *n_waters as usize,
             StructureSpec::RockSalt { replicas, .. } => {
                 8 * (replicas[0] as usize) * (replicas[1] as usize) * (replicas[2] as usize)
             }
@@ -815,6 +817,29 @@ fn build_structure(
                 *anion_charge,
             ))
         }
+        StructureSpec::Water {
+            n_waters,
+            density,
+            d_oh,
+            hoh_angle,
+            q_o,
+            q_h,
+            m_o,
+            m_h,
+            seed,
+        } => lattice::water_lattice(
+            *n_waters as usize,
+            *density,
+            *d_oh,
+            *hoh_angle,
+            *q_o,
+            *q_h,
+            *m_o,
+            *m_h,
+            *seed,
+            1.0, // the MCP operates on reduced-unit configs; lengths pre-converted
+        )
+        .map_err(|e| McpError::InvalidInput(e.to_string())),
     }
 }
 
@@ -920,6 +945,7 @@ fn structure_kind(s: &StructureSpec) -> &'static str {
         StructureSpec::Xyz { .. } => "xyz",
         StructureSpec::RandomAlloy { .. } => "random_alloy",
         StructureSpec::RockSalt { .. } => "rocksalt",
+        StructureSpec::Water { .. } => "water",
     }
 }
 

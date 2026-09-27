@@ -63,6 +63,11 @@ pub struct EwaldForceModel {
     /// neighbor-list box-rescale cache). Regenerate only on change.
     #[allow(clippy::type_complexity)]
     kvec_cache: Mutex<Option<KvecCache>>,
+    /// Covalently excluded pairs (e.g. the intramolecular O–H/H–H of rigid
+    /// water). The shared neighbor list already removes their real-space
+    /// (erfc) part; the reciprocal sum still carries their Gaussian part,
+    /// which [`Self::with_excluded_pairs`] cancels via the erf correction.
+    pub excluded_pairs: Vec<(usize, usize)>,
 }
 
 /// Cached k-vector set: `(box lengths, kspace_cutoff, half-space k vectors)`.
@@ -88,6 +93,7 @@ impl EwaldForceModel {
             real_cutoff,
             kspace_cutoff,
             kvec_cache: Mutex::new(None),
+            excluded_pairs: Vec::new(),
         })
     }
 
@@ -115,6 +121,14 @@ impl EwaldForceModel {
         self.real_cutoff
     }
 
+    /// Excluded charged pairs: the neighbor list removes their erfc part and
+    /// the reciprocal sum's Gaussian (erf) part is cancelled explicitly, so an
+    /// excluded pair feels exactly zero Coulomb.
+    pub fn with_excluded_pairs(mut self, pairs: Vec<(usize, usize)>) -> Self {
+        self.excluded_pairs = pairs;
+        self
+    }
+
     /// Recompute the full Ewald energy only (no forces), used by the
     /// finite-difference reference in tests and by MC barostat ΔU. Accumulates
     /// nothing; returns the total potential energy.
@@ -138,6 +152,16 @@ impl EwaldForceModel {
             let qprod = system.charge(i) * system.charge(j);
             u_real += qprod * libm::erfc(kappa * r) / r;
         }
+        // Excluded-pair erf correction (energy only here).
+        let (u_excl, _) = exclusion_correction(
+            kappa,
+            &system.box_size,
+            &system.positions,
+            &system.charges,
+            &self.excluded_pairs,
+            &mut [],
+        );
+        u_real += u_excl;
         // Reciprocal + self + background.
         let (u_rec, _kcount) = self.reciprocal_energy(system)?;
         let u_self = self.self_energy(system);
@@ -191,6 +215,51 @@ impl EwaldForceModel {
         let sum_q: f64 = system.charges.iter().sum();
         -std::f64::consts::PI / (2.0 * v * self.kappa * self.kappa) * sum_q * sum_q
     }
+}
+
+/// The excluded-pair `erf` correction, shared by the direct Ewald and SPME
+/// models. The shared neighbor list removes an excluded pair's real-space
+/// (erfc) part, but the reciprocal sum / mesh still carries its Gaussian
+/// `erf(κr)/r` part — this cancels it, so an excluded pair feels exactly zero
+/// Coulomb:
+///
+/// ```text
+///   U_corr = −q_i q_j erf(κr)/r
+///   F_i    = +q_i q_j [ (2κ/√π) e^{−κ²r²}/r² − erf(κr)/r³ ] (r_i − r_j)
+/// ```
+pub(crate) fn exclusion_correction(
+    kappa: f64,
+    box_size: &crate::system::SimBox,
+    positions: &[f64],
+    charges: &[f64],
+    pairs: &[(usize, usize)],
+    forces: &mut [f64],
+) -> (f64, f64) {
+    let kappa2 = kappa * kappa;
+    let mut u = 0.0;
+    let mut w = 0.0;
+    for &(i, j) in pairs {
+        let ri = Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
+        let rj = Vec3::new(positions[3 * j], positions[3 * j + 1], positions[3 * j + 2]);
+        let d = box_size.min_image(ri - rj);
+        let r2 = d.norm2();
+        if r2 < 1e-14 {
+            continue;
+        }
+        let r = r2.sqrt();
+        let qprod = charges[i] * charges[j];
+        let erf_kr = libm::erf(kappa * r);
+        let exp_kr2 = libm::exp(-kappa2 * r2);
+        u += -qprod * erf_kr / r;
+        let coef = qprod * (TWO_OVER_SQRT_PI * kappa * exp_kr2 / r2 - erf_kr / (r2 * r));
+        for k in 0..3 {
+            let fv = d.0[k] * coef;
+            forces[3 * i + k] += fv;
+            forces[3 * j + k] -= fv;
+            w += d.0[k] * fv;
+        }
+    }
+    (u, w)
 }
 
 impl ForceModel for EwaldForceModel {
@@ -247,6 +316,18 @@ impl ForceModel for EwaldForceModel {
                 }
             }
         }
+
+        // --- Excluded-pair erf correction (their reciprocal part). ---
+        let (u_excl, w_excl) = exclusion_correction(
+            kappa,
+            &box_size,
+            &system.positions,
+            &system.charges,
+            &self.excluded_pairs,
+            &mut forces,
+        );
+        pe += u_excl;
+        w_virial += w_excl;
 
         // --- Reciprocal-space sum (half-space, phases reused). ---
         // F_i = −(4π/V) q_i (B cos_i − A sin_i) w_k · k,  w_k = e^{−k²/4κ²}/k²,
@@ -431,6 +512,55 @@ mod tests {
         assert!(!kvecs.is_empty(), "should generate some k-vectors");
         for kv in &kvecs {
             assert!(kv.k2 < kcut * kcut, "k-vector beyond cutoff: {}", kv.k2);
+        }
+    }
+
+    /// An excluded charged pair feels exactly zero Coulomb: with (0,1)
+    /// excluded (and out of the neighbor list, as the runner wires it), the
+    /// total energy equals the plain energy minus the bare `q_i q_j / r` and
+    /// the forces differ by exactly the bare Coulomb pair force — the erf
+    /// correction cancels what the reciprocal sum still carries.
+    #[test]
+    fn excluded_pair_feels_zero_coulomb() {
+        let mut sys = System::new(SimBox::cubic(12.0));
+        sys.resize(3);
+        sys.set_pos(0, Vec3::new(1.0, 1.0, 1.0));
+        sys.set_pos(1, Vec3::new(2.5, 1.2, 0.8));
+        sys.set_pos(2, Vec3::new(7.0, 8.0, 6.0));
+        sys.charges[0] = 1.0;
+        sys.charges[1] = -0.7;
+        sys.charges[2] = 0.4;
+        let kappa = 0.9;
+        let mut a = sys.clone();
+        let mut b = sys.clone();
+        a.zero_forces();
+        b.zero_forces();
+        let plain = EwaldForceModel::new(kappa, 5.0, 6.0).unwrap();
+        let excl = EwaldForceModel::new(kappa, 5.0, 6.0)
+            .unwrap()
+            .with_excluded_pairs(vec![(0, 1)]);
+        let (mut v1, mut v2) = (Virial::default(), Virial::default());
+        let mut nl1 = NeighborList::with_skin_exclusions(5.0, 0.0, &[(0, 1)]);
+        let mut nl2 = NeighborList::new(5.0);
+        let e_excl = excl.compute(&mut a, &mut v1, &mut nl1).unwrap();
+        let e_plain = plain.compute(&mut b, &mut v2, &mut nl2).unwrap();
+
+        let d = sys.box_size.min_image(sys.pos(0) - sys.pos(1));
+        let r = d.norm();
+        let bare_e = sys.charges[0] * sys.charges[1] / r;
+        assert!(
+            (e_excl - (e_plain - bare_e)).abs() < 1e-8,
+            "energy: excl {e_excl} vs plain−bare {}",
+            e_plain - bare_e
+        );
+        let bare_f = d * (sys.charges[0] * sys.charges[1] / (r * r * r));
+        for k in 0..3 {
+            assert!(
+                (a.forces[k] - (b.forces[k] - bare_f.0[k])).abs() < 1e-8,
+                "force axis {k}: {} vs {}",
+                a.forces[k],
+                b.forces[k] - bare_f.0[k]
+            );
         }
     }
 }

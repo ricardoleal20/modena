@@ -147,6 +147,64 @@ pub enum StructureSpec {
         cation_charge: f64,
         anion_charge: f64,
     },
+    /// Rigid SPC/E water on a simple-cubic lattice at liquid density
+    /// (Tier B item 6 — the explicit-water prerequisite for the protein
+    /// claim). Each molecule is a contiguous (O, H, H) triple with a seeded
+    /// random orientation, held rigid by the exact per-molecule constraint
+    /// projection (the SETTLE role; see `constraints::RigidWater`), with its
+    /// intramolecular pairs excluded from the pair model and electrostatics
+    /// (the erf correction cancels the mesh part). `units = "real"` only —
+    /// the density is physical (g/cm³) and the defaults are the SPC/E
+    /// constants in Å/e/amu.
+    Water {
+        n_waters: u32,
+        /// Liquid density (g/cm³). The box edge follows from the SPC/E
+        /// molecular mass; use perfect-cube counts (64, 216, 512, 1000) for
+        /// an exact lattice fill.
+        #[serde(default = "default_water_density")]
+        density: f64,
+        /// O–H bond length (real: Å). SPC/E default 1.0.
+        #[serde(default = "default_water_d_oh")]
+        d_oh: f64,
+        /// H–O–H angle (degrees). SPC/E default 109.47.
+        #[serde(default = "default_water_hoh")]
+        hoh_angle: f64,
+        /// Charges (real: e). SPC/E defaults ∓0.8476 / +0.4238.
+        #[serde(default = "default_water_q_o")]
+        q_o: f64,
+        #[serde(default = "default_water_q_h")]
+        q_h: f64,
+        /// Masses (real: amu). Defaults 15.9994 / 1.008.
+        #[serde(default = "default_water_m_o")]
+        m_o: f64,
+        #[serde(default = "default_water_m_h")]
+        m_h: f64,
+        /// Orientation RNG seed (reproducible lattices).
+        #[serde(default = "default_seed")]
+        seed: u64,
+    },
+}
+
+fn default_water_density() -> f64 {
+    0.997
+}
+fn default_water_d_oh() -> f64 {
+    1.0
+}
+fn default_water_hoh() -> f64 {
+    109.47
+}
+fn default_water_q_o() -> f64 {
+    -0.8476
+}
+fn default_water_q_h() -> f64 {
+    0.4238
+}
+fn default_water_m_o() -> f64 {
+    15.9994
+}
+fn default_water_m_h() -> f64 {
+    1.008
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -601,6 +659,41 @@ impl InputConfig {
                 "run.initial_temperature must be >= 0".into(),
             ));
         }
+        if let StructureSpec::Water {
+            n_waters,
+            density,
+            d_oh,
+            hoh_angle,
+            ..
+        } = &self.structure
+        {
+            if self.units != UnitSystem::Real {
+                return Err(ModenaError::Config(
+                    "structure type = \"water\" requires units = \"real\" \
+                     (the density is g/cm³ and the defaults are the SPC/E \
+                     constants in Å/e/amu)"
+                        .into(),
+                ));
+            }
+            if *n_waters == 0 {
+                return Err(ModenaError::Config(
+                    "structure n_waters must be >= 1".into(),
+                ));
+            }
+            if !(*density > 0.0) {
+                return Err(ModenaError::Config(
+                    "structure density must be > 0 (g/cm³)".into(),
+                ));
+            }
+            if !(*d_oh > 0.0) {
+                return Err(ModenaError::Config("structure d_oh must be > 0".into()));
+            }
+            if !(0.0..180.0).contains(hoh_angle) {
+                return Err(ModenaError::Config(
+                    "structure hoh_angle must be in (0, 180) degrees".into(),
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -676,6 +769,20 @@ impl InputConfig {
                 }
                 *cation_charge = f.to_reduced_charge(*cation_charge);
                 *anion_charge = f.to_reduced_charge(*anion_charge);
+            }
+            StructureSpec::Water {
+                d_oh,
+                q_o,
+                q_h,
+                m_o,
+                m_h,
+                ..
+            } => {
+                *d_oh = f.to_reduced_length(*d_oh);
+                *q_o = f.to_reduced_charge(*q_o);
+                *q_h = f.to_reduced_charge(*q_h);
+                *m_o = f.to_reduced_mass(*m_o);
+                *m_h = f.to_reduced_mass(*m_h);
             }
         }
 
@@ -974,6 +1081,7 @@ impl StructureSpec {
                 species.first().map(|s| s.mass).unwrap_or(1.0)
             }
             StructureSpec::RockSalt { cation_mass, .. } => cation_mass.unwrap_or(1.0),
+            StructureSpec::Water { m_o, .. } => *m_o,
         }
     }
 }

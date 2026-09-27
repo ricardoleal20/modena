@@ -370,6 +370,7 @@ fn shake_rattle_rigid_dumbbell_conserves_length_and_energy() {
     sys.set_vel(1, Vec3::new(0.0, -0.5, 0.0));
 
     let cons = Constraints {
+        waters: vec![],
         bonds: vec![Constraint { i: 0, j: 1, d: 1.0 }],
     };
     // No forces: an empty bonded model contributes zero PE and zero force.
@@ -412,6 +413,7 @@ fn constrained_molecule_holds_bonds_and_conserves_energy() {
     // constraint). Keep the angles + dihedral as the only forces.
     topo.bonds.clear();
     let cons = Constraints {
+        waters: vec![],
         bonds: vec![
             Constraint { i: 0, j: 1, d: 1.0 },
             Constraint { i: 1, j: 2, d: 1.0 },

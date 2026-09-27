@@ -68,6 +68,24 @@ Buckingham + Coulomb, κ=0.8, r_c=5.0, k_c=7.0 → mesh 125³, 2000 NVE steps.
 - 216-atom deck: SPME ≈ direct Ewald in accuracy (all gates green); at that
   size the direct path is already fine — SPME is for N ≳ 2k.
 
+## Rigid SPC/E water — Tier B item 6 pathfinder
+
+Deck: `bench/validation/water/modena_spc_e.toml` — 64 rigid SPC/E waters
+(192 atoms), SPME (κ=0.34 Å⁻¹, r_c=9 Å, mesh 16³), intra-molecular
+exclusions, exact per-molecule rigid projection.
+
+| 64 waters (192 atoms) | per step |
+|---|---:|
+| MODENA SPME | ~1.5 ms (~7.8 µs/(atom·step)) |
+
+Clean caveats, from `docs/WATER_MODEL.md`: the measured row is in the
+cold-lattice regime (the builder's balanced start still relaxes hard → the
+neighbor list rebuilds every step); a liquid-equilibrium number needs the
+NVT-equilibrate-then-resume workflow (pending restart feature). The
+conservation gates that MATTER — rigid water + SPME + exclusions NVE at
+1.9e-7 over 2000 steps, excluded-pair free flight at 1e-12 — are committed
+tests and hold exactly.
+
 ## What did NOT move (and why it is correct it did not)
 
 - Compiler flags: still 0% on aarch64 (release already `lto="thin"` +

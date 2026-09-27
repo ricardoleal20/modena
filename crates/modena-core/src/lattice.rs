@@ -179,6 +179,102 @@ pub fn rocksalt(
     system
 }
 
+/// Rigid SPC/E water on a simple-cubic lattice at `density` (g/cm³). The box
+/// edge is computed in Å from the SPC/E molecular mass (15.9994 + 2·1.008
+/// amu) and then scaled to the simulation's length units, so the requested
+/// density is exact; use perfect-cube `n_waters` (64, 216, 512, 1000) for a
+/// full lattice fill.
+///
+/// Each molecule is a **contiguous (O, H, H) triple** — the layout the
+/// rigid-water constraint projection chunks over. Orientation is a balanced
+/// alternating-dipole pattern (site-parity flip + a deterministic per-site
+/// twist): a cold *random*-orientation lattice collapses into a deep artifact
+/// minimum (≈ −200 kcal/mol·water on both MODENA and LAMMPS), while the
+/// balanced pattern starts around −5 kcal/mol·water. Species: 0 = O, 1 = H.
+/// `d_oh`/`q_*`/`m_*` arrive already converted to the simulation's units
+/// (reduced under `units = "real"`); `hoh_angle` is unitless degrees. `seed`
+/// is accepted for API symmetry (the orientation is RNG-free).
+#[allow(clippy::too_many_arguments)]
+pub fn water_lattice(
+    n_waters: usize,
+    density_g_cm3: f64,
+    d_oh: f64,
+    hoh_angle_deg: f64,
+    q_o: f64,
+    q_h: f64,
+    m_o: f64,
+    m_h: f64,
+    seed: u64,
+    to_reduced_length: f64,
+) -> Result<System> {
+    if n_waters == 0 {
+        return Err(ModenaError::Config("n_waters must be >= 1".into()));
+    }
+    if !(density_g_cm3 > 0.0) {
+        return Err(ModenaError::Config("density must be > 0 (g/cm³)".into()));
+    }
+    if !(d_oh > 0.0) {
+        return Err(ModenaError::Config("d_oh must be > 0".into()));
+    }
+    // Box edge: Å from the physical mass and density, then to sim units.
+    let m_amu = 15.9994 + 2.0 * 1.008;
+    let vol_a3 = n_waters as f64 * m_amu * 1.66053906660 / density_g_cm3;
+    let edge = vol_a3.cbrt() * to_reduced_length;
+
+    let n_side = (n_waters as f64).cbrt().ceil() as usize;
+    let spacing = edge / n_side as f64;
+
+    // Local-frame geometry: O at the origin, H's symmetric about +x.
+    let half = hoh_angle_deg.to_radians() * 0.5;
+    let h1l = Vec3::new(d_oh * half.cos(), d_oh * half.sin(), 0.0);
+    let h2l = Vec3::new(d_oh * half.cos(), -d_oh * half.sin(), 0.0);
+
+    let mut system = System::new(SimBox::cubic(edge));
+    system.resize(3 * n_waters);
+    let _ = seed;
+    let mut idx = 0usize;
+    'outer: for ix in 0..n_side {
+        for iy in 0..n_side {
+            for iz in 0..n_side {
+                if idx >= n_waters {
+                    break 'outer;
+                }
+                let site =
+                    Vec3::new(spacing * ix as f64, spacing * iy as f64, spacing * iz as f64);
+                // Balanced alternating-dipole orientation: dipole along ±x by
+                // site parity, H's scattered in the yz-plane by a deterministic
+                // per-site twist.
+                let parity = (ix + iy + iz) & 1;
+                let flip = if parity == 0 { 1.0 } else { -1.0 };
+                let twist = ((ix * 7 + iy * 11 + iz * 13) % 24) as f64 * 15.0_f64.to_radians();
+                let (ct, st) = (twist.cos(), twist.sin());
+                let u = Vec3::new(flip, 0.0, 0.0);
+                let v = Vec3::new(0.0, ct, st);
+                let w = Vec3::new(0.0, -st, ct);
+                let rot = |p: Vec3| u * p.0[0] + v * p.0[1] + w * p.0[2];
+                system.set_pos(3 * idx, site);
+                system.set_pos(3 * idx + 1, site + rot(h1l));
+                system.set_pos(3 * idx + 2, site + rot(h2l));
+                system.masses[3 * idx] = m_o;
+                system.masses[3 * idx + 1] = m_h;
+                system.masses[3 * idx + 2] = m_h;
+                system.charges[3 * idx] = q_o;
+                system.charges[3 * idx + 1] = q_h;
+                system.charges[3 * idx + 2] = q_h;
+                system.species[3 * idx] = 0;
+                system.species[3 * idx + 1] = 1;
+                system.species[3 * idx + 2] = 1;
+                system.elements[3 * idx] = "O".into();
+                system.elements[3 * idx + 1] = "H".into();
+                system.elements[3 * idx + 2] = "H".into();
+                idx += 1;
+            }
+        }
+    }
+    system.wrap_positions();
+    Ok(system)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

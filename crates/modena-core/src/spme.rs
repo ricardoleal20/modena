@@ -29,6 +29,7 @@
 use crate::error::{ModenaError, Result};
 use crate::force_model::{ForceModel, Virial};
 use crate::system::{SimBox, System};
+
 use crate::vec3::Vec3;
 
 use std::sync::{Arc, Mutex};
@@ -240,6 +241,10 @@ pub struct SpmeForceModel {
     pub kappa: f64,
     pub real_cutoff: f64,
     pub kspace_cutoff: f64,
+    /// Covalently excluded charged pairs (e.g. intramolecular O–H/H–H of
+    /// rigid water) — same contract as
+    /// [`EwaldForceModel::with_excluded_pairs`](crate::ewald::EwaldForceModel::with_excluded_pairs).
+    pub excluded_pairs: Vec<(usize, usize)>,
 }
 
 impl SpmeForceModel {
@@ -259,7 +264,16 @@ impl SpmeForceModel {
             kappa,
             real_cutoff,
             kspace_cutoff,
+            excluded_pairs: Vec::new(),
         })
+    }
+
+    /// Excluded charged pairs: the neighbor list removes their erfc part and
+    /// the mesh's Gaussian (erf) part is cancelled explicitly (shared
+    /// correction with the direct Ewald).
+    pub fn with_excluded_pairs(mut self, pairs: Vec<(usize, usize)>) -> Self {
+        self.excluded_pairs = pairs;
+        self
     }
 
     /// The real-space cutoff — the shared-neighbor-list max, like
@@ -338,6 +352,16 @@ impl ForceModel for SpmeForceModel {
             neighbors,
             &mut forces,
         );
+        let (u_excl, w_excl) = crate::ewald::exclusion_correction(
+            self.kappa,
+            &system.box_size,
+            &system.positions,
+            &system.charges,
+            &self.excluded_pairs,
+            &mut forces,
+        );
+        let u_real = u_real + u_excl;
+        let w_real = w_real + w_excl;
         // Reciprocal on the mesh. The 4-tap stencil needs ≥4 planes per axis
         // to resolve anything; a smaller mesh means the k-space cutoff is too
         // small for the box (raise it, or use the default direct Ewald).

@@ -79,9 +79,11 @@ Form (orthorhombic, order-4 B-spline, reduced units):
   real-space erfc/self/background code is shared with `ewald.rs` form-wise.
 - Perf plumbing (all in `spme.rs`): influence-factor cache (`fac`/`vfac`
   keyed on κ+box+mesh — kills 1.9M exp/cos per step), 5-smooth mesh rounding
-  (123 → 125; FFT-friendly), reused transpose line buffers, rayon axis-FFT
-  (axis 2 = contiguous chunks, axis 1 = disjoint i0-slabs; axis 0 serial —
-  transpose is future work).
+  (123 → 125; FFT-friendly), reused transpose line buffers, rayon everywhere:
+  axis 2 = contiguous chunks, axis 1 = disjoint i0-slabs, axis 0 via the L1
+  transpose scheme (transpose [n2][n1][n0] once, contiguous axis-0 pass,
+  k-pass in L1 with the cache stored in L1 order, transpose back reusing the
+  spread grid's allocation). No serial axis pass remains (~4 cores effective).
 
 ## Notes
 

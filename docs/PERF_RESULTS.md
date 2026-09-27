@@ -46,14 +46,18 @@ Buckingham + Coulomb, κ=0.8, r_c=5.0, k_c=7.0 → mesh 125³, 2000 NVE steps.
 | 10,648 atoms, 2000 steps | wall | ms/step | drift |
 |---|---:|---:|---|
 | MODENA SPME (first cut) | 546.9 s | 273.4 | 8.0e-7 (Healthy) |
-| **MODENA SPME (influence cache + 5-smooth mesh + rayon axis-FFT)** | **147.1 s** | **73.6** | **8.0e-7 (Healthy)** |
+| MODENA SPME (influence cache + 5-smooth mesh + rayon axes 2/1) | 147.1 s | 73.6 | 8.0e-7 (Healthy) |
+| **MODENA SPME (+ axis-0 L1-transpose; no serial axis pass)** | **~80 s** | **~40** | **8.0e-7 (Healthy)** |
 | MODENA direct Ewald | infeasible | ~70,000 (extrapolated) | — |
 | LAMMPS `pppm` 1e-5 (matched gewald=0.8, serial) | ~481 s CPU | ~240 | — |
 
-- The 3.7× in-PR optimization: influence-factor cache (1.9M exp/cos per step
+- The 6.5× optimization arc: influence-factor cache (1.9M exp/cos per step
   → 0), 5-smooth mesh rounding (123³ → 125³, no prime-41 butterflies), reused
-  transpose line buffers, rayon on the axis-2/axis-1 FFT passes (axis 0 still
-  serial — transpose is the next lever; the run uses ~2 cores).
+  transpose line buffers, rayon on all three axes (axis 0 via the L1-transpose
+  scheme — transpose once, contiguous pass, transpose back into the spread
+  grid's allocation). 273.4 → 73.6 → ~40 ms/step (37–42 measured, load-shared
+  machine); the run now uses ~4 cores effective. Reciprocal pass alone:
+  280 → 25 ms.
 - LAMMPS `pppm` 1e-5 (matched gewald=0.8, same cutoffs) on the same deck:
   480.9 s user CPU single-core (wall 739 s — load-shared with the build; the
   CPU number is the honest one). MODENA SPME: 267 s user CPU (147 s wall at

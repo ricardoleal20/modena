@@ -30,6 +30,7 @@
 pub mod barostat;
 pub mod bonded;
 pub mod composite;
+pub mod config;
 pub mod conservation;
 pub mod constraints;
 pub mod decomp;

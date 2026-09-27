@@ -1,0 +1,63 @@
+# MODENA SPME scaling deck — 10,648-atom NaCl rocksalt (11x11x11 cells).
+# Same physics as bench/validation/ewald/modena.toml (Buckingham + Coulomb,
+# kappa=0.8, real cutoff 5.0, kcut 7.0) at 49x the atoms, with
+# method = "spme": mesh 125^3 (5-smooth rounding of ceil(55*7/pi)).
+# Matched to in_pppm_10k.lammps (kspace_style pppm 1e-5, gewald 0.8).
+# Measured (M3, 2026-09-27): 2000 steps, 147 s wall, 73.6 ms/step,
+# drift 8e-7 (Healthy). Direct Ewald at this size is infeasible
+# (~70 s/step extrapolated from the 216-atom 171 ms/step row).
+
+units = "reduced"
+
+[structure]
+type = "rock_salt"
+lattice_constant = 5.0
+replicas = [11, 11, 11]   # 11*11*11*8 = 10648 atoms
+cation = "Na"
+anion = "Cl"
+cation_charge = 1.0
+anion_charge = -1.0
+
+[model]
+type = "buckingham"
+cutoff = 5.0
+# Two species (Na=0, Cl=1). Cross-pair uses an explicit override so both
+# Na-Na, Na-Cl, and Cl-Cl have identical Buckingham parameters (A=1000,
+# B=1, rho=0.3) — matching the LAMMPS pair_coeff block.
+[[model.types]]
+a = 1000.0
+b = 1.0
+rho = 0.3
+[[model.types]]
+a = 1000.0
+b = 1.0
+rho = 0.3
+[[model.overrides]]
+types = [0, 1]
+a = 1000.0
+b = 1.0
+rho = 0.3
+
+[electrostatics]
+method = "spme"
+# kappa*rc = 4.0 -> erfc(kappa*rc) = 1.5e-8: the real-space truncation at the
+# cutoff is negligible (standard Ewald practice). With kappa = 0.5
+# (kappa*rc = 2.5, erfc = 4.1e-4) the 648 lattice pairs sitting exactly on the
+# r = 5.0 cutoff sphere produce a coherent +0.026 energy jump on the first
+# step — the classic truncated-Ewald discontinuity, which MODENA's
+# ConservationReport surfaces as a drift warning (see VALIDATION.md §Ewald).
+kappa = 0.8
+real_cutoff = 5.0
+kspace_cutoff = 7.0
+
+[integrator]
+type = "velocity_verlet"
+dt = 0.0025
+
+[run]
+steps = 2000
+initial_temperature = 0.1
+seed = 87287
+log_file = "results/modena_thermo.csv"
+log_every = 100
+

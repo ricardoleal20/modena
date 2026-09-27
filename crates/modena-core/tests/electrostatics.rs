@@ -266,6 +266,128 @@ seed = 7
 }
 
 #[test]
+fn spme_ionic_nve_energy_conservation() {
+    // Same ionic deck as the direct-Ewald conservation test, with
+    // `method = "spme"` — the mesh path must conserve energy just as well
+    // (the ik forces are the exact derivative of the mesh energy functional).
+    let toml = r#"
+units = "reduced"
+
+[structure]
+type = "rock_salt"
+lattice_constant = 2.2
+replicas = [2, 2, 2]
+cation = "Na"
+anion = "Cl"
+cation_charge = 1.0
+anion_charge = -1.0
+
+[model]
+type = "soft_sphere"
+cutoff = 2.0
+[[model.types]]
+sigma = 0.9
+epsilon = 0.5
+n = 12
+[[model.types]]
+sigma = 0.9
+epsilon = 0.5
+n = 12
+
+[electrostatics]
+method = "spme"
+kappa = 1.0
+real_cutoff = 2.0
+kspace_cutoff = 4.0
+
+[integrator]
+type = "velocity_verlet"
+dt = 0.004
+
+[run]
+steps = 800
+initial_temperature = 0.01
+seed = 7
+"#;
+    let config = modena_core::InputConfig::from_str(toml).expect("config must parse");
+    let mut sim = Simulation::from_config(&config, Path::new(".")).expect("sim must build");
+
+    let summary = sim.run().expect("run must complete");
+    let drift = summary.conservation.relative_drift;
+    assert!(
+        drift < 1e-2,
+        "SPME ionic NVE relative energy drift too large: {drift:.3e}"
+    );
+    assert!(summary.final_energies.total.is_finite());
+}
+
+#[test]
+fn spme_matches_ewald_deck_energy() {
+    // The same deck under both electrostatics methods: the SPME mesh (6^3 for
+    // this box/cutoff) must reproduce the direct Ewald total energy within
+    // mesh error on the initial (undisplaced, T=0) configuration.
+    let base = r#"
+units = "reduced"
+
+[structure]
+type = "rock_salt"
+lattice_constant = 2.2
+replicas = [2, 2, 2]
+cation = "Na"
+anion = "Cl"
+cation_charge = 1.0
+anion_charge = -1.0
+
+[model]
+type = "soft_sphere"
+cutoff = 2.0
+[[model.types]]
+sigma = 0.9
+epsilon = 0.5
+n = 12
+[[model.types]]
+sigma = 0.9
+epsilon = 0.5
+n = 12
+
+[electrostatics]
+kappa = 1.0
+real_cutoff = 2.0
+kspace_cutoff = 4.0
+
+[integrator]
+type = "velocity_verlet"
+dt = 0.004
+
+[run]
+steps = 0
+initial_temperature = 0.0
+seed = 7
+"#;
+    let run = |method: &str| -> f64 {
+        let toml = if method.is_empty() {
+            base.to_string()
+        } else {
+            base.replacen(
+                "[electrostatics]",
+                &format!("[electrostatics]\nmethod = \"{method}\""),
+                1,
+            )
+        };
+        let config = modena_core::InputConfig::from_str(&toml).expect("config must parse");
+        let mut sim = Simulation::from_config(&config, Path::new(".")).expect("sim must build");
+        let summary = sim.run().expect("run must complete");
+        summary.final_energies.total
+    };
+    let e_ewald = run("");
+    let e_spme = run("spme");
+    assert!(
+        (e_spme - e_ewald).abs() < 1e-2 * e_ewald.abs(),
+        "spme {e_spme} vs ewald {e_ewald}"
+    );
+}
+
+#[test]
 fn ewald_real_space_is_bare_coulomb_for_small_kappa() {
     // As κ → 0, erfc(κr) → 1 and the screening term ∝ κ → 0, so the real-space
     // force approaches bare Coulomb q_i q_j / r². Two ions, one pair.

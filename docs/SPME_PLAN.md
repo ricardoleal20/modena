@@ -1,6 +1,9 @@
 # SPME implementation plan (dedicated session)
 
-Status: **ready to implement** (2026-09-27). This is the Tier-B centerpiece
+Status: **Stages A–C SHIPPED** (2026-09-27, PR: SPME Stage B/C). Stage A
+validated via the α-rule; Stage B forces gated by an exact FD-of-the-mesh-
+functional test; Stage C strain-form virial gated by an isotropic strain-FD
+test. Wired as `[electrostatics] method = "spme"`. This is the Tier-B centerpiece
 for the computational-biology claim (protein + explicit water + PME). The
 direct Ewald is measured ~10.8× behind LAMMPS `ewald` at N=216 even after
 Ewald-b; the reciprocal FFT path is the only way a 20k-atom explicit-water
@@ -46,17 +49,39 @@ Form (orthorhombic, order-4 B-spline, reduced units):
   contiguous; axes 1,2 via chunk transposes into contiguous scratch). Real→
   complex not required for energy (full-complex grid ≤ 36³ ≈ 47k → trivial).
 
-## Stage B — forces (the gradient of the SPME functional)
+## Stage B — forces (the gradient of the SPME functional) — DONE
 
-- ik-differentiation along each axis → 3 inverse FFTs (or FFT + conjugate) →
-  back-interpolation with the derivative weights b′ → per-atom force.
-- Keeps `dU/dr = −F` for the mesh Hamiltonian; FD gate.
+- Implemented as the analytic gradient of the SAME mesh functional: k-pass
+  builds `Q̂' = fac·Q̂` (`fac = α·e^{−k²/4κ²}/(k²·b²)`, k=0 masked), one
+  inverse FFT → `Φ(m)`, then `F_i = −2·q_i·Σ_m ∂W_i(m)/∂r_i·Re[Φ(m)]` with the
+  `m4'` spline-derivative weights (4-tap, sums to 0 → translation-invariant).
+  The un-normalized inverse FFT is exactly right — the N_tot cancels between
+  the energy's DFT pair and the per-atom weight sum.
+- Gate: FD of `spme_reciprocal_energy` vs `spme_reciprocal_forces` (same κ,
+  same mesh) — passes at 1e-4·fmax (the never-separate-U/F-interpolants rule).
+- Cross-check vs direct `EwaldForceModel` on a 0.05-amplitude displaced deck
+  (forces must dominate the B-spline truncation error): energy 1e-3, forces
+  5e-2·fmax at mesh 67³. NOTE: on the *crystalline* 1e-3 deck the error
+  ratio inverts — meshes that are multiples of 6 align atoms with grid nodes
+  (48³/96³ → ~0 spline error; 34³/67³ → the expected (kh)⁴/384). Mesh
+  physics, not a bug.
 
-## Stage C — virial + production wiring
+## Stage C — virial + production wiring — DONE
 
-- Strain-form on the grid (item 4); `[electrostatics] method = "spme"`;
-  composite wiring mirrors Ewald; the real-space erfc/self/background code is
-  reused verbatim from `ewald.rs`.
+- Strain-form virial computed in the same k-pass: `W_rec = Σ_k U_k·(1 −
+  k²/2κ²)` (the form that closes the documented +0.00632 pressure defect;
+  gated by an isotropic strain-FD of the mesh energy — box AND positions
+  scaled, mesh held fixed). The direct Ewald still carries the naive Σ r·F
+  reciprocal virial — SPME deliberately differs (cross-check asserts the
+  split is dominated by the strain term).
+- `[electrostatics] method = "spme"` (serde default `"ewald"`); the runner
+  builds a `LongRangeForceModel::{Ewald,Spme}` for the composite; the
+  real-space erfc/self/background code is shared with `ewald.rs` form-wise.
+- Perf plumbing (all in `spme.rs`): influence-factor cache (`fac`/`vfac`
+  keyed on κ+box+mesh — kills 1.9M exp/cos per step), 5-smooth mesh rounding
+  (123 → 125; FFT-friendly), reused transpose line buffers, rayon axis-FFT
+  (axis 2 = contiguous chunks, axis 1 = disjoint i0-slabs; axis 0 serial —
+  transpose is future work).
 
 ## Notes
 

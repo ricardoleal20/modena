@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "modena"
+version = "0.1.0"
+description = "Configure and drive MODENA molecular-dynamics runs from Python (transport A: CLI subprocess)."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]  # transport B: drive the modena-mcp server (v0.2)
+
+[tool.hatch.build.targets.wheel]
+packages = ["modena"]

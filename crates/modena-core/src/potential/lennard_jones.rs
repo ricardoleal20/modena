@@ -196,17 +196,22 @@ impl PairPotential for LennardJones {
 
     #[inline]
     fn energy_force(&self, r2: f64, ti: u32, tj: u32) -> (f64, f64) {
-        let r = r2.sqrt();
-        let s2 = self.sigma2.get(ti, tj) / r2;
+        // One reciprocal per pair (the divide is the expensive op on M3, ~2× a
+        // FMA): `rinv = 1/√r2 = 1/r`, from which `r = r2·rinv` and
+        // `s2 = σ²·rinv²` (the GROMACS r⁻²-chain; the shift term's `r` is the
+        // only sqrt). Previously this was two divisions (`σ²/r2` and `F_sf/r`).
+        let rinv = 1.0 / r2.sqrt();
+        let r = r2 * rinv;
+        let s2 = self.sigma2.get(ti, tj) * (rinv * rinv);
         let s6 = s2 * s2 * s2;
         let s12 = s6 * s6;
         let e = self.epsilon.get(ti, tj);
         let u_raw = 4.0 * e * (s12 - s6);
-        let f_raw = (24.0 * e / r) * (2.0 * s12 - s6);
+        let f_raw = (24.0 * e * rinv) * (2.0 * s12 - s6);
         let u_rc = self.u_rc.get(ti, tj);
         let f_rc = self.f_rc.get(ti, tj);
         let (u, f_sf) = shifted_force::shift(u_raw, f_raw, r, self.cutoff, u_rc, f_rc);
-        (u, f_sf / r)
+        (u, f_sf * rinv)
     }
 }
 

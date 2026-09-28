@@ -540,6 +540,7 @@ impl RunManager {
             // Hermetic sweeps: no per-run file output (avoid clutter / races).
             base_config.run.trajectory_file = None;
             base_config.run.log_file = None;
+            base_config.run.restart_file = None;
             let run_id = self.run_async(base_config.clone())?;
             run_ids.push(run_id);
         }

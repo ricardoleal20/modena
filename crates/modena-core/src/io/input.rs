@@ -585,11 +585,29 @@ pub struct RunSpec {
     pub log_file: Option<String>,
     #[serde(default = "default_log_every")]
     pub log_every: usize,
+    /// Restore the full mechanical state (box, positions, velocities, step
+    /// counter) from a restart file written by a previous run's
+    /// `restart_file`. The structure must build the same atom count (checked
+    /// at build time); masses/charges/species come from the config, the state
+    /// comes from the file — all in reduced units. Initial velocities are
+    /// taken from the file, not drawn from `initial_temperature`.
+    #[serde(default)]
+    pub restore_file: Option<String>,
+    /// Periodically write a checkpoint of the run state to this file (every
+    /// `restart_every` steps, plus once at the end of the run — including an
+    /// early stop). The canonical equilibrate-then-measure workflow: phase 1
+    /// (NVT) sets `restart_file`, phase 2 (NVE) sets `restore_file`.
+    #[serde(default)]
+    pub restart_file: Option<String>,
+    /// Checkpoint cadence in steps (default 500; must be >= 1).
+    #[serde(default = "default_restart_every")]
+    pub restart_every: usize,
 }
 
 impl Default for RunSpec {
     /// The same defaults the TOML parser applies (`trajectory_every` 100,
-    /// `log_every` 10, `neighbor_skin` 0.3, seed 42, T 1.0).
+    /// `log_every` 10, `neighbor_skin` 0.3, seed 42, T 1.0,
+    /// `restart_every` 500).
     fn default() -> Self {
         Self {
             steps: 100,
@@ -600,6 +618,9 @@ impl Default for RunSpec {
             trajectory_every: 100,
             log_file: None,
             log_every: 10,
+            restore_file: None,
+            restart_file: None,
+            restart_every: 500,
         }
     }
 }
@@ -615,6 +636,9 @@ fn default_traj_every() -> usize {
 }
 fn default_log_every() -> usize {
     10
+}
+fn default_restart_every() -> usize {
+    500
 }
 
 impl InputConfig {
@@ -652,6 +676,11 @@ impl InputConfig {
         if self.run.trajectory_every == 0 {
             return Err(ModenaError::Config(
                 "run.trajectory_every must be >= 1 (0 would divide by zero)".into(),
+            ));
+        }
+        if self.run.restart_every == 0 {
+            return Err(ModenaError::Config(
+                "run.restart_every must be >= 1 (0 would divide by zero)".into(),
             ));
         }
         if self.run.initial_temperature < 0.0 {

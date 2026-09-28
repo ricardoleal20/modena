@@ -1,0 +1,60 @@
+# MODENA rigid SPC/E liquid water — Phase 1: NVT equilibration.
+#
+# Equilibrate the cold lattice (see modena_spc_e.toml for the model) under
+# stochastic velocity rescaling at 298.15 K, then checkpoint the state for
+# the measurement phase (modena_spce_nve_restore.toml restores it with
+# `restore_file` and drops the thermostat for NVE).
+#
+#   modena run -i bench/validation/water/modena_spce_nvt.toml
+#   modena run -i bench/validation/water/modena_spce_nve_restore.toml
+#
+# 300 steps at dt = 0.0005 ps is the smoke-test budget; a production
+# equilibration is 20k+ steps — raise `steps`, the checkpoint at run end
+# always lands on the final state. tau = 0.005 ps (strong coupling) is
+# deliberate: the cold-lattice collapse dumps heat far faster than the
+# tau ~ 0.1 ps of the old suggestion can drain (measured: 300 steps at
+# tau = 0.1 end near 3100 K; at tau = 0.005 near 315 K). Measured NVE
+# follow-up drift (500 steps): ~6.6e-2 after 300 NVT steps, ~1.5e-2 after
+# 1000 (the integration test uses 1000).
+
+units = "real"
+
+[structure]
+type = "water"
+n_waters = 64
+density = 0.997
+seed = 7
+
+[model]
+type = "lennard_jones"
+cutoff = 9.0
+[[model.types]]
+sigma = 3.166
+epsilon = 0.1553
+[[model.types]]
+sigma = 3.166
+epsilon = 0.0
+
+[electrostatics]
+method = "spme"
+kappa = 0.34
+real_cutoff = 9.0
+kspace_cutoff = 4.0
+
+[integrator]
+type = "velocity_verlet"
+dt = 0.0005
+
+[thermostat]
+type = "velocity_rescaling"
+target_temperature = 298.15
+tau = 0.005
+
+[run]
+steps = 300
+initial_temperature = 298.15
+seed = 87287
+log_file = "results/modena_spce_nvt_thermo.csv"
+log_every = 50
+restart_file = "results/modena_spce_nvt.chk"
+restart_every = 500

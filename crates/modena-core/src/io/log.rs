@@ -12,6 +12,10 @@ pub struct LogWriter {
 
 impl LogWriter {
     pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
+        if let Some(parent) = path.as_ref().parent() {
+            // Decks point log_file at results/…; create it on first use.
+            std::fs::create_dir_all(parent)?;
+        }
         let file = OpenOptions::new()
             .create(true)
             .truncate(true)

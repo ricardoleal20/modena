@@ -8,11 +8,11 @@
 # IMPORTANT — the builder emits a COLD lattice. A cold random-orientation
 # lattice collapses violently (MODENA and LAMMPS agree on the huge initial
 # energy — the effect is the model's, not the engine's). Workflow for a
-# liquid benchmark:
-#   1. Equilibrate: add a thermostat block (velocity_rescaling, 298.15 K,
-#      tau ~ 0.1 ps) and run 20k+ steps at dt = 0.0005 ps.
-#   2. Measure: drop the thermostat and run NVE from the equilibrated state
-#      (a resume/restart feature is the pending piece for a one-command flow).
+# liquid benchmark (shipped as decks):
+#   1. Equilibrate: modena_spce_nvt.toml — velocity_rescaling at 298.15 K
+#      (strong coupling, tau = 0.005 ps; 20k+ steps for production).
+#   2. Measure: modena_spce_nve_restore.toml — restores the checkpoint
+#      (restart_file/restore_file) and runs NVE from the equilibrated state.
 #
 # Matches the LAMMPS SPC/E reference deck in spirit (O LJ 3.166 Å / 0.1553
 # kcal/mol, q_O = −0.8476 e, q_H = +0.4238 e, r_OH = 1.0 Å, 109.47°); the

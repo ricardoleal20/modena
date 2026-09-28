@@ -233,29 +233,6 @@ the GPU cell-list now edges past the CPU row at 20k within spread. The
 fence-sync floor (~1.5 ms) still caps the GPU's advantage, and below ~10k the
 serial path (n < 4096) means small-system behavior is unchanged.
 
-## Fresh stamp — G0 attempt (2026-09-28, sha 577eb6f, load ≈ 5)
-
-Best-effort idle-time regeneration of the headline rows on this machine
-(**not fully idle**: load average 4.7–6.6 while the runs plus my own build
-stream ran — treat as a delta-stable stamp, not the paper's final table).
-`bench/bench.sh` RUNS=5:
-
-| row | MODENA | `lmp_serial` | ratio |
-|---|---:|---:|---:|
-| LJ 864 (1t) | 2.07 s / 2000 st (1.20 µs/(at·st)) | 1.30 s (0.75) | **1.6×** |
-| LJ 864 (default threads) | 2.06 s (1.19) | 1.35 s (0.78) | 1.5× |
-| LJ 2048 (1t) | 6.76 s (1.65) | 3.43 s (0.837) | **2.0×** |
-| LJ 2048 (default) | 6.84 s (1.67) | 3.42 s (0.835) | 2.0× |
-| Ewald direct 216 | 94 s (217 µs/(at·st)) | 10.6 s (24.6) | **8.9×** |
-| SPME 10 648 | 65 s / 2000 st (**32.7 ms/st**) | — (pppm pending) | — |
-| CPU 20 000 (VV, 5-run med) | 4.05 ms/st | 7.94 (older ladder) | — |
-| GPU cell-list 20 000 (VV, 5-run med) | 3.69 ms/st | — | — |
-
-Medians of 5 (min within ~2–4%); consistent with the committed rows — the
-LJ single-core gap stays ~1.6–2.0×, the direct-Ewald row ~9×, and the
-SPME/rebuild work holds at the improved levels. Regenerate idle (load < 0.5)
-before the paper.
-
 ## What did NOT move (and why it is correct it did not)
 
 - Compiler flags: still 0% on aarch64 (release already `lto="thin"` +

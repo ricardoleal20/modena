@@ -201,6 +201,38 @@ rebuilt neighbor search (which lifts the CPU row too). The all-pairs kernel
 is retained as the determinism oracle (`tests/gpu_pair.rs` compares
 cell-list vs all-pairs vs serial f64); both kernels hold Healthy drift.
 
+## Parallel neighbor rebuild — the 20k bottleneck, retired
+
+The GPU-d ladder identified the **serial CPU neighbor rebuild** (42 ms/rebuild
+at 20k, ~54 ns/pair) as the shared bottleneck of the large rows. The rebuild
+now parallelizes over `i`-ranges with rayon (`par_chunks().map().collect()`
+preserves the per-chunk order and the chunk sequence, and the per-`i` scan is
+unchanged, so the pair list is **byte-identical to the serial build** — the
+force-accumulation order, and hence runnable determinism, is untouched; a
+`MODENA_SERIAL_NEIGHBOR=1` env knob forces the old path for bench A/B).
+
+Rebuild timing (release, load-shared machine, one core vs the rayon pool):
+
+| n | serial | parallel | speedup |
+|---:|---:|---:|---:|
+| 10 000 | 12.0 ms | 3.06 ms | 3.9× |
+| 20 000 | 42.5 ms | 8.58 ms | 4.9× |
+| 40 000 | 204 ms | 40.9 ms | 5.0× |
+
+Ladder 20 000-atom row, re-measured with the parallel rebuild (5 runs, median
+ms/step, full VV steps, same decks/seed — load-shared machine, G0 still
+mandatory before the paper):
+
+| 20000 atoms | before (G3 ladder) | after parallel rebuild |
+|---:|---:|---:|
+| MODENA CPU default (f64) | 8.19 | **4.05** |
+| MODENA GPU cell-list (f32) | 7.90 | **3.69** |
+
+Both rows roughly halve, drift stays Healthy on both paths (~1.7e-5), and
+the GPU cell-list now edges past the CPU row at 20k within spread. The
+fence-sync floor (~1.5 ms) still caps the GPU's advantage, and below ~10k the
+serial path (n < 4096) means small-system behavior is unchanged.
+
 ## What did NOT move (and why it is correct it did not)
 
 - Compiler flags: still 0% on aarch64 (release already `lto="thin"` +

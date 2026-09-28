@@ -12,6 +12,8 @@
 //! M7: positions read from the flat SoA buffer; minimum-image dispatch goes
 //! through `SimBox::min_image` (the triclinic seam).
 
+use rayon::prelude::*;
+
 use crate::system::System;
 use crate::vec3::Vec3;
 
@@ -54,6 +56,11 @@ impl ExclSet {
         self.0.iter().any(|&(x, y)| x == a && y == b)
     }
 }
+
+/// Atom counts at which the cell-list pair scan parallelizes over `i`-ranges.
+/// Below this the rayon overhead exceeds the scan (mirrors the pair-pass
+/// `SERIAL_PAIR_THRESHOLD` pattern in `force_model.rs`).
+const NEIGHBOR_PAR_MIN: usize = 4096;
 
 impl NeighborList {
     /// New list with force cutoff `cutoff` and Verlet `skin` (skin = 0 disables
@@ -256,36 +263,41 @@ impl NeighborList {
         let dys = stencil_deltas(dims[1]);
         let dzs = stencil_deltas(dims[2]);
 
-        self.pairs.clear();
-        let lc2 = self.list_cutoff2;
-        for i in 0..n {
-            let ri = system.pos(i);
-            let ci = self.cell_of(ri);
-            let (ix, iy, iz) = self.unravel(ci);
-            for &dz in &dzs {
-                for &dy in &dys {
-                    for &dx in &dxs {
-                        let nx = wrap_cell(ix as i32 + dx, dims[0]);
-                        let ny = wrap_cell(iy as i32 + dy, dims[1]);
-                        let nz = wrap_cell(iz as i32 + dz, dims[2]);
-                        let c = nx * dims[1] * dims[2] + ny * dims[2] + nz;
-                        let mut p = self.head[c];
-                        while p >= 0 {
-                            let j = p as usize;
-                            // Half list: only store i < j, skipping exclusions.
-                            if j > i && !self.exclusions.contains(i as u32, j as u32) {
-                                let rj = system.pos(j);
-                                let d = box_size.min_image(ri - rj);
-                                if d.norm2() < lc2 {
-                                    self.pairs.push((i, j));
-                                }
-                            }
-                            p = self.next[j];
-                        }
+        let mut pairs = std::mem::take(&mut self.pairs);
+        pairs.clear(); // mem::take hands us the old list — rebuild from empty
+        // The env knob forces the serial path (reproducibility override; the
+        // parallel path already preserves the exact serial pair order, so this
+        // exists for bench comparison, not determinism).
+        let force_serial = std::env::var("MODENA_SERIAL_NEIGHBOR").is_ok();
+        if n >= NEIGHBOR_PAR_MIN && !force_serial {
+            // Parallel over `i`-ranges, concatenated in order: rayon's indexed
+            // `par_chunks().map().collect()` preserves per-chunk order and the
+            // chunk sequence, and the per-`i` scan is unchanged, so the pair
+            // list is byte-identical to the serial build — which keeps the
+            // force-accumulation order (and hence runnable determinism)
+            // unchanged. The division follows the serial threshold so small
+            // rebuilds (NVE at benchmark sizes) keep today's exact path.
+            let idx: Vec<usize> = (0..n).collect();
+            let chunk = n.div_ceil(rayon::current_num_threads().max(2));
+            let buffers: Vec<Vec<(usize, usize)>> = idx
+                .par_chunks(chunk)
+                .map(|is| {
+                    let mut buf: Vec<(usize, usize)> = Vec::new();
+                    for &i in is {
+                        self.scan_atom(system, i, &dxs, &dys, &dzs, &mut buf);
                     }
-                }
+                    buf
+                })
+                .collect();
+            for buf in buffers {
+                pairs.extend(buf);
+            }
+        } else {
+            for i in 0..n {
+                self.scan_atom(system, i, &dxs, &dys, &dzs, &mut pairs);
             }
         }
+        self.pairs = pairs;
 
         // Snapshot reference positions and box for the skin test.
         self.ref_positions.clear();
@@ -294,6 +306,51 @@ impl NeighborList {
         self.built = true;
     }
 
+
+    /// Scan the ±1-stencil neighbor cells of atom `i` and push every qualifying
+    /// half-list pair `(i, j)` with `j > i`, skipping exclusions, into `out`.
+    /// The shared core of the serial and parallel builds — the pair order (and
+    /// thus the force-accumulation order) is identical in both.
+    #[inline]
+    fn scan_atom(
+        &self,
+        system: &System,
+        i: usize,
+        dxs: &[i32],
+        dys: &[i32],
+        dzs: &[i32],
+        out: &mut Vec<(usize, usize)>,
+    ) {
+        let dims = self.dims;
+        let lc2 = self.list_cutoff2;
+        let box_size = system.box_size;
+        let ri = system.pos(i);
+        let ci = self.cell_of(ri);
+        let (ix, iy, iz) = self.unravel(ci);
+        for &dz in dzs {
+            for &dy in dys {
+                for &dx in dxs {
+                    let nx = wrap_cell(ix as i32 + dx, dims[0]);
+                    let ny = wrap_cell(iy as i32 + dy, dims[1]);
+                    let nz = wrap_cell(iz as i32 + dz, dims[2]);
+                    let c = nx * dims[1] * dims[2] + ny * dims[2] + nz;
+                    let mut p = self.head[c];
+                    while p >= 0 {
+                        let j = p as usize;
+                        // Half list: only store i < j, skipping exclusions.
+                        if j > i && !self.exclusions.contains(i as u32, j as u32) {
+                            let rj = system.pos(j);
+                            let d = box_size.min_image(ri - rj);
+                            if d.norm2() < lc2 {
+                                out.push((i, j));
+                            }
+                        }
+                        p = self.next[j];
+                    }
+                }
+            }
+        }
+    }
     #[inline]
     fn cell_of(&self, r: Vec3) -> usize {
         let dims = self.dims;
@@ -571,5 +628,65 @@ mod tests {
         // rebuild — far fewer than the skinless 11 builds.
         assert!(skinned.rebuild_count() <= 2, "{}", skinned.rebuild_count());
         assert!(bare.rebuild_count() >= 10);
+    }
+
+    /// The parallel cell-list rebuild (n ≥ NEIGHBOR_PAR_MIN) must be
+    /// deterministic (two rebuilds byte-identical — this is what keeps the
+    /// force-accumulation order fixed) and produce exactly the brute-force
+    /// half-list with the same exclusions applied.
+    #[test]
+    fn parallel_rebuild_deterministic_and_complete() {
+        use crate::system::SimBox;
+        use rand::rngs::StdRng;
+        use rand::RngExt;
+        use rand::SeedableRng;
+
+        let n = 4096usize; // exactly the parallel boundary
+        assert!(n >= NEIGHBOR_PAR_MIN, "test must exercise the parallel path");
+        let mut sys = System::new(SimBox::cubic(60.0));
+        sys.resize(n);
+        let mut rng = StdRng::seed_from_u64(11);
+        for i in 0..n {
+            sys.set_pos(
+                i,
+                Vec3::new(
+                    rng.random_range(0.5..59.5),
+                    rng.random_range(0.5..59.5),
+                    rng.random_range(0.5..59.5),
+                ),
+            );
+        }
+        // Exclusion set: a few thousand tagged pairs (some definitely in-range).
+        let excl: Vec<(u32, u32)> = (0..n)
+            .step_by(11)
+            .flat_map(|i| [(i as u32, (i + 1) as u32), (i as u32, (i + 7) as u32)])
+            .collect();
+        let mut nl = NeighborList::with_skin_exclusions(2.5, 0.0, &excl);
+        nl.force_rebuild(&sys);
+        let first = nl.pairs().to_vec();
+        // Determinism.
+        nl.force_rebuild(&sys);
+        nl.force_rebuild(&sys);
+        assert_eq!(nl.pairs(), &first[..], "rebuild must be byte-deterministic");
+        // Completeness: same set as the naive min-image half-list.
+        let lc2 = 2.5 * 2.5;
+        let box_size = sys.box_size;
+        let mut naive: Vec<(usize, usize)> = Vec::new();
+        for i in 0..n {
+            let ri = sys.pos(i);
+            for j in (i + 1)..n {
+                if excl.contains(&(i as u32, j as u32)) || excl.contains(&(j as u32, i as u32)) {
+                    continue;
+                }
+                if box_size.min_image(ri - sys.pos(j)).norm2() < lc2 {
+                    naive.push((i, j));
+                }
+            }
+        }
+        let mut a = first.clone();
+        let mut b = naive;
+        a.sort_unstable();
+        b.sort_unstable();
+        assert_eq!(a, b, "parallel rebuild pair set must equal the brute force");
     }
 }

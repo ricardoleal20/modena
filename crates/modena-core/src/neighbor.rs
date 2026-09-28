@@ -265,9 +265,9 @@ impl NeighborList {
 
         let mut pairs = std::mem::take(&mut self.pairs);
         pairs.clear(); // mem::take hands us the old list — rebuild from empty
-        // The env knob forces the serial path (reproducibility override; the
-        // parallel path already preserves the exact serial pair order, so this
-        // exists for bench comparison, not determinism).
+                       // The env knob forces the serial path (reproducibility override; the
+                       // parallel path already preserves the exact serial pair order, so this
+                       // exists for bench comparison, not determinism).
         let force_serial = std::env::var("MODENA_SERIAL_NEIGHBOR").is_ok();
         if n >= NEIGHBOR_PAR_MIN && !force_serial {
             // Parallel over `i`-ranges, concatenated in order: rayon's indexed
@@ -305,7 +305,6 @@ impl NeighborList {
         self.ref_box = [box_size.size.0[0], box_size.size.0[1], box_size.size.0[2]];
         self.built = true;
     }
-
 
     /// Scan the ±1-stencil neighbor cells of atom `i` and push every qualifying
     /// half-list pair `(i, j)` with `j > i`, skipping exclusions, into `out`.
@@ -642,7 +641,10 @@ mod tests {
         use rand::SeedableRng;
 
         let n = 4096usize; // exactly the parallel boundary
-        assert!(n >= NEIGHBOR_PAR_MIN, "test must exercise the parallel path");
+        assert!(
+            n >= NEIGHBOR_PAR_MIN,
+            "test must exercise the parallel path"
+        );
         let mut sys = System::new(SimBox::cubic(60.0));
         sys.resize(n);
         let mut rng = StdRng::seed_from_u64(11);

@@ -76,15 +76,22 @@ exclusions, exact per-molecule rigid projection.
 
 | 64 waters (192 atoms) | per step |
 |---|---:|
-| MODENA SPME | ~1.5 ms (~7.8 µs/(atom·step)) |
+| MODENA SPME (cold-lattice regime) | ~1.5 ms (~7.8 µs/(atom·step)) |
+| MODENA SPME (NVT-equilibrated, via restart) | **~1.4 ms (~7.3 µs/(atom·step))** |
 
-Clean caveats, from `docs/WATER_MODEL.md`: the measured row is in the
-cold-lattice regime (the builder's balanced start still relaxes hard → the
-neighbor list rebuilds every step); a liquid-equilibrium number needs the
-NVT-equilibrate-then-resume workflow (pending restart feature). The
+The equilibrated row is measured through the restart workflow that shipped
+with it: `modena_spce_nvt.toml` (1000 NVT steps, tau = 0.005 ps) writes a
+checkpoint, `modena_spce_nve_restore.toml` restores it and runs 2000 NVE
+steps at ~1.36–1.45 ms/step (load-shared machine, load avg ~10/11 cores —
+regenerate idle before the paper). The equilibrated melt relaxes less
+violently than the cold lattice, so the step time settles slightly below the
+cold-regime row. Caveats from `docs/WATER_MODEL.md` still apply: 1000 NVT
+steps is a smoke budget, not convergence — the 2000-step NVE follow-up
+drifts |ΔE|/|E| ≈ 4.9e-2 from the ongoing structural relaxation. The
 conservation gates that MATTER — rigid water + SPME + exclusions NVE at
-1.9e-7 over 2000 steps, excluded-pair free flight at 1e-12 — are committed
-tests and hold exactly.
+1.9e-7 over 2000 steps, excluded-pair free flight at 1e-12, and the
+restart seam gates (bit-exact restore; split L+M NVE ≡ one-go L+M) — are
+committed tests and hold exactly.
 
 ## What did NOT move (and why it is correct it did not)
 

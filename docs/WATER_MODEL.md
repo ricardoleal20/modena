@@ -3,7 +3,8 @@
 The explicit-water prerequisite for the computational-biology claim. Shipped:
 the exact per-molecule rigid-water constraint projection (the SETTLE role),
 the erf exclusion correction for charged excluded pairs, the water structure
-builder + `[electrostatics] method` plumbing, and the conservation gates.
+builder + `[electrostatics] method` plumbing, the conservation gates, and the
+restart/checkpoint workflow that closes the equilibrate-then-measure loop.
 
 ## What landed
 
@@ -26,23 +27,42 @@ builder + `[electrostatics] method` plumbing, and the conservation gates.
 - `runner.rs` — water structure auto-produces its `Constraints` + the 3
   intra-molecular exclusions, plumbed into `NeighborList` and into the
   electrostatics models.
+- `io/restart.rs` + `[run] restart_file`/`restore_file`/`restart_every` —
+  the restart/checkpoint workflow: a checkpoint carries the box, SoA
+  positions/velocities, and the step counter (reduced units, text format,
+  17-significant-digit round-trip); a restoring run skips the velocity draw,
+  continues the step counter (log/trajectory labels run across the seam), and
+  rejects an atom-count mismatch. Decks:
+  `bench/validation/water/modena_spce_nvt.toml` (equilibration) →
+  `modena_spce_nve_restore.toml` (measurement). The NVE seam is exact: the
+  restored run's first thermo row equals the checkpoint state bit-for-bit,
+  and a split L+M NVE run reproduces a one-go L+M run at every logged step.
 - `tests/water.rs` — 4 deterministic gates (settle exactness, free flight,
-  full-stack rigid water + SPME + exclusions NVE at 1e-4, builder geometry).
+  full-stack rigid water + SPME + exclusions NVE at 1e-4, builder geometry);
+  `tests/restart.rs` — the round-trip, seam, and two-phase water gates.
 
 ## Measured
 
-- 64-water SPC/E step: ~1.5 ms/step (192 atoms) incl. the cold-lattice
-  regime; SPME mesh 16³ for κ=0.34 Å⁻¹ / r_c = 9 Å.
+- 64-water SPC/E step: ~1.5 ms/step (192 atoms) in the cold-lattice regime;
+  ~1.4 ms/step from an NVT-equilibrated checkpoint (1000 steps at
+  tau = 0.005 ps); SPME mesh 16³ for κ=0.34 Å⁻¹ / r_c = 9 Å.
 - Full-stack conservation for a rigid water: 1.9e-7 over 2000 steps.
+- Two-phase workflow (64 waters, dt = 0.0005 ps): NVT 1000 steps at
+  tau = 0.005 ps ends near 130–160 K (still relaxing); the following
+  500-step NVE segment drifts |ΔE|/|E| ≈ 1.5e-2, and 2000 steps ≈ 4.9e-2 —
+  the residual is the ongoing structural relaxation of the short
+  equilibration, not an integrator defect (the exact-restore/seam gates and
+  the 1.9e-7 gentle-regime gate are the strong conservation checks).
 
 ## Honest open items (next session)
 
-- **Equilibration workflow**: the builder emits a cold lattice whose initial
-  relaxation is violent (MODENA and LAMMPS agree the potential is ~−200
-  kcal/mol·water for random orientations — the model's physics, not an
-  engine bug; the balanced pattern cuts it to ~−5/water). A liquid NVE gate
-  needs an NVT-equilibrate-then-resume flow (a restart feature is the
-  pending piece).
+- **Equilibrated-liquid measurement quality**: the *workflow* now exists
+  (NVT-equilibrate → checkpoint → NVE-measure, one command per phase), but
+  the smoke budgets are not convergence: 300–1000 NVT steps leave the melt
+  still relaxing (the 500-step NVE follow-up drifts 6.6e-2 / 1.5e-2
+  respectively). A production equilibration (20k+ steps, staged tau) and a
+  converged-liquid observables row (T ≈ 298 K, P ≈ 1 atm, rdf) remain open —
+  an equilibrated-liquid NVE drift gate should follow once that run exists.
 - **Static-energy LAMMPS cross-check**: needs a proper LAMMPS bonded+SHAKE
   SPC/E deck (atom_style full, special_bonds lj/coul 0 0 0, shake b,
   pppm gewald-matched). Without exclusions LAMMPS includes the intramolecular

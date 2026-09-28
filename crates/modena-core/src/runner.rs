@@ -48,6 +48,12 @@ pub struct Simulation {
     neighbors: NeighborList,
     dt: f64,
     steps: usize,
+    /// Global step counter: 0 for a fresh run, or the restored step from a
+    /// `restore_file` checkpoint. The run loop labels its steps (log, frames,
+    /// checkpoints) from here so a resumed run continues logically.
+    current_step: usize,
+    restart_every: usize,
+    restart_path: Option<std::path::PathBuf>,
     trajectory_every: usize,
     trajectory_writer: Option<TrajectoryWriter>,
     log_every: usize,
@@ -112,7 +118,35 @@ impl Simulation {
             .unwrap_or(1.0);
         let mut system = build_system(&config.structure, base_dir, to_reduced_length)?;
 
-        init_velocities(&mut system, config.run.initial_temperature, config.run.seed);
+        // Restart/restore: a `restore_file` checkpoint overwrites the box,
+        // positions, and velocities (all reduced units, consumed as-is) and
+        // skips the random velocity draw. Species/masses/charges still come
+        // from the structure config — only the same-atom-count state travels
+        // through the file.
+        let restored_step = match &config.run.restore_file {
+            Some(f) => {
+                let path = base_dir.join(f);
+                let cp = crate::io::restart::load(&path)?;
+                if cp.atoms != system.n() {
+                    return Err(ModenaError::Config(format!(
+                        "restart file `{}` carries {} atoms, but the structure \
+                         builds {} — a restore must use the same structure \
+                         (atom-for-atom)",
+                        path.display(),
+                        cp.atoms,
+                        system.n()
+                    )));
+                }
+                system.positions = cp.positions;
+                system.velocities = cp.velocities;
+                system.box_size = cp.box_size;
+                cp.step
+            }
+            None => {
+                init_velocities(&mut system, config.run.initial_temperature, config.run.seed);
+                0
+            }
+        };
 
         let (pair_model, cutoff) = build_model(&config.model, base_dir)?;
         // Species-range validation: a multi-species structure (rocksalt sets
@@ -245,6 +279,9 @@ impl Simulation {
             neighbors,
             dt,
             steps: config.run.steps,
+            current_step: restored_step,
+            restart_every: config.run.restart_every,
+            restart_path: config.run.restart_file.as_ref().map(|f| base_dir.join(f)),
             trajectory_every: config.run.trajectory_every,
             trajectory_writer,
             log_every: config.run.log_every,
@@ -257,6 +294,30 @@ impl Simulation {
 
     pub fn system(&self) -> &System {
         &self.system
+    }
+
+    /// The global step counter (0 for a fresh run; the restored step from a
+    /// `restore_file` checkpoint; advances as the run loop steps).
+    pub fn current_step(&self) -> usize {
+        self.current_step
+    }
+
+    /// Write a checkpoint of the current state — box, positions, velocities
+    /// (reduced units), and the global step — to `path`. Called by the run
+    /// loop every `restart_every` steps and at run end; public for tests and
+    /// callers that drive stepping manually.
+    pub fn write_checkpoint(&self, path: &Path) -> Result<()> {
+        crate::io::restart::save(
+            path,
+            &crate::io::restart::Checkpoint {
+                atoms: self.system.n(),
+                step: self.current_step,
+                time: self.current_step as f64 * self.dt,
+                box_size: self.system.box_size,
+                positions: self.system.positions.clone(),
+                velocities: self.system.velocities.clone(),
+            },
+        )
     }
 
     /// Run to completion, discarding streamed events. Equivalent to
@@ -284,23 +345,30 @@ impl Simulation {
         let e0 = e.total;
         let mut conservation = ConservationReport::pending(e0);
 
-        // Step-0 sample (file + events). Internal `e` stays in reduced units
-        // (conservation tracking); the displayed time/energies are scaled to
-        // real units when a `unit_factors` is configured.
-        self.write_sample(0, 0.0, &e)?;
+        // Start-of-run sample (file + events), labeled with the global step:
+        // step 0 for a fresh run, the restored step for a resume (the seam
+        // row repeats the checkpoint's state exactly). Internal `e` stays in
+        // reduced units (conservation tracking); the displayed time/energies
+        // are scaled to real units when a `unit_factors` is configured.
+        let start_step = self.current_step;
+        let start_time = self.display_time(start_step as f64 * dt);
+        self.write_sample(start_step, start_time, &e)?;
         on_event(&RunEvent::Started {
             atoms: self.system.n(),
             dt: self.display_time(dt),
             steps: self.steps,
         });
         on_event(&RunEvent::Thermo {
-            step: 0,
-            time: 0.0,
+            step: start_step,
+            time: start_time,
             energies: self.display_energies(&e),
         });
 
-        let mut last_step = 0usize;
-        for step in 1..=self.steps {
+        let mut executed = 0usize;
+        for i in 1..=self.steps {
+            // Global step label: a resumed run continues from the checkpoint.
+            let step = start_step + i;
+            self.current_step = step;
             e = self
                 .integrator
                 .step(&mut self.system, &*self.model, &mut self.neighbors, dt)?;
@@ -344,7 +412,14 @@ impl Simulation {
                     positions: self.snapshot_positions(),
                 });
             }
-            last_step = step;
+            // Periodic checkpoint (crash recovery): every `restart_every`
+            // global steps. The end-of-run write below covers the last step.
+            if let Some(path) = self.restart_path.clone() {
+                if step % self.restart_every.max(1) == 0 {
+                    self.write_checkpoint(&path)?;
+                }
+            }
+            executed = i;
 
             if let Some(flag) = stop {
                 if flag.load(Ordering::Relaxed) {
@@ -356,8 +431,13 @@ impl Simulation {
         if let Some(w) = self.log_writer.as_mut() {
             w.flush()?;
         }
+        // Final checkpoint — also on early stop, so a run is always resumable
+        // from exactly where it stopped.
+        if let Some(path) = self.restart_path.clone() {
+            self.write_checkpoint(&path)?;
+        }
         let summary = RunSummary {
-            steps: last_step,
+            steps: executed,
             final_energies: self.display_energies(&e),
             conservation,
         };

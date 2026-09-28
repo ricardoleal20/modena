@@ -47,6 +47,9 @@ impl SimulationBuilder {
                 trajectory_every: 100,
                 log_file: None,
                 log_every: 10,
+                restore_file: None,
+                restart_file: None,
+                restart_every: 500,
             },
             ..Default::default()
         }
@@ -152,6 +155,17 @@ impl SimulationBuilder {
     pub fn log(mut self, file: impl Into<String>, every: usize) -> Self {
         self.run.log_file = Some(file.into());
         self.run.log_every = every;
+        self
+    }
+    /// Write a checkpoint to `file` every `every` steps (and at run end).
+    pub fn restart(mut self, file: impl Into<String>, every: usize) -> Self {
+        self.run.restart_file = Some(file.into());
+        self.run.restart_every = every;
+        self
+    }
+    /// Restore the state (positions/velocities/box/step) from `file`.
+    pub fn restore(mut self, file: impl Into<String>) -> Self {
+        self.run.restore_file = Some(file.into());
         self
     }
     /// Render the validated [`InputConfig`] (allows custom `base_dir`).

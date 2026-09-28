@@ -63,10 +63,18 @@ restart/checkpoint workflow that closes the equilibrate-then-measure loop.
   respectively). A production equilibration (20k+ steps, staged tau) and a
   converged-liquid observables row (T ≈ 298 K, P ≈ 1 atm, rdf) remain open —
   an equilibrated-liquid NVE drift gate should follow once that run exists.
-- **Static-energy LAMMPS cross-check**: needs a proper LAMMPS bonded+SHAKE
-  SPC/E deck (atom_style full, special_bonds lj/coul 0 0 0, shake b,
-  pppm gewald-matched). Without exclusions LAMMPS includes the intramolecular
-  q·q/r (≈ −202 kcal/mol·water at 1 Å) — the naive comparison is misleading.
+- **Static-energy LAMMPS cross-check** (2026-09-27 partial): on the *same*
+  balanced 64-water configuration, LAMMPS `lj/cut/coul/long` **without**
+  exclusions = −13 134 kcal — the intramolecular q·q/r dominates (≈ −202
+  kcal/mol·water at 1.0 Å), which is why a bonded+SHAKE deck (atom_style
+  full, special_bonds lj/coul 0 0 0, fix shake b, pppm gewald=0.34) is
+  required for a clean table. Analytically subtracting the intra term
+  (Σ q_i q_j·332/r over the 3 intra pairs) gives ≈ **−204 kcal** for the
+  excluded model vs MODENA's **−301 kcal** measured — a **~1.5 kcal/mol·water
+  residual**, consistent with pppm-vs-SPME spline/mesh + the LJ shifted-force
+  convention, not a unit-factor bug (the reduced-charge algebra
+  f = √(COULOMB/(σε)) is verified). Freeze with the bonded deck before the
+  paper.
 - HECBioSim 20K Crambin + amber-prm reader (the protein end of the claim).
 
 ## Follow-on perf levers (cheap, known)

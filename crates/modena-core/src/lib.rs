@@ -70,7 +70,7 @@ pub use error::{ModenaError, Result};
 pub use ewald::EwaldForceModel;
 pub use force_model::{ForceModel, PairForceModel, Virial};
 #[cfg(feature = "gpu")]
-pub use gpu_comm::GpuPairForceModel;
+pub use gpu_comm::{GpuGather, GpuPairForceModel};
 pub use integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 pub use io::input::{
     BondedTopologySpec, ConstraintSpec, ConstraintsSpec, EwaldMethod, EwaldSpec, InputConfig,

@@ -1,0 +1,30 @@
+# MODENA-vs-LAMMPS benchmark — GPU-d ladder: NVE LJ liquid, 5000 atoms.
+# Matched to bench/lammps/in.nve_5000. Rectangular FCC block (5x10x25 cells
+# = 1250 cells x 4 atoms) hits exactly 5000 atoms; the smallest box edge
+# (5 x 1.6796 = 8.398) exceeds 2 x cutoff = 5.0, so minimum image is sound.
+
+units = "reduced"
+
+[structure]
+type = "fcc"
+lattice_constant = 1.6796
+replicas = [5, 10, 25]   # 5000 atoms
+element = "Ar"
+
+[model]
+type = "lennard_jones"
+sigma = 1.0
+epsilon = 1.0
+cutoff = 2.5
+
+[integrator]
+type = "velocity_verlet"
+dt = 0.005
+
+[run]
+steps = 2000
+initial_temperature = 1.0
+seed = 87287
+trajectory_every = 2000   # final frame only (benchmark, not analysis)
+log_file = "nve_5000_energy.csv"
+log_every = 100

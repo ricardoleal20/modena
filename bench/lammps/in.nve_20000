@@ -1,0 +1,34 @@
+# MODENA-vs-LAMMPS benchmark — GPU-d ladder: NVE LJ liquid, 20000 atoms.
+# Matched to bench/modena/nve_20000.toml. Rectangular block 10x20x25 cells
+# = 20000 atoms (fcc, 4 per cell).
+
+units           lj
+atom_style      atomic
+boundary        p p p
+
+# In `units lj` the lattice value is number density; rho = 0.8442 -> a = 1.6796
+# (matches MODENA lattice_constant). See in.nve_864 for the full rationale.
+lattice         fcc 0.8442
+region          box block 0 10 0 20 0 25
+create_box      1 box
+create_atoms    1 box
+
+mass            1 1.0
+
+pair_style      lj/smooth/linear 2.5
+pair_coeff      1 1 1.0 1.0 2.5
+
+velocity        all create 1.0 87287 dist gaussian mom yes rot no
+
+neighbor        0.3 bin
+neigh_modify    every 1 delay 0 check yes
+
+fix             1 all nve
+
+timestep        0.005
+
+thermo          1000
+thermo_style    custom step temp pe ke etotal press
+thermo_modify   norm no flush yes
+
+run             2000

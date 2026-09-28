@@ -239,8 +239,11 @@ pub fn water_lattice(
                 if idx >= n_waters {
                     break 'outer;
                 }
-                let site =
-                    Vec3::new(spacing * ix as f64, spacing * iy as f64, spacing * iz as f64);
+                let site = Vec3::new(
+                    spacing * ix as f64,
+                    spacing * iy as f64,
+                    spacing * iz as f64,
+                );
                 // Balanced alternating-dipole orientation: dipole along ±x by
                 // site parity, H's scattered in the yz-plane by a deterministic
                 // per-site twist.

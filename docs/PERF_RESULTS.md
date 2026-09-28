@@ -86,15 +86,123 @@ conservation gates that MATTER — rigid water + SPME + exclusions NVE at
 1.9e-7 over 2000 steps, excluded-pair free flight at 1e-12 — are committed
 tests and hold exactly.
 
+## GPU-d decision ladder (gate G3) — the GPU claim, resolved
+
+Protocol (per `docs/COMMITTEE_ACTA.md` G3 and the Hoefler&Belli design in
+`MATCH_ENGINES.md`): matched LJ-NVE decks (FCC, ρ=0.8442, shifted-force LJ,
+dt=0.005, seed 87287; 5000/10000/20000-atom decks use rectangular FCC blocks
+— 5×10×25, 10×10×25, 10×20×25 cells — to hit the ladder sizes exactly),
+**median (min) ms per integration step over 5 measured runs after warm-up
+discard**, fence-synced on the GPU paths (every step blocks on the
+staging-buffer map — `device.poll(PollType::wait)` — before the clock reads).
+Engines: `lmp_serial` 22Jul2025 (serial, its own decks), MODENA CPU (release
+CLI on the same decks, default threads — the shipped configuration), MODENA
+GPU all-pairs (`GpuGather::AllPairs`, the pre-G3 kernel, kept as the
+determinism oracle) and MODENA GPU cell-list (`GpuGather::CellList`, the G3
+remedy). Driver: `examples/gpu_ladder.rs`; rig: `bench/gpu_ladder.sh`.
+
+**Honesty caveats, same table**: the GPU kernels compute in **f32**
+(Kahan-compensated in-kernel, f64 host reduction; WGSL has no f64 on Metal),
+and their neighbor bins are **built on the CPU** each rebuild — the LAMMPS
+GPU-package `neigh no` mode (lammps#3531), not a GPU-resident build. The
+machine was **load-shared** during the runs (load average 4–11: a concurrent
+worktree's test binary plus desktop composition on the shared GPU); medians
+and minima are reported for that reason, and every number below must be
+regenerated on an idle machine before the paper (the acta's G0 rule). GPU
+rows used 1000/1000/500/250/100 steps per run at 864/2048/5000/10000/20000
+(the O(N²) kernel is the wall-clock constraint); CPU/LAMMPS rows ran their
+decks' 5000/5000/2000/2000/2000 steps.
+
+| atoms | lmp_serial (f64) | MODENA CPU default (f64) | GPU all-pairs (f32) | GPU cell-list (f32) | gather probe (f32) |
+|---:|---:|---:|---:|---:|---:|
+| 864 | 0.292 (0.290) | 0.454 (0.438) | 1.73 (1.68) | 1.78 (1.62) | 1.65 (1.57) |
+| 2048 | 0.800 (0.756) | 1.63 (1.53) | 2.66 (2.50) | 2.41 (2.39) | 1.95 (1.78) |
+| 5000 | 2.37 (2.23) | 1.94 (1.85) | 2.75 (1.69) | 2.53 (2.52) | 2.02 (1.95) |
+| 10000 | 3.56 (3.51) | 3.98 (3.94) | 4.38 (4.29) | 4.05 (3.95) | 4.57 (4.24) |
+| 20000 | 7.94 (7.52) | 8.19 (7.96) | 15.39 (15.27) | **7.90 (7.89)** | 15.52 (15.41) |
+
+At 20 000 atoms that is 0.40 µs/(atom·step) for `lmp_serial`, 0.41 for MODENA
+CPU, 0.40 for the GPU cell-list — a three-way statistical parity (run maxima
+overlap: 8.54 / 9.89 / 8.65), not a win.
+
+### Why the ladder looks the way it does (phase decomposition)
+
+A static-system probe (100 consecutive `compute` calls, same load regime)
+separates the three costs the ladder mixes together:
+
+| n | CPU neighbor rebuild | GPU cell-list steady | cell-list w/ forced rebuild | GPU all-pairs steady |
+|---:|---:|---:|---:|---:|
+| 256 | 0.13 ms | 1.61 ms | 2.18 ms | 1.82 ms |
+| 2048 | 4.8 ms | 1.55 ms | 7.6 ms | 1.93 ms |
+| 20000 | 42.4 ms | 1.83 ms | 47.3 ms | 13.6 ms |
+
+- **Fence-sync round-trip floor ≈ 1.5–1.6 ms/step** (the 256-atom steady
+  column): submit + copy + map + readback on a desktop-composited, shared
+  GPU. This floor — not the kernel — dominates every GPU row below ~10k
+  atoms, which is why all four GPU engines cluster at 864–10000 in the
+  ladder.
+- **The cell-list kernel works**: at 20k atoms the steady-state GPU step is
+  1.83 ms vs 13.6 ms all-pairs — **7.5×** at the kernel level. The gather
+  probe (all-pairs j-loop, LJ math skipped) matches the full all-pairs time
+  at every size, i.e. the j-loop gather + minimum-image + distance work is
+  ~90–95% of the all-pairs kernel wherever the kernel is resolvable above
+  the floor — exactly the >30% G3 trigger that mandated the cell-list.
+- **The remaining 20k bottleneck is CPU-side**: the serial neighbor rebuild
+  (42 ms per rebuild at 20k, ~54 ns/pair — a shared MODENA cost the CPU row
+  pays too, amortized ~4–5 ms/step) plus the CSR build + upload (~5 ms per
+  rebuild). LAMMPS rebuilds the same-size list 224 times in 2000 steps and
+  stays at 7.9 ms/step total, so its rebuild is sub-millisecond — the
+  rebuild, not the GPU, is the next target (acta Tier A, `rebuild_count`
+  hygiene).
+
+### Drift classification (G3 drift gate)
+
+2000-step NVE at seed 87287, same initial state, `ConservationReport` on the
+final-vs-initial total energy (band = (E_max−E_min)/|E_0| over all steps):
+
+| engine | 864 atoms | 2048 atoms |
+|---|---|---|
+| MODENA CPU (f64) | 1.24e-5, band 2.89e-4 — **Healthy** | 1.26e-5, band 2.83e-4 — **Healthy** |
+| GPU all-pairs (f32+Kahan) | 1.05e-5, band 2.89e-4 — **Healthy** | 1.53e-5, band 2.83e-4 — **Healthy** |
+| GPU cell-list (f32+Kahan) | 1.05e-5, band 2.89e-4 — **Healthy** | 1.17e-5, band 2.83e-4 — **Healthy** |
+
+The f32+Kahan GPU trajectories conserve the NVE Hamiltonian to the same
+order as the f64 CPU run at the same seed — the drift gate **passes** for
+both kernels (Kahan-under-no-f64 is doing its job; WGSL has no f64 on
+Metal).
+
+### G3 verdict
+
+**The GPU "win" claim does not survive G3 as a headline.** The pre-G3
+all-pairs kernel loses to `lmp_serial` and to MODENA CPU at every ladder
+size (1.7–15.4 ms/step vs 0.29–7.94). The gather share it wastes is the
+measured ~90–95% of kernel time, so the cell-list gather (CPU Verlet bins →
+contiguous per-atom j-ranges → one GPU thread per i, no atomics) was
+implemented — it is 7.5× at the kernel level and lifts the 20 000-atom row
+to statistical parity with `lmp_serial` (7.90 vs 7.94 ms/step, overlapping
+spreads) — but parity at the top of the ladder is not a win, and below
+~10k atoms the fence-synced round-trip floor (~1.5 ms/step on this
+composited GPU) keeps every GPU configuration behind the CPU. The honest
+paper wording, with caveats in the same table: *f32 (Kahan) kernel,
+CPU-built bins (`neigh no` mode), fence-synced timing, load-shared machine
+— GPU reaches parity with `lmp_serial` at 20k LJ atoms and is behind at all
+smaller sizes; the binding constraints are the per-step host↔GPU round trip
+and the serial CPU neighbor rebuild, not the pair kernel.* The path to an
+actual win is identified and deferred: an async double-buffered force
+pipeline to hide the round-trip (changes the per-step sync contract), and a
+rebuilt neighbor search (which lifts the CPU row too). The all-pairs kernel
+is retained as the determinism oracle (`tests/gpu_pair.rs` compares
+cell-list vs all-pairs vs serial f64); both kernels hold Healthy drift.
+
 ## What did NOT move (and why it is correct it did not)
 
 - Compiler flags: still 0% on aarch64 (release already `lto="thin"` +
   `codegen-units=1`).
 - No f32-on-CPU (rejected by contract math), no hand-NEON (ceiling +42% on
   pair time ≈ 1.1–1.25× step — deferred behind cluster-pair/asm inspection).
-- GPU path untouched in this wave — Stage 3 (Kahan + persistent buffers + the
-  G3 ladder that decides the only "win" claim) is the next PR, spec'd in the
-  acta.
+- No async GPU force pipeline (would hide the ~1.5 ms round-trip floor but
+  breaks the fence-synced per-step contract G3 measures under; deferred with
+  the G3 verdict above).
 
 ## How to reproduce
 
@@ -102,4 +210,11 @@ tests and hold exactly.
 cargo build --release
 bash bench/bench.sh                     # idle machine, RUNS=5
 # charged row: bench/bench.sh LADDER="864" THREADS="1" (includes ewald rows)
+# GPU-d ladder (G3): build the gpu example first
+cargo build --release --features gpu --example gpu_ladder
+bash bench/gpu_ladder.sh                # idle machine, RUNS=5
+# drift rows (2000-step NVE, CPU vs both GPU kernels, same seed):
+target/release/examples/gpu_ladder gpu 2048 2000 1
+target/release/examples/gpu_ladder gpu-csr 2048 2000 1
+target/release/examples/gpu_ladder cpu 2048 2000 1
 ```

@@ -575,7 +575,12 @@ fn build_system(spec: &StructureSpec, base_dir: &Path, to_reduced_length: f64) -
     }
 }
 
-fn init_velocities(system: &mut System, temperature: f64, seed: u64) {
+/// Initialize velocities from a seeded Maxwell–Boltzmann distribution at
+/// `temperature`, remove the center-of-mass drift, and rescale to the exact
+/// target temperature. Public so out-of-runner engines (the GPU-d ladder
+/// driver in `examples/gpu_ladder.rs`) reproduce deck initialization
+/// bit-for-bit at the same seed.
+pub fn init_velocities(system: &mut System, temperature: f64, seed: u64) {
     let mut rng = StdRng::seed_from_u64(seed);
     let n = system.n();
     let normal = StandardNormal;

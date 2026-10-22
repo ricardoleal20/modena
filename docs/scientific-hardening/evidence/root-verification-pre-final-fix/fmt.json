@@ -1,0 +1,18 @@
+{
+  "label": "fmt",
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "fmt",
+    "--all",
+    "--",
+    "--check"
+  ],
+  "returncode": 0,
+  "elapsed_seconds": 0.1972303339280188,
+  "created_utc": "2026-10-04T02:25:19.535306+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "fmt.stdout",
+  "stderr_file": "fmt.stderr"
+}

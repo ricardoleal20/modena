@@ -11,6 +11,18 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  msrv:
+    name: Rust 1.90 build check (default + gpu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Check default features
+        run: cargo +1.90.0 check --locked --workspace --all-targets
+      - name: Check GPU feature
+        run: cargo +1.90.0 check --locked --workspace --all-targets --features modena-core/gpu
+
   fmt:
     name: Format check
     runs-on: ubuntu-latest
@@ -56,7 +68,7 @@ jobs:
       - name: Clippy (mpi feature)
         run: cargo clippy --all-targets --features mpi -- -D warnings
       - name: Build MPI test
-        run: cargo test --features mpi --test mpi_decomp --no-run
+        run: cargo test --locked --features mpi --test mpi_decomp --no-run --message-format=json > "$RUNNER_TEMP/modena-mpi-artifacts.jsonl"
       - name: Run MPI test (mpiexec -n 2)
         # The decomposed force/energy/virial must match the serial reference
         # across two real MPI ranks. Single-process `cargo test` skips (see
@@ -66,8 +78,29 @@ jobs:
         # available"). `--allow-run-as-root` is required because the runner
         # executes as root.
         run: |
-          BIN=$(find target/debug -name 'mpi_decomp-*' -type f ! -name '*.d' | head -1)
-          mpirun --oversubscribe --allow-run-as-root -n 2 "$BIN" --nocapture
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          messages = Path(os.environ['RUNNER_TEMP'], 'modena-mpi-artifacts.jsonl').read_text().splitlines()
+          executables = {
+              row['executable']
+              for line in messages
+              if (row := json.loads(line)).get('reason') == 'compiler-artifact'
+              and row['target']['name'] == 'mpi_decomp'
+              and row['profile']['test']
+              and 'mpi' in row['features']
+              and row.get('executable')
+          }
+          if len(executables) != 1:
+              raise SystemExit(f'Expected one MPI test executable, found {len(executables)}')
+          subprocess.run([
+              'mpirun', '--oversubscribe', '--allow-run-as-root', '-n', '2',
+              executables.pop(), '--nocapture',
+          ], check=True)
+          PY
 
   gpu:
     name: GPU backend (compile + skip-test)
@@ -93,10 +126,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Build
         run: cargo build --verbose --release
       - name: Test
         run: cargo test --verbose
+      - name: Python and benchmark-tool regression tests
+        env:
+          MODENA_BINARY: ${{ github.workspace }}/target/release/modena
+        run: |
+          python -m unittest discover -s python/modena/tests -v
+          python -m unittest discover -s bench/tests -v
+      - name: Bounded numerical scientific smoke
+        run: |
+          cargo build --release -p modena-core --example scientific_validation
+          python bench/validate.py --output target/scientific-smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scientific-smoke-${{ matrix.os }}
+          path: target/scientific-smoke
       - name: Run NVE smoke example
         # The workspace ships two binaries (`modena`, `modena-mcp`); pin the CLI
         # binary explicitly so `cargo run` never has to disambiguate.

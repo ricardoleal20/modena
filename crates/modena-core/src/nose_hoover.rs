@@ -22,11 +22,10 @@
 use crate::constraints::Constraints;
 use crate::error::Result;
 use crate::force_model::{ForceModel, Virial};
-use crate::integrator::Integrator;
+use crate::integrator::{prepare_constraints, project_drift, Integrator};
 use crate::neighbor::NeighborList;
 use crate::system::System;
 use crate::thermo::Energies;
-use crate::vec3::Vec3;
 
 /// Suzuki–Yoshida (3-fold) weights. Sum = 1; corrects the integrator to 4th
 /// order in the chain propagation.
@@ -96,6 +95,49 @@ impl NoseHooverChain {
 }
 
 impl Integrator for NoseHooverChain {
+    fn checkpoint_state(&self) -> Result<serde_json::Value> {
+        if let Some(cons) = &self.constraints {
+            cons.validate_parameters()?;
+        }
+        if !self.target_temperature.is_finite()
+            || !self.tau.is_finite()
+            || self.p_xi.iter().chain(&self.xi).any(|x| !x.is_finite())
+        {
+            return Err(crate::thermostat::state_error("nonfinite NHC state"));
+        }
+        Ok(serde_json::json!({"kind":"nose_hoover_chain","version":1,
+            "target_temperature":self.target_temperature,"tau":self.tau,"chain_len":self.chain_len,
+            "constraints":self.constraints,"p_xi":self.p_xi,"xi":self.xi}))
+    }
+    fn restore_state(&mut self, state: &serde_json::Value) -> Result<()> {
+        crate::thermostat::validate_state_parameters(
+            state,
+            &self.checkpoint_state()?,
+            &[
+                "kind",
+                "version",
+                "target_temperature",
+                "tau",
+                "chain_len",
+                "constraints",
+            ],
+        )?;
+        let parse = |key: &str| -> Result<Vec<f64>> {
+            let v: Vec<f64> = serde_json::from_value(state[key].clone())
+                .map_err(|err| crate::thermostat::state_error(&err.to_string()))?;
+            if v.len() != self.chain_len || v.iter().any(|x| !x.is_finite()) {
+                return Err(crate::thermostat::state_error(
+                    "invalid NHC extended-state array",
+                ));
+            }
+            Ok(v)
+        };
+        let p_xi = parse("p_xi")?;
+        let xi = parse("xi")?;
+        self.p_xi = p_xi;
+        self.xi = xi;
+        Ok(())
+    }
     fn step(
         &mut self,
         system: &mut System,
@@ -103,6 +145,7 @@ impl Integrator for NoseHooverChain {
         neighbors: &mut NeighborList,
         dt: f64,
     ) -> Result<Energies> {
+        prepare_constraints(system, self.constraints.as_ref())?;
         let n = system.n();
         let dof = system.dof() as f64;
         let kt = self.target_temperature;
@@ -114,28 +157,7 @@ impl Integrator for NoseHooverChain {
         // First half-kick: v += dt/2 · F/m  (using cached F(t)).
         kick(system, n, 0.5 * dt);
 
-        // Reference positions for SHAKE.
-        let x_ref = if self.constraints.is_some() {
-            Some(system.positions.clone())
-        } else {
-            None
-        };
-
-        // Drift: x += dt · v, then wrap.
-        drift(system, n, dt);
-        system.wrap_positions();
-
-        // SHAKE + velocity consistency.
-        if let (Some(cons), Some(x_ref)) = (&self.constraints, x_ref.as_ref()) {
-            cons.shake(system, x_ref, SHAKE_TOL, SHAKE_MAX_ITER);
-            let box_size = system.box_size;
-            for i in 0..n {
-                let dx = box_size.min_image(
-                    system.pos(i) - Vec3::new(x_ref[3 * i], x_ref[3 * i + 1], x_ref[3 * i + 2]),
-                );
-                system.set_vel(i, dx * (1.0 / dt));
-            }
-        }
+        project_drift(system, self.constraints.as_ref(), dt, false)?;
 
         // New forces F(t+dt).
         system.forces.fill(0.0);
@@ -147,7 +169,7 @@ impl Integrator for NoseHooverChain {
 
         // RATTLE.
         if let Some(cons) = &self.constraints {
-            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER);
+            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER)?;
         }
 
         // --- NHC half-step again (completes the full dt) ---
@@ -266,14 +288,5 @@ fn kick(system: &mut System, n: usize, factor: f64) {
         for k in 0..3 {
             v[3 * i + k] += f[3 * i + k] * inv_m;
         }
-    }
-}
-
-#[inline]
-fn drift(system: &mut System, n: usize, factor: f64) {
-    let x = &mut system.positions;
-    let v = &system.velocities;
-    for k in 0..3 * n {
-        x[k] += v[k] * factor;
     }
 }

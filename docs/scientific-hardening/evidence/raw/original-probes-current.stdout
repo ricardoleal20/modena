@@ -1,0 +1,5 @@
+bussi Nf=12 samples=200000 target_T=1 measured_mean_T=0.99933785 measured_T_variance=0.16712408 predicted_bug_mean_T=0.54166667
+baoab constrained=false free_atom_samples=100000 target_v_component_variance=1 measured_mean_v2_per_component=1.00073504 predicted_mean_v2=1.00000000 mean_velocity=Vec3([0.000903597386652482, -0.0019274701490381734, 0.002285373571761606])
+baoab constrained=true free_atom_samples=100000 target_v_component_variance=1 measured_mean_v2_per_component=1.00073504 predicted_mean_v2=0.40615452 mean_velocity=Vec3([0.000903597386652482, -0.0019274701490381734, 0.002285373571761606])
+barostat enabled=false reported_PE=-172.8199519496 recomputed_PE=-172.8199519496 abs_PE_error=0.0000000000 relative_force_l2_error=0.00000000
+barostat enabled=true reported_PE=-189.1449787417 recomputed_PE=-189.1449787417 abs_PE_error=0.0000000000 relative_force_l2_error=0.00000000

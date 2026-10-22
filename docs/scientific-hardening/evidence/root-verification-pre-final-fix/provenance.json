@@ -1,0 +1,9 @@
+{
+  "source_commit": "10bd9ee3077509ee472875f6697fd6d1a849753e",
+  "source_status": "",
+  "branch": "ricardoleal20/modena-scientific-hardening",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python": "3.12.14",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "cpu": "Apple M3 Pro"
+}

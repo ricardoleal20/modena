@@ -1,0 +1,68 @@
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling syn v3.0.5
+   Compiling syn v2.0.119
+   Compiling either v1.18.0
+   Compiling zerocopy v0.8.57
+   Compiling utf8parse v0.2.2
+   Compiling anstyle v1.0.14
+   Compiling anstyle-query v1.1.5
+   Compiling colorchoice v1.0.5
+   Compiling once_cell v1.21.4
+   Compiling anstyle-parse v1.0.0
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling strsim v0.11.1
+   Compiling heck v0.5.0
+   Compiling clap_lex v1.1.0
+   Compiling anstream v1.0.0
+   Compiling plotters-backend v0.3.7
+   Compiling rayon v1.12.0
+   Compiling ciborium-io v0.2.2
+   Compiling itertools v0.10.5
+   Compiling clap_builder v4.6.6
+   Compiling plotters-svg v0.3.7
+   Compiling regex-automata v0.4.18
+   Compiling cast v0.3.0
+   Compiling same-file v1.0.6
+   Compiling walkdir v2.5.0
+   Compiling plotters v0.3.7
+   Compiling is-terminal v0.4.17
+   Compiling anes v0.1.6
+   Compiling oorandom v11.1.5
+   Compiling tempfile v3.27.0
+   Compiling anyhow v1.0.104
+   Compiling rusty-fork v0.3.1
+   Compiling criterion-plot v0.5.0
+   Compiling regex v1.13.1
+   Compiling zerocopy-derive v0.8.57
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.20
+   Compiling clap_derive v4.6.4
+   Compiling serde_json v1.0.151
+   Compiling thiserror v2.0.20
+   Compiling clap v4.6.6
+   Compiling serde_spanned v0.6.9
+   Compiling toml_datetime v0.6.11
+   Compiling tinytemplate v1.2.1
+   Compiling toml_edit v0.22.27
+   Compiling toml v0.8.23
+   Compiling half v2.7.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling ciborium-ll v0.2.2
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+   Compiling proptest v1.11.0
+   Compiling ciborium v0.2.2
+   Compiling criterion v0.5.1
+   Compiling modena-mcp v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-mcp)
+   Compiling modena-bench v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-bench)
+   Compiling modena-cli v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-cli)
+error[E0599]: no method named `clone` found for struct `NeighborList` in the current scope
+  --> crates/modena-bench/benches/integrator_step.rs:19:40
+   |
+19 |                 || (system.clone(), nl.clone()),
+   |                                        ^^^^^ method not found in `NeighborList`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `modena-bench` (bench "integrator_step") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

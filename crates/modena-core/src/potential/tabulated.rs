@@ -2,10 +2,10 @@
 //!
 //! For potentials without a convenient closed form (e.g. derived from ab-initio
 //! data or a coarse-grained map). The table supplies both `U(r)` and the radial
-//! force `F(r)` directly, so the conservation contract `dU/dr = −F` is whatever
-//! the table says — the caller is responsible for a self-consistent table.
-//! Linear interpolation between nodes; shifted-force at the table's last point
-//! so both `U` and `F` are continuous at the cutoff.
+//! force `F(r)` as endpoint data. Joint cubic Hermite interpolation uses
+//! force-derived slopes, enforcing `dU/dr = −F` between nodes and in the
+//! lower endpoint tangent extension. Shifted-force truncation makes both
+//! `U` and `F` continuous at the table's last point.
 
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
@@ -19,7 +19,8 @@ use super::PairPotential;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InterpKind {
-    /// Piecewise-linear between nodes.
+    /// Legacy configuration name for joint cubic Hermite interpolation.
+    /// Endpoint energy and force are matched; U and F share one polynomial.
     Linear,
 }
 
@@ -50,6 +51,11 @@ impl Tabulated {
         if r.len() != u.len() || r.len() != f.len() {
             return Err(ModenaError::Config(
                 "tabulated r/U/F arrays must have equal length".into(),
+            ));
+        }
+        if r.iter().chain(&u).chain(&f).any(|x| !x.is_finite()) {
+            return Err(ModenaError::Config(
+                "tabulated r/U/F values must be finite".into(),
             ));
         }
         for win in r.windows(2) {
@@ -103,36 +109,33 @@ impl Tabulated {
         Self::new(r, u, f, interp)
     }
 
-    /// Linear interpolation of `(U, F)` at distance `r`. Returns the raw
-    /// (unshifted) values; the caller applies the shifted-force form.
+    /// Joint Hermite energy/force interpolation; below the first node use
+    /// its tangent line, preserving the endpoint slope and dU/dr = -F.
     #[inline]
     fn interp(&self, r: f64) -> (f64, f64) {
-        // Clamp to the table range (the caller already gates r2 < cutoff2, so
-        // r <= cutoff; values below r[0] are extrapolated flat to the first node).
-        match self.interp {
-            InterpKind::Linear => {
-                if r <= self.r[0] {
-                    return (self.u[0], self.f[0]);
-                }
-                // Binary search for the bracketing interval.
-                let idx = match self
-                    .r
-                    .binary_search_by(|v| v.partial_cmp(&r).unwrap_or(std::cmp::Ordering::Equal))
-                {
-                    Ok(i) => return (self.u[i], self.f[i]),
-                    Err(i) => i,
-                };
-                // idx is the insertion point; bracket is [idx-1, idx].
-                let i0 = idx - 1;
-                let i1 = idx.min(self.r.len() - 1);
-                let r0 = self.r[i0];
-                let r1 = self.r[i1];
-                let t = if r1 > r0 { (r - r0) / (r1 - r0) } else { 0.0 };
-                let u = self.u[i0] + t * (self.u[i1] - self.u[i0]);
-                let f = self.f[i0] + t * (self.f[i1] - self.f[i0]);
-                (u, f)
-            }
+        let _ = self.interp; // retain the legacy serialized selector
+        if r <= self.r[0] {
+            return (self.u[0] - self.f[0] * (r - self.r[0]), self.f[0]);
         }
+        let idx = self.r.partition_point(|&x| x < r);
+        if idx < self.r.len() && self.r[idx] == r {
+            return (self.u[idx], self.f[idx]);
+        }
+        let i1 = idx.min(self.r.len() - 1);
+        let i0 = i1 - 1;
+        let h = self.r[i1] - self.r[i0];
+        let t = (r - self.r[i0]) / h;
+        let m0 = -self.f[i0];
+        let m1 = -self.f[i1];
+        let u = (2.0 * t * t * t - 3.0 * t * t + 1.0) * self.u[i0]
+            + (t * t * t - 2.0 * t * t + t) * h * m0
+            + (-2.0 * t * t * t + 3.0 * t * t) * self.u[i1]
+            + (t * t * t - t * t) * h * m1;
+        let du = (6.0 * t * t - 6.0 * t) * self.u[i0] / h
+            + (3.0 * t * t - 4.0 * t + 1.0) * m0
+            + (-6.0 * t * t + 6.0 * t) * self.u[i1] / h
+            + (3.0 * t * t - 2.0 * t) * m1;
+        (u, -du)
     }
 }
 
@@ -202,12 +205,12 @@ mod tests {
     }
 
     #[test]
-    fn linear_interp_midpoint() {
+    fn hermite_interp_midpoint() {
         let t = table();
-        // Midway between r=1.0 (U=5) and r=1.5 (U=0.5): U=2.75.
+        // Hermite midpoint includes the endpoint slopes -20 and -2.
         let r = 1.25;
         let (u, _) = t.interp(r);
-        assert!((u - 2.75).abs() < 1e-9);
+        assert!((u - 1.625).abs() < 1e-9);
     }
 
     #[test]

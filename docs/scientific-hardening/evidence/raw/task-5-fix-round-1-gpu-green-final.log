@@ -1,0 +1,10 @@
+test_failed_process_without_timer_retains_raw_output_and_null_resources (test_gpu_ladder.GpuLadderTests.test_failed_process_without_timer_retains_raw_output_and_null_resources) ... ok
+test_missing_executable_retains_nullable_hash_and_failure (test_gpu_ladder.GpuLadderTests.test_missing_executable_retains_nullable_hash_and_failure) ... ok
+test_os_executable_launch_error_is_retained (test_gpu_ladder.GpuLadderTests.test_os_executable_launch_error_is_retained) ... ok
+test_os_timer_launch_error_is_retained (test_gpu_ladder.GpuLadderTests.test_os_timer_launch_error_is_retained) ... ok
+test_success_without_timer_retains_csv_rows (test_gpu_ladder.GpuLadderTests.test_success_without_timer_retains_csv_rows) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.939s
+
+OK

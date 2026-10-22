@@ -1,0 +1,48 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--workspace",
+    "--release",
+    "--locked",
+    "--offline",
+    "--quiet"
+  ],
+  "returncode": 0,
+  "elapsed_seconds": 212.111,
+  "base_commit": "8e8f79ff246c130f402538b56f29d53b237cbd8a",
+  "candidate_changes": [
+    " M .github/workflows/ci.yml",
+    " M .gitignore",
+    " M Cargo.lock",
+    " M Cargo.toml",
+    " M README.md",
+    " M crates/modena-bench/Cargo.toml",
+    " M crates/modena-cli/Cargo.toml",
+    " M crates/modena-core/Cargo.toml",
+    " M crates/modena-core/src/barostat.rs",
+    " M crates/modena-core/src/lib.rs",
+    " M crates/modena-core/src/runner.rs",
+    " M crates/modena-core/src/spme.rs",
+    " M crates/modena-mcp/Cargo.toml",
+    " M python/modena/__init__.py",
+    " M python/modena/config.py",
+    " M python/modena/run.py",
+    " M python/modena/tests/test_parity.py",
+    " M python/pyproject.toml",
+    "?? CHANGELOG.md",
+    "?? CITATION.cff",
+    "?? CONTRIBUTING.md",
+    "?? SUPPORT.md",
+    "?? crates/modena-core/tests/thermostat_statistics.rs",
+    "?? docs/EXTENDING.md",
+    "?? docs/VALIDATED_SCOPE.md",
+    "?? docs/releases/",
+    "?? python/modena/tests/test_client.py",
+    "?? python/modena/tests/test_config.py"
+  ],
+  "environment": {
+    "CARGO_TARGET_DIR": "/private/tmp/modena-oss-target",
+    "MODENA_BINARY": "/private/tmp/modena-oss-target/release/modena"
+  }
+}

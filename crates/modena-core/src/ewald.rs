@@ -28,7 +28,7 @@
 //! energy of NaCl, and NVE energy conservation for an ionic system
 //! (`tests/electrostatics.rs`).
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::error::{ModenaError, Result};
 use crate::force_model::{ForceModel, Virial};
@@ -56,34 +56,32 @@ pub struct EwaldForceModel {
     /// Reciprocal-space cutoff `k_c` (1/length). k-vectors with `|k| ≥ k_c` are
     /// dropped.
     pub kspace_cutoff: f64,
-    /// Half-space reciprocal k-vector set, cached per (box lengths, kcut).
+    /// Half-space reciprocal k-vector set, cached per (full cell basis, kcut).
     /// Previously re-enumerated and re-allocated every step (a 19,548-entry
     /// `Vec<KVec>` ≈ 625 KB rebuilt per step at the validation deck, despite
     /// depending only on the box and cutoffs — the exact analogue of the
     /// neighbor-list box-rescale cache). Regenerate only on change.
     #[allow(clippy::type_complexity)]
     kvec_cache: Mutex<Option<KvecCache>>,
-    /// Covalently excluded pairs (e.g. the intramolecular O–H/H–H of rigid
-    /// water). The shared neighbor list already removes their real-space
-    /// (erfc) part; the reciprocal sum still carries their Gaussian part,
-    /// which [`Self::with_excluded_pairs`] cancels via the erf correction.
-    pub excluded_pairs: Vec<(usize, usize)>,
+    /// Indexed Coulomb scales; shared-list and model policies reconcile once
+    /// and reciprocal corrections are applied once per configured pair.
+    pair_scales: crate::neighbor::PairScaleSet,
 }
 
-/// Cached k-vector set: `(box lengths, kspace_cutoff, half-space k vectors)`.
-type KvecCache = ([f64; 3], f64, Vec<KVec>);
+/// Cached immutable k-vector snapshot, keyed by full cell and k-space cutoff.
+type KvecCache = (crate::system::SimBox, f64, Arc<Vec<KVec>>);
 
 impl EwaldForceModel {
     pub fn new(kappa: f64, real_cutoff: f64, kspace_cutoff: f64) -> Result<Self> {
-        if !(kappa > 0.0) {
+        if !kappa.is_finite() || kappa <= 0.0 {
             return Err(ModenaError::Config("Ewald `kappa` must be > 0".into()));
         }
-        if !(real_cutoff > 0.0) {
+        if !real_cutoff.is_finite() || real_cutoff <= 0.0 {
             return Err(ModenaError::Config(
                 "Ewald `real_cutoff` must be > 0".into(),
             ));
         }
-        if !(kspace_cutoff > 0.0) {
+        if !kspace_cutoff.is_finite() || kspace_cutoff <= 0.0 {
             return Err(ModenaError::Config(
                 "Ewald `kspace_cutoff` must be > 0".into(),
             ));
@@ -93,26 +91,22 @@ impl EwaldForceModel {
             real_cutoff,
             kspace_cutoff,
             kvec_cache: Mutex::new(None),
-            excluded_pairs: Vec::new(),
+            pair_scales: crate::neighbor::PairScaleSet::default(),
         })
     }
 
-    /// Recompute the half-space k-vector set only when the box lengths or
-    /// `kspace_cutoff` change (mirror of the neighbor-list `ref_box` cache).
-    fn ensure_kvec_cache(&self, box_size: &crate::system::SimBox) {
-        let size = [box_size.size.0[0], box_size.size.0[1], box_size.size.0[2]];
+    /// Return an immutable snapshot for this full cell basis. Another caller
+    /// sharing the model may replace the cache without changing this snapshot.
+    fn kvecs(&self, box_size: &crate::system::SimBox) -> Arc<Vec<KVec>> {
         let mut g = self.kvec_cache.lock().unwrap();
-        let stale = match &*g {
-            Some((s, k, _)) => *s != size || *k != self.kspace_cutoff,
-            None => true,
-        };
-        if stale {
-            *g = Some((
-                size,
-                self.kspace_cutoff,
-                generate_kvecs(box_size, self.kspace_cutoff),
-            ));
+        if let Some((cell, cutoff, data)) = &*g {
+            if cell == box_size && *cutoff == self.kspace_cutoff {
+                return Arc::clone(data);
+            }
         }
+        let data = Arc::new(generate_kvecs(box_size, self.kspace_cutoff));
+        *g = Some((*box_size, self.kspace_cutoff, Arc::clone(&data)));
+        data
     }
 
     /// The real-space cutoff — the caller uses `max(pair_cutoff, this)` for the
@@ -125,20 +119,38 @@ impl EwaldForceModel {
     /// the reciprocal sum's Gaussian (erf) part is cancelled explicitly, so an
     /// excluded pair feels exactly zero Coulomb.
     pub fn with_excluded_pairs(mut self, pairs: Vec<(usize, usize)>) -> Self {
-        self.excluded_pairs = pairs;
+        let scales: Vec<_> = pairs
+            .into_iter()
+            .map(|(i, j)| crate::neighbor::PairScale {
+                i,
+                j,
+                lj: 0.0,
+                coulomb: 0.0,
+            })
+            .collect();
+        self.pair_scales =
+            crate::neighbor::PairScaleSet::new(&scales).expect("invalid excluded pairs");
         self
+    }
+
+    /// Validated independently weighted pairs. The Coulomb weight is consumed
+    /// here; LJ weights belong to the shared neighbor list and pair provider.
+    pub fn with_pair_scales(mut self, scales: Vec<crate::neighbor::PairScale>) -> Result<Self> {
+        self.pair_scales = crate::neighbor::PairScaleSet::new(&scales)?;
+        Ok(self)
     }
 
     /// Recompute the full Ewald energy only (no forces), used by the
     /// finite-difference reference in tests and by MC barostat ΔU. Accumulates
     /// nothing; returns the total potential energy.
     pub fn energy(&self, system: &System, neighbors: &mut NeighborList) -> Result<f64> {
+        neighbors.build(system);
+        let policy = CoulombPolicy::new(&self.pair_scales, neighbors.scales(), system.n())?;
         let v = system.box_size.volume();
         if v <= 0.0 {
             return Err(ModenaError::Physics("non-positive box volume".into()));
         }
         // Real space.
-        neighbors.build(system);
         let rc2 = self.real_cutoff * self.real_cutoff;
         let kappa = self.kappa;
         let mut u_real = 0.0;
@@ -149,7 +161,7 @@ impl EwaldForceModel {
                 continue;
             }
             let r = r2.sqrt();
-            let qprod = system.charge(i) * system.charge(j);
+            let qprod = policy.scale(i, j) * system.charge(i) * system.charge(j);
             u_real += qprod * libm::erfc(kappa * r) / r;
         }
         // Excluded-pair erf correction (energy only here).
@@ -158,7 +170,8 @@ impl EwaldForceModel {
             &system.box_size,
             &system.positions,
             &system.charges,
-            &self.excluded_pairs,
+            self.real_cutoff,
+            policy.entries(),
             &mut [],
         );
         u_real += u_excl;
@@ -174,19 +187,14 @@ impl EwaldForceModel {
     /// iteration, see `generate_kvecs`). Returns `(energy, n_half_k_vectors)`.
     pub(crate) fn reciprocal_energy(&self, system: &System) -> Result<(f64, usize)> {
         let v = system.box_size.volume();
-        self.ensure_kvec_cache(&system.box_size);
-        let g = self.kvec_cache.lock().unwrap();
-        let kvecs = match &*g {
-            Some((_, _, v)) => v,
-            None => unreachable!("ensure_kvec_cache guarantees Some"),
-        };
+        let kvecs = self.kvecs(&system.box_size);
         let two_pi_over_v = 2.0 * std::f64::consts::PI / v;
         let kappa2 = self.kappa * self.kappa;
         let n = system.n();
         let pos = &system.positions;
         let q = &system.charges;
         let mut u = 0.0;
-        for kv in kvecs {
+        for kv in kvecs.iter() {
             let k2 = kv.k2;
             let w = libm::exp(-k2 / (4.0 * kappa2)) / k2;
             // ρ(k) = Σ q_j (cos + i sin).
@@ -217,11 +225,59 @@ impl EwaldForceModel {
     }
 }
 
+/// Reconcile model and shared-list Coulomb policies once per evaluation.
+/// Identical overlapping policies are applied once; contradictory weights
+/// are errors. Iteration visits only configured special pairs, without cloning
+/// the index or allocating a combined table on each force pass.
+pub(crate) struct CoulombPolicy<'a> {
+    model: &'a crate::neighbor::PairScaleSet,
+    neighbors: &'a crate::neighbor::PairScaleSet,
+}
+impl<'a> CoulombPolicy<'a> {
+    pub(crate) fn new(
+        model: &'a crate::neighbor::PairScaleSet,
+        neighbors: &'a crate::neighbor::PairScaleSet,
+        n: usize,
+    ) -> Result<Self> {
+        model.validate(n)?;
+        neighbors.validate(n)?;
+        for p in model.entries() {
+            if let Some(q) = neighbors.get(p.i, p.j) {
+                if p.coulomb != q.coulomb {
+                    return Err(ModenaError::Config(format!(
+                        "model and neighbor Coulomb scales conflict for ({}, {})",
+                        p.i, p.j
+                    )));
+                }
+            }
+        }
+        Ok(Self { model, neighbors })
+    }
+    pub(crate) fn scale(&self, i: usize, j: usize) -> f64 {
+        self.model
+            .get(i, j)
+            .map_or_else(|| self.neighbors.scale(i, j).1, |p| p.coulomb)
+    }
+    pub(crate) fn entries(&self) -> impl Iterator<Item = crate::neighbor::PairScale> + '_ {
+        self.model.entries().iter().copied().chain(
+            self.neighbors
+                .entries()
+                .iter()
+                .copied()
+                .filter(|p| self.model.get(p.i, p.j).is_none()),
+        )
+    }
+}
+
 /// The excluded-pair `erf` correction, shared by the direct Ewald and SPME
-/// models. The shared neighbor list removes an excluded pair's real-space
+/// models. Real-space pairs are independently weighted; the reciprocal
+/// correction removes `(1-coulomb_scale)` of their Gaussian part. A 0/0 list
+/// removes an excluded pair's real-space
 /// (erfc) part, but the reciprocal sum / mesh still carries its Gaussian
 /// `erf(κr)/r` part — this cancels it, so an excluded pair feels exactly zero
-/// Coulomb:
+/// Coulomb. Outside the finite real cutoff, the correction removes the full
+/// bare fraction rather than just erf: this keeps the energy difference from
+/// the unscaled finite-cutoff model exactly `-(1-s)*q_i*q_j/r` at any distance.
 ///
 /// ```text
 ///   U_corr = −q_i q_j erf(κr)/r
@@ -232,13 +288,19 @@ pub(crate) fn exclusion_correction(
     box_size: &crate::system::SimBox,
     positions: &[f64],
     charges: &[f64],
-    pairs: &[(usize, usize)],
+    real_cutoff: f64,
+    pairs: impl Iterator<Item = crate::neighbor::PairScale>,
     forces: &mut [f64],
 ) -> (f64, f64) {
     let kappa2 = kappa * kappa;
     let mut u = 0.0;
     let mut w = 0.0;
-    for &(i, j) in pairs {
+    for pair in pairs {
+        let (i, j) = (pair.i, pair.j);
+        let removed = 1.0 - pair.coulomb;
+        if removed == 0.0 {
+            continue;
+        }
         let ri = Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
         let rj = Vec3::new(positions[3 * j], positions[3 * j + 1], positions[3 * j + 2]);
         let d = box_size.min_image(ri - rj);
@@ -247,15 +309,20 @@ pub(crate) fn exclusion_correction(
             continue;
         }
         let r = r2.sqrt();
-        let qprod = charges[i] * charges[j];
-        let erf_kr = libm::erf(kappa * r);
-        let exp_kr2 = libm::exp(-kappa2 * r2);
+        let qprod = removed * charges[i] * charges[j];
+        let (erf_kr, exp_kr2) = if r < real_cutoff {
+            (libm::erf(kappa * r), libm::exp(-kappa2 * r2))
+        } else {
+            (1.0, 0.0)
+        };
         u += -qprod * erf_kr / r;
         let coef = qprod * (TWO_OVER_SQRT_PI * kappa * exp_kr2 / r2 - erf_kr / (r2 * r));
         for k in 0..3 {
             let fv = d.0[k] * coef;
-            forces[3 * i + k] += fv;
-            forces[3 * j + k] -= fv;
+            if !forces.is_empty() {
+                forces[3 * i + k] += fv;
+                forces[3 * j + k] -= fv;
+            }
             w += d.0[k] * fv;
         }
     }
@@ -263,12 +330,20 @@ pub(crate) fn exclusion_correction(
 }
 
 impl ForceModel for EwaldForceModel {
+    fn conserves_total_momentum(&self, _system: &System) -> bool {
+        true
+    }
+    fn neighbor_cutoff(&self) -> Option<f64> {
+        Some(self.real_cutoff)
+    }
     fn compute(
         &self,
         system: &mut System,
         virial: &mut Virial,
         neighbors: &mut NeighborList,
     ) -> Result<f64> {
+        neighbors.build(system);
+        let policy = CoulombPolicy::new(&self.pair_scales, neighbors.scales(), system.n())?;
         let v = system.box_size.volume();
         if v <= 0.0 {
             return Err(ModenaError::Physics("non-positive box volume".into()));
@@ -288,7 +363,6 @@ impl ForceModel for EwaldForceModel {
         let box_size = system.box_size;
 
         // --- Real-space screened sum over the half neighbor list. ---
-        neighbors.build(system);
         {
             let pos = &system.positions;
             let q = &system.charges;
@@ -301,7 +375,7 @@ impl ForceModel for EwaldForceModel {
                     continue;
                 }
                 let r = r2.sqrt();
-                let qprod = q[i] * q[j];
+                let qprod = policy.scale(i, j) * q[i] * q[j];
                 let erfc_kr = libm::erfc(kappa * r);
                 let exp_kr2 = libm::exp(-kappa2 * r2);
                 // U += q_i q_j erfc(κr)/r.
@@ -323,7 +397,8 @@ impl ForceModel for EwaldForceModel {
             &box_size,
             &system.positions,
             &system.charges,
-            &self.excluded_pairs,
+            self.real_cutoff,
+            policy.entries(),
             &mut forces,
         );
         pe += u_excl;
@@ -339,19 +414,14 @@ impl ForceModel for EwaldForceModel {
         // is the same, so the brute-force decomposition agreement (~1e-10)
         // carries over unchanged.
         {
-            self.ensure_kvec_cache(&box_size);
-            let g = self.kvec_cache.lock().unwrap();
-            let kvecs = match &*g {
-                Some((_, _, v)) => v,
-                None => unreachable!("ensure_kvec_cache guarantees Some"),
-            };
+            let kvecs = self.kvecs(&box_size);
             let two_pi_over_v = 2.0 * std::f64::consts::PI / v;
             let four_pi_over_v = 4.0 * std::f64::consts::PI / v;
             let pos = &system.positions;
             let q = &system.charges;
             // Reused phase scratch (allocated once per compute call).
             let mut phases = vec![(0.0f64, 0.0f64); n];
-            for kv in kvecs {
+            for kv in kvecs.iter() {
                 let k2 = kv.k2;
                 let w = libm::exp(-k2 / (4.0 * kappa2)) / k2;
                 // Structure factor (+ phase scratch for the force pass).
@@ -367,26 +437,29 @@ impl ForceModel for EwaldForceModel {
                     b += q[j] * s;
                 }
                 // Energy: (2π/V) w (A² + B²), ×2 for the ±k pair.
-                pe += 2.0 * two_pi_over_v * w * (a * a + b * b);
+                let uk = 2.0 * two_pi_over_v * w * (a * a + b * b);
+                pe += uk;
+                // Under isotropic strain phases stay fixed, V scales as λ³
+                // and k² as λ^-2: -dU/dλ = U(1-k²/(2κ²)).
+                w_virial += uk * (1.0 - k2 / (2.0 * kappa2));
                 // Force: per atom c_i = −(4π/V) q_i (B cos_i − A sin_i) w;
                 // F_i += c_i · k, ×2 for the ±k pair.
                 let scale = -2.0 * four_pi_over_v * w;
                 for i in 0..n {
-                    let ri = Vec3::new(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]);
                     let (cos_i, sin_i) = phases[i];
                     let ci = scale * q[i] * (b * cos_i - a * sin_i);
                     forces[3 * i] += ci * kv.k.0[0];
                     forces[3 * i + 1] += ci * kv.k.0[1];
                     forces[3 * i + 2] += ci * kv.k.0[2];
-                    // Virial: Σ r_i · F_i (reciprocal contribution).
-                    w_virial += ci * kv.k.dot(ri);
                 }
             }
         }
 
         // --- Self + background (energy only, no force). ---
         pe += self.self_energy(system);
-        pe += self.background_energy(system, v);
+        let u_bg = self.background_energy(system, v);
+        pe += u_bg;
+        w_virial += 3.0 * u_bg;
 
         // Accumulate into the system (caller zeroed forces + virial once).
         for (dst, &src) in system.forces.iter_mut().zip(forces.iter()).take(3 * n) {

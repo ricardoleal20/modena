@@ -88,6 +88,7 @@ fn run_once(
     const SEED: u64 = 87287;
 
     let mut sys = lattice::fcc(A, replicas, "Ar");
+    sys.set_conserved_com_dof(3).unwrap();
     init_velocities(&mut sys, 1.0, SEED);
 
     let mut neighbors = NeighborList::with_skin_exclusions(CUTOFF, SKIN, &[]);
@@ -135,6 +136,11 @@ fn main() {
     let steps: usize = args[3].parse().unwrap();
     let runs: usize = args[4].parse().unwrap_or(1).max(1);
 
+    if steps == 0 {
+        eprintln!("steps must be positive");
+        std::process::exit(2);
+    }
+    eprintln!("metadata: steps={steps} seed=87287 dt=0.005 skin=0.3 COM_DOF=3 kinetic_DOF={} warmup=one_fresh_trajectory model=LJ_shifted_force_rc2.5 scope=in_process_integration_host_offload; startup_and_initial_force_untimed", 3*atoms-3);
     let replicas = replicas_for(atoms);
     let cpu_model = || -> Box<dyn ForceModel> {
         Box::new(PairForceModel::new(

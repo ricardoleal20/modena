@@ -1,0 +1,55 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s
+     Running tests/runner_hardening.rs (target/debug/deps/runner_hardening-49206dd6d9b677f9)
+
+running 23 tests
+test finite_input_that_overflows_kinetic_initialization_is_rejected ... ok
+test initialization_uses_conserved_com_dof ... ok
+test full_u64_seed_range_is_supported ... ok
+test initial_constraints_are_projected_before_sampling ... ok
+test box_scaling_refreshes_force_energy_and_virial_caches ... ok
+
+thread 'mc_temperature_matching_requires_positive_controller_and_relative_small_scale_agreement' (35600645) panicked at crates/modena-core/tests/runner_hardening.rs:611:5:
+invalid near-zero canonical pairings accepted: [(0, 0), (0, 1), (1, 0), (1, 1), (2, 1)]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test lattice_generator_count_overflow_is_a_config_error ... ok
+test langevin_initialization_retains_stochastic_com_modes ... ok
+test real_units_toml_and_direct_config_have_identical_physics ... ok
+test mc_config_requires_consistent_canonical_temperature_and_positive_proposal_controls ... ok
+test mc_temperature_matching_requires_positive_controller_and_relative_small_scale_agreement ... FAILED
+test strict_config_rejects_invalid_numeric_and_scientific_combinations ... ok
+test unknown_keys_are_errors ... ok
+test generated_water_rejects_overlapping_explicit_distance_pairs ... FAILED
+
+thread 'generated_water_rejects_overlapping_explicit_distance_pairs' (35600636) panicked at crates/modena-core/tests/runner_hardening.rs:540:5:
+water overlaps did not fail as duplicate config pairs: [0, 1, 2, 3, 4, 5]
+test invalid_checkpoint_write_preserves_existing_file ... ok
+test continuation_rejects_changed_physical_identity ... ok
+test intentional_protocol_switch_and_legacy_import_require_state_only ... ok
+
+thread 'state_only_mass_changes_reassess_com_and_preserve_subsequent_continuation' (35600647) panicked at crates/modena-core/tests/runner_hardening.rs:568:5:
+assertion `left == right` failed
+  left: 3
+ right: 0
+test state_only_mass_changes_reassess_com_and_preserve_subsequent_continuation ... FAILED
+test continuation_preserves_com_modes_after_a_state_only_protocol_switch ... ok
+
+thread 'continuation_binds_electrostatic_presence_method_and_parameters' (35600631) panicked at crates/modena-core/tests/runner_hardening.rs:493:5:
+electrostatic identity changes accepted: [0, 1, 2, 3, 4, 5]
+test continuation_binds_electrostatic_presence_method_and_parameters ... FAILED
+test legacy_parser_rejects_nonfinite_overflow_and_trailing_corruption ... ok
+test version_two_carries_atom_identity_and_rejects_corrupt_payloads ... ok
+test constraint_continuation_preserves_tangent_state_and_metadata ... ok
+test stochastic_and_extended_ensemble_split_continuation_is_exact ... ok
+
+failures:
+
+failures:
+    continuation_binds_electrostatic_presence_method_and_parameters
+    generated_water_rejects_overlapping_explicit_distance_pairs
+    mc_temperature_matching_requires_positive_controller_and_relative_small_scale_agreement
+    state_only_mass_changes_reassess_com_and_preserve_subsequent_continuation
+
+test result: FAILED. 19 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+error: test failed, to rerun pass `-p modena-core --test runner_hardening`

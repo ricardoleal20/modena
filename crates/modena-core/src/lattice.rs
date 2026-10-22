@@ -35,6 +35,17 @@ impl AlloySpecies {
 /// Build an FCC lattice with `replicas` unit cells per axis and lattice
 /// constant `a`. 4 atoms per cell. Box is orthorhombic `a·replicas`.
 pub fn fcc(a: f64, replicas: [u32; 3], element: &str) -> System {
+    let mut system = System::new(fcc_box(a, replicas));
+    system.resize((replicas[0] * replicas[1] * replicas[2] * 4) as usize);
+    fill_fcc(&mut system, a, replicas, element);
+    system
+}
+
+fn fcc_box(a: f64, replicas: [u32; 3]) -> SimBox {
+    SimBox::from_array(replicas.map(|r| a * r as f64))
+}
+
+fn fill_fcc(system: &mut System, a: f64, replicas: [u32; 3], element: &str) {
     let basis = [
         Vec3::new(0.0, 0.0, 0.0),
         Vec3::new(0.5, 0.5, 0.0),
@@ -42,10 +53,6 @@ pub fn fcc(a: f64, replicas: [u32; 3], element: &str) -> System {
         Vec3::new(0.0, 0.5, 0.5),
     ];
     let [nx, ny, nz] = replicas;
-    let box_size = SimBox::new(Vec3::new(a * nx as f64, a * ny as f64, a * nz as f64));
-    let mut system = System::new(box_size);
-    let total = (nx * ny * nz * 4) as usize;
-    system.resize(total);
     let mut idx = 0;
     for ix in 0..nx {
         for iy in 0..ny {
@@ -65,13 +72,57 @@ pub fn fcc(a: f64, replicas: [u32; 3], element: &str) -> System {
             }
         }
     }
-    system
+}
+
+/// Fallible allocation for the Result-based alloy/config boundary. Keep the
+/// established u32 atom-count limit; reject overflow before allocating or
+/// entering the lattice loops.
+fn try_fcc(a: f64, replicas: [u32; 3], element: &str) -> Result<System> {
+    if !a.is_finite()
+        || a <= 0.0
+        || replicas.contains(&0)
+        || replicas.iter().any(|&r| !(a * r as f64).is_finite())
+    {
+        return Err(ModenaError::Config(
+            "alloy lattice constant/box must be finite and positive and replicas >= 1".into(),
+        ));
+    }
+    let n = replicas
+        .iter()
+        .try_fold(4u32, |n, &r| n.checked_mul(r))
+        .ok_or_else(|| {
+            ModenaError::Config("alloy atom count exceeds lattice generator u32 capacity".into())
+        })? as usize;
+    let coords = n
+        .checked_mul(3)
+        .ok_or_else(|| ModenaError::Config("alloy coordinate count overflow".into()))?;
+    let mut system = System::new(fcc_box(a, replicas));
+    macro_rules! reserve {
+        ($buffer:ident, $count:expr) => {
+            system.$buffer.try_reserve_exact($count).map_err(|e| {
+                ModenaError::Config(format!("alloy {} capacity: {e}", stringify!($buffer)))
+            })?;
+        };
+    }
+    reserve!(positions, coords);
+    reserve!(velocities, coords);
+    reserve!(forces, coords);
+    reserve!(masses, n);
+    reserve!(species, n);
+    reserve!(charges, n);
+    reserve!(elements, n);
+    system.resize(n);
+    fill_fcc(&mut system, a, replicas, element);
+    Ok(system)
 }
 
 /// Build an FCC lattice and assign each atom a species by concentration, using a
 /// seeded shuffle so the assignment is deterministic and reproducible. Per-atom
 /// masses and element labels are set from the chosen species. Concentrations
-/// must sum to 1 (within tolerance).
+/// must sum to 1 (within tolerance). Integer counts use largest remainders,
+/// with input order breaking ties, so they sum exactly to the FCC atom count.
+/// Seeded assignments can differ from the historical independent-rounding
+/// algorithm for fractional quotas.
 pub fn random_alloy(
     a: f64,
     replicas: [u32; 3],
@@ -83,31 +134,63 @@ pub fn random_alloy(
             "random_alloy needs at least one species".into(),
         ));
     }
+    if species.len() > u32::MAX as usize
+        || species.iter().any(|s| {
+            !s.concentration.is_finite()
+                || s.concentration < 0.0
+                || !s.mass.is_finite()
+                || s.mass <= 0.0
+                || !s.charge.is_finite()
+        })
+    {
+        return Err(ModenaError::Config("alloy species need finite nonnegative fractions, positive masses and finite charges within u32 type capacity".into()));
+    }
     let total_conc: f64 = species.iter().map(|s| s.concentration).sum();
-    if (total_conc - 1.0).abs() > 1e-6 {
+    if !total_conc.is_finite() || (total_conc - 1.0).abs() > 1e-6 {
         return Err(ModenaError::Config(format!(
             "random_alloy concentrations must sum to 1.0, got {total_conc}"
         )));
     }
-    let mut system = fcc(a, replicas, &species[0].element);
+    let mut system = try_fcc(a, replicas, &species[0].element)?;
     let n = system.n();
 
-    // Build a species label per atom by drawing `count` slots for each species.
-    // Use a deterministic shuffle: fill an array of species indices in
-    // concentration order, then shuffle with the seeded RNG. The last species
-    // absorbs rounding so the total is exactly `n`.
-    let mut labels: Vec<u32> = Vec::with_capacity(n);
+    // Hamilton's largest-remainder apportionment. Normalize the accepted
+    // near-unit sum, take bounded floor quotas, then give remaining slots to
+    // descending fractional remainders (input index breaks ties). Zero
+    // fractions never receive slots. Only the subsequent shuffle is seeded.
+    let mut populations = Vec::new();
+    populations
+        .try_reserve_exact(species.len())
+        .map_err(|e| ModenaError::Config(format!("alloy population capacity: {e}")))?;
+    let mut assigned = 0;
     for (i, s) in species.iter().enumerate() {
-        // Last species takes the remainder to guarantee the count is exact.
-        let count = if i == species.len() - 1 {
-            n - labels.len()
-        } else {
-            (s.concentration * n as f64).round() as usize
-        };
+        let quota = (s.concentration / total_conc) * n as f64;
+        let count = (quota.floor() as usize).min(n - assigned);
+        assigned += count;
+        populations.push((i, count, quota - quota.floor()));
+    }
+    populations.sort_unstable_by(|a, b| b.2.total_cmp(&a.2).then(a.0.cmp(&b.0)));
+    for entry in populations
+        .iter_mut()
+        .filter(|p| species[p.0].concentration > 0.0)
+        .take(n - assigned)
+    {
+        entry.1 += 1;
+        assigned += 1;
+    }
+    if assigned != n {
+        return Err(ModenaError::Config(
+            "alloy population apportionment failed".into(),
+        ));
+    }
+    populations.sort_unstable_by_key(|p| p.0);
+    let mut labels = Vec::new();
+    labels
+        .try_reserve_exact(n)
+        .map_err(|e| ModenaError::Config(format!("alloy label capacity: {e}")))?;
+    for (i, count, _) in populations {
         labels.extend(std::iter::repeat_n(i as u32, count));
     }
-    // Guard against the rounding producing the wrong length.
-    labels.resize(n, (species.len() - 1) as u32);
 
     let mut rng = StdRng::seed_from_u64(seed);
     labels.shuffle(&mut rng);

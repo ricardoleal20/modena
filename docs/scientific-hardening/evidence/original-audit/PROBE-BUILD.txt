@@ -1,0 +1,5 @@
+library=/Users/ricardoleal20/Documents/Code/Misc/modena/target/debug/libmodena_core.rlib
+   Compiling rand_distr v0.6.0
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/Documents/Code/Misc/modena/crates/modena-core)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.71s
+rustc 1.97.1 (8bab26f4f 2026-07-14)

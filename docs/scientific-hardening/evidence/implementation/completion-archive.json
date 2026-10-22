@@ -1,0 +1,1054 @@
+{
+  "verified_source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "preserved": [
+    {
+      "session_file": "root-verification/bench-compile.json",
+      "archive_file": "root-verification/bench-compile.json",
+      "sha256": "8ab8d97b0b6364bbdc2e0f668d38e343ef4bae1f15021849a60bacce80056da0"
+    },
+    {
+      "session_file": "root-verification/bench-compile.stderr",
+      "archive_file": "root-verification/bench-compile.stderr",
+      "sha256": "6ad06e895dd3db3c2f287504d4a1260368dcf62b0efffad6936a4d5bbf3f4284"
+    },
+    {
+      "session_file": "root-verification/bench-compile.stdout",
+      "archive_file": "root-verification/bench-compile.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/clippy-default.json",
+      "archive_file": "root-verification/clippy-default.json",
+      "sha256": "a932c02d3cfa1d517a55b45b522a2af094ac54b0d3dc99f9380a2b90d8a5d630"
+    },
+    {
+      "session_file": "root-verification/clippy-default.stderr",
+      "archive_file": "root-verification/clippy-default.stderr",
+      "sha256": "fcd349f8875954ca052a04a849daf2db3859730c444f313e5d7c436ba71271b2"
+    },
+    {
+      "session_file": "root-verification/clippy-default.stdout",
+      "archive_file": "root-verification/clippy-default.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/clippy-gpu.json",
+      "archive_file": "root-verification/clippy-gpu.json",
+      "sha256": "e0efe1425b704658fd34db8cd4db28029eb83e50633ba387b0f01cae7404cf77"
+    },
+    {
+      "session_file": "root-verification/clippy-gpu.stderr",
+      "archive_file": "root-verification/clippy-gpu.stderr",
+      "sha256": "846ce8565eae0a172d47dcc9a9cddd47cbd2c11b17524f76ad917ebf13a12a32"
+    },
+    {
+      "session_file": "root-verification/clippy-gpu.stdout",
+      "archive_file": "root-verification/clippy-gpu.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/clippy-mpi.json",
+      "archive_file": "root-verification/clippy-mpi.json",
+      "sha256": "97098b68993c92dec657512992c26369bcfd5d8f13c3fadcb60a066fdf59b140"
+    },
+    {
+      "session_file": "root-verification/clippy-mpi.stderr",
+      "archive_file": "root-verification/clippy-mpi.stderr",
+      "sha256": "0cbf5dc3e554c246643a5103770a8c4c9de7c912df9764e5a494bd158c8bb141"
+    },
+    {
+      "session_file": "root-verification/clippy-mpi.stdout",
+      "archive_file": "root-verification/clippy-mpi.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/example-continue-nvt-check.json",
+      "archive_file": "root-verification/example-continue-nvt-check.json",
+      "sha256": "3794430b2ce0f65ab429cf48a89ee35c3d6ac56b0ad64305f7e99e08c1c35de4"
+    },
+    {
+      "session_file": "root-verification/example-continue-nvt-check.stderr",
+      "archive_file": "root-verification/example-continue-nvt-check.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/example-continue-nvt-check.stdout",
+      "archive_file": "root-verification/example-continue-nvt-check.stdout",
+      "sha256": "6a94894ea4a14a372b2f654950b1d7cdb037ce65059aec12068d69938949da45"
+    },
+    {
+      "session_file": "root-verification/example-continue-nvt-run.json",
+      "archive_file": "root-verification/example-continue-nvt-run.json",
+      "sha256": "7e5c180092b2deeb255f82caaf16408e0c11825dd36ba8466d1126d0d00d4340"
+    },
+    {
+      "session_file": "root-verification/example-continue-nvt-run.stderr",
+      "archive_file": "root-verification/example-continue-nvt-run.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/example-continue-nvt-run.stdout",
+      "archive_file": "root-verification/example-continue-nvt-run.stdout",
+      "sha256": "846fac41370a05e6c77d8cfc903e3ccb1e1f553b78a8b301351ac3b0b9110f07"
+    },
+    {
+      "session_file": "root-verification/example-ionic-spme-check.json",
+      "archive_file": "root-verification/example-ionic-spme-check.json",
+      "sha256": "02eaa66ae4418e03bd0d37e2c31081512d3836bb10f9ec85e76eb10739e2ee9b"
+    },
+    {
+      "session_file": "root-verification/example-ionic-spme-check.stderr",
+      "archive_file": "root-verification/example-ionic-spme-check.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/example-ionic-spme-check.stdout",
+      "archive_file": "root-verification/example-ionic-spme-check.stdout",
+      "sha256": "204fd66ed336b36f13babd4eed0b57d59b714531db1ed5ceceb193128d4003cb"
+    },
+    {
+      "session_file": "root-verification/example-ionic-spme-run.json",
+      "archive_file": "root-verification/example-ionic-spme-run.json",
+      "sha256": "a97e74c4cdea9717db6dd084c99181fad4a3ed13d8058a35ebcdcc17906cc391"
+    },
+    {
+      "session_file": "root-verification/example-ionic-spme-run.stderr",
+      "archive_file": "root-verification/example-ionic-spme-run.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/example-ionic-spme-run.stdout",
+      "archive_file": "root-verification/example-ionic-spme-run.stdout",
+      "sha256": "6e7b0df7a30ef72da71ac00cba1cbe34df15d88369255f70a9a7259845bccf5b"
+    },
+    {
+      "session_file": "root-verification/example-mc-npt-check.json",
+      "archive_file": "root-verification/example-mc-npt-check.json",
+      "sha256": "67d1eb9c6eed74efb0ab4b241767e2df5aa582b71b95fd1319a213fd53dcfa4b"
+    },
+    {
+      "session_file": "root-verification/example-mc-npt-check.stderr",
+      "archive_file": "root-verification/example-mc-npt-check.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/example-mc-npt-check.stdout",
+      "archive_file": "root-verification/example-mc-npt-check.stdout",
+      "sha256": "d4a73f1f35380c564c571049960b8e6e186c0ea054e5b59ef21e00d73dcdb1de"
+    },
+    {
+      "session_file": "root-verification/example-mc-npt-run.json",
+      "archive_file": "root-verification/example-mc-npt-run.json",
+      "sha256": "724bf04c38094b72390aba95e783419dc10cc107d7c6e2995c4d4ba99b429a47"
+    },
+    {
+      "session_file": "root-verification/example-mc-npt-run.stderr",
+      "archive_file": "root-verification/example-mc-npt-run.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/example-mc-npt-run.stdout",
+      "archive_file": "root-verification/example-mc-npt-run.stdout",
+      "sha256": "b10aab381288cc69e4e8786ac5a636e46fa37031930887ffe98de6db7689a78e"
+    },
+    {
+      "session_file": "root-verification/example-molecular-nvt-check.json",
+      "archive_file": "root-verification/example-molecular-nvt-check.json",
+      "sha256": "b4b4ce1ea1af60098d882dcfa62b23fe756c44afbc9f0abfd438ec443e6fb0fe"
+    },
+    {
+      "session_file": "root-verification/example-molecular-nvt-check.stderr",
+      "archive_file": "root-verification/example-molecular-nvt-check.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/example-molecular-nvt-check.stdout",
+      "archive_file": "root-verification/example-molecular-nvt-check.stdout",
+      "sha256": "104d7e795fd72ce858261362a82d9c84b67d0ab90318fb7ff7b46513fbd68624"
+    },
+    {
+      "session_file": "root-verification/example-molecular-nvt-run.json",
+      "archive_file": "root-verification/example-molecular-nvt-run.json",
+      "sha256": "14f42ba8a08d118fa7f4da517c886e5d26f4b43d176056639dbe2a2f69e56eaf"
+    },
+    {
+      "session_file": "root-verification/example-molecular-nvt-run.stderr",
+      "archive_file": "root-verification/example-molecular-nvt-run.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/example-molecular-nvt-run.stdout",
+      "archive_file": "root-verification/example-molecular-nvt-run.stdout",
+      "sha256": "e07d76da0db962af25ce85064bf69485b91dea5ea84fa81c64bd3164713a8b24"
+    },
+    {
+      "session_file": "root-verification/example-water-nvt-check.json",
+      "archive_file": "root-verification/example-water-nvt-check.json",
+      "sha256": "a5e9fbfd46890c8acc0a21c4acab630ff8688a191388367464c77f5cbf265b58"
+    },
+    {
+      "session_file": "root-verification/example-water-nvt-check.stderr",
+      "archive_file": "root-verification/example-water-nvt-check.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/example-water-nvt-check.stdout",
+      "archive_file": "root-verification/example-water-nvt-check.stdout",
+      "sha256": "f176b0ff33d60ab1059c5deed78946ab693c241e73224b80445a84ad866c75c8"
+    },
+    {
+      "session_file": "root-verification/example-water-nvt-run.json",
+      "archive_file": "root-verification/example-water-nvt-run.json",
+      "sha256": "686bbe0feb2ca28415bd662eff790d8d9128b746c582a9cec518edee7d44edc4"
+    },
+    {
+      "session_file": "root-verification/example-water-nvt-run.stderr",
+      "archive_file": "root-verification/example-water-nvt-run.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/example-water-nvt-run.stdout",
+      "archive_file": "root-verification/example-water-nvt-run.stdout",
+      "sha256": "44c4bbb3ce9089caa8af9dec4049ed10253353a6c48669c12f736fe1453ff6f1"
+    },
+    {
+      "session_file": "root-verification/fmt.json",
+      "archive_file": "root-verification/fmt.json",
+      "sha256": "7da0d35c9deeb101c87fac4928248547040a2aa5cb6805be7932ad74ad3dd315"
+    },
+    {
+      "session_file": "root-verification/fmt.stderr",
+      "archive_file": "root-verification/fmt.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/fmt.stdout",
+      "archive_file": "root-verification/fmt.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/gpu-adapter.json",
+      "archive_file": "root-verification/gpu-adapter.json",
+      "sha256": "bb20753e5cd381a88219a7a49f164c44d0c3327f735d4082dd189f689be58f26"
+    },
+    {
+      "session_file": "root-verification/gpu-adapter.stderr",
+      "archive_file": "root-verification/gpu-adapter.stderr",
+      "sha256": "defde90aa66b9a209390b68a741ab4645a5e7b9a34be4f438208945b7d6f396c"
+    },
+    {
+      "session_file": "root-verification/gpu-adapter.stdout",
+      "archive_file": "root-verification/gpu-adapter.stdout",
+      "sha256": "8e5f3711fae043d215648d404540718a6a055f7cba24b6c36b70adebf07257e8"
+    },
+    {
+      "session_file": "root-verification/mpi-2rank.json",
+      "archive_file": "root-verification/mpi-2rank.json",
+      "sha256": "e091a56ba3bba211287e27a93646d444e5af9dd756da4c1a43d25df35c6f2562"
+    },
+    {
+      "session_file": "root-verification/mpi-2rank.stderr",
+      "archive_file": "root-verification/mpi-2rank.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/mpi-2rank.stdout",
+      "archive_file": "root-verification/mpi-2rank.stdout",
+      "sha256": "ef8082f29581c90302f4bc7d85c5fc252b063e6ff8d5e3522e2a0f6e00e446ce"
+    },
+    {
+      "session_file": "root-verification/mpi-build.json",
+      "archive_file": "root-verification/mpi-build.json",
+      "sha256": "f2b7a6dac1a85cf2a706fa827444ee881f1d1bf47ab2d56dee6de1dc095e8b71"
+    },
+    {
+      "session_file": "root-verification/mpi-build.stderr",
+      "archive_file": "root-verification/mpi-build.stderr",
+      "sha256": "9441753a977d2ae1324ca3060bf694c9964c91fbd9f6ba81eb74798e6db22b6a"
+    },
+    {
+      "session_file": "root-verification/mpi-build.stdout",
+      "archive_file": "root-verification/mpi-build.stdout",
+      "sha256": "ef5ddef772d8873836f41a231b4655025f7264982327eef9293f64f0ac9866ed"
+    },
+    {
+      "session_file": "root-verification/mpi-executable.json",
+      "archive_file": "root-verification/mpi-executable.json",
+      "sha256": "0184d2aa291c64b948250b69489ab63001d3918eb2ac011b363f1c1d728de08d"
+    },
+    {
+      "session_file": "root-verification/numerical.json",
+      "archive_file": "root-verification/numerical.json",
+      "sha256": "4b50a6addfcc76db29e7dbbadece720f742f62e2b5870451489ed88c292ce5cc"
+    },
+    {
+      "session_file": "root-verification/numerical.stderr",
+      "archive_file": "root-verification/numerical.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/numerical.stdout",
+      "archive_file": "root-verification/numerical.stdout",
+      "sha256": "2ad3b99217986a000e5743bb88d2cbc28745c62a369e2ede1db1f6537a193da2"
+    },
+    {
+      "session_file": "root-verification/original-probe-build.json",
+      "archive_file": "root-verification/original-probe-build.json",
+      "sha256": "8c9cea7a10b2a703d94baa40b14d2a5e20705e6fbb228736856c2d262eafad17"
+    },
+    {
+      "session_file": "root-verification/original-probe-build.stderr",
+      "archive_file": "root-verification/original-probe-build.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/original-probe-build.stdout",
+      "archive_file": "root-verification/original-probe-build.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/original-probe-observations.json",
+      "archive_file": "root-verification/original-probe-observations.json",
+      "sha256": "cc695880c6c44b135deb15983d5cd4abb7ef148a3dac9fbe3782458d25e7cb73"
+    },
+    {
+      "session_file": "root-verification/original-probes.json",
+      "archive_file": "root-verification/original-probes.json",
+      "sha256": "070692dff5faf886da446e45841a4bb8d7a09e14c370b6bd6633c9a290daea45"
+    },
+    {
+      "session_file": "root-verification/original-probes.stderr",
+      "archive_file": "root-verification/original-probes.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/original-probes.stdout",
+      "archive_file": "root-verification/original-probes.stdout",
+      "sha256": "3d37959513d9c7c69010c4b5d80a14a42141ee42aba0ba27e54b76a247ca8be8"
+    },
+    {
+      "session_file": "root-verification/python.json",
+      "archive_file": "root-verification/python.json",
+      "sha256": "65b075da3521af794b81caf26ad37fbd3c376aaca0e2b32015f171dd01a426ab"
+    },
+    {
+      "session_file": "root-verification/python.stderr",
+      "archive_file": "root-verification/python.stderr",
+      "sha256": "35bbc835f28f08c15e9c987819c5a4d504dc0df9ed1bd7ad4a4288d5b99b63e1"
+    },
+    {
+      "session_file": "root-verification/python.stdout",
+      "archive_file": "root-verification/python.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/release.json",
+      "archive_file": "root-verification/release.json",
+      "sha256": "eb6391a71e6be944b43d6c6de5320891ce9052d20394da1136910087d8540c46"
+    },
+    {
+      "session_file": "root-verification/release.stderr",
+      "archive_file": "root-verification/release.stderr",
+      "sha256": "6bc2783b9b909a1b7153af25e2a0fe1db935cf7252094cc2e3b09bfeaeb97f56"
+    },
+    {
+      "session_file": "root-verification/release.stdout",
+      "archive_file": "root-verification/release.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/scientific/validation.json",
+      "archive_file": "root-verification/scientific/validation.json",
+      "sha256": "347d0bbe6cdd529e6b2444a508f9b126fed9f31e2673f3035672c262cb073ed9"
+    },
+    {
+      "session_file": "root-verification/scientific/validation.stderr",
+      "archive_file": "root-verification/scientific/validation.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/scientific/validation.stdout",
+      "archive_file": "root-verification/scientific/validation.stdout",
+      "sha256": "00579e915c37dd2a549fe7caacb573faa6326330f32522f31f21bbc55d2d42ac"
+    },
+    {
+      "session_file": "root-verification/scientific-build.json",
+      "archive_file": "root-verification/scientific-build.json",
+      "sha256": "facebd3aebcbc4bc21e0e0171ed29c1ac8295310014fbdcf9b0e1246f94eb442"
+    },
+    {
+      "session_file": "root-verification/scientific-build.stderr",
+      "archive_file": "root-verification/scientific-build.stderr",
+      "sha256": "f10ad6c90b35230b90f61cd80cf21e926826d5a78ff6077a2b3c65fc7fe12427"
+    },
+    {
+      "session_file": "root-verification/scientific-build.stdout",
+      "archive_file": "root-verification/scientific-build.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/summary.json",
+      "archive_file": "root-verification/summary.json",
+      "sha256": "d80fd9337dcae0252187e691bd6e83d05ae55f2a67deb1c33f78edde6e28dda2"
+    },
+    {
+      "session_file": "root-verification/tooling.json",
+      "archive_file": "root-verification/tooling.json",
+      "sha256": "0aa6aa1ca662a7a66d7d5f40b4619319c4b960be702c12874fedc5e269eb736f"
+    },
+    {
+      "session_file": "root-verification/tooling.stderr",
+      "archive_file": "root-verification/tooling.stderr",
+      "sha256": "bfc288312a301ee735f82fd3c53fbf240f6c7ebaa55e10d93e96d07fcda91d53"
+    },
+    {
+      "session_file": "root-verification/tooling.stdout",
+      "archive_file": "root-verification/tooling.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification/workspace.json",
+      "archive_file": "root-verification/workspace.json",
+      "sha256": "8d04b78e54fe75c44ab4ae9a71957c023d2cf9c56205155ae4d88849577cd454"
+    },
+    {
+      "session_file": "root-verification/workspace.stderr",
+      "archive_file": "root-verification/workspace.stderr",
+      "sha256": "cdbca0bcbc1c55d48cabac78fc0af8d870ea9ee289a4ea9c2f778c846c075a3a"
+    },
+    {
+      "session_file": "root-verification/workspace.stdout",
+      "archive_file": "root-verification/workspace.stdout",
+      "sha256": "85a0ea4eea917a46b358c24ebf88f6097d8d1a7d477127a4e903c66078eb96ff"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/clippy-default.json",
+      "archive_file": "root-verification-pre-final-fix/clippy-default.json",
+      "sha256": "cf794bc647a503c7eccdca29a8d5edcd0e3f4003ad834408af8d822aec1f93f1"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/clippy-default.stderr",
+      "archive_file": "root-verification-pre-final-fix/clippy-default.stderr",
+      "sha256": "2abf511cb267e2f38d1d7d043b5d3594db735e08f4cdc1b85e144db98df57acb"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/clippy-default.stdout",
+      "archive_file": "root-verification-pre-final-fix/clippy-default.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/fmt.json",
+      "archive_file": "root-verification-pre-final-fix/fmt.json",
+      "sha256": "8fb28c5f9a680d69143d1dd39cdaa6253ca480665200dccace7b7c45f8b5b6e2"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/fmt.stderr",
+      "archive_file": "root-verification-pre-final-fix/fmt.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/fmt.stdout",
+      "archive_file": "root-verification-pre-final-fix/fmt.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/gpu-adapter.json",
+      "archive_file": "root-verification-pre-final-fix/gpu-adapter.json",
+      "sha256": "0eb8f23872f0ddc501d364244fb10b048e7f2bd61e6e5e828467b80f4add39df"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/gpu-adapter.stderr",
+      "archive_file": "root-verification-pre-final-fix/gpu-adapter.stderr",
+      "sha256": "8fbcf96af75e32e365028a17fd1a1a80f115ab3e5ddf252f366395c63aedd63e"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/gpu-adapter.stdout",
+      "archive_file": "root-verification-pre-final-fix/gpu-adapter.stdout",
+      "sha256": "84f6fbe49db01b3267f75aae3054bf2cb3d449c586c81bdd8503f4c01be51bd5"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/provenance.json",
+      "archive_file": "root-verification-pre-final-fix/provenance.json",
+      "sha256": "d98cca2799cad1bd1a20f2a0c049b4e00bf2a4426baf162bf767e851e30f455a"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/tooling.json",
+      "archive_file": "root-verification-pre-final-fix/tooling.json",
+      "sha256": "b873ed4591b2cdc2c6edc240eb58c709870e93d7a9dd7092d8c8fb3fa310d8b6"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/tooling.stderr",
+      "archive_file": "root-verification-pre-final-fix/tooling.stderr",
+      "sha256": "df5322221b7e98edc554d6e4ab39751f0c57051d4e4321c6ac35ccc7c99e75a3"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/tooling.stdout",
+      "archive_file": "root-verification-pre-final-fix/tooling.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/workspace.json",
+      "archive_file": "root-verification-pre-final-fix/workspace.json",
+      "sha256": "f04f35780fdec1b53d3b18e89574ded185af551580fe88fb4701d39e4f9dba85"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/workspace.stderr",
+      "archive_file": "root-verification-pre-final-fix/workspace.stderr",
+      "sha256": "addf11573d6712ee9498cc00942b34d7b8937b4cc83d9b5f88ffd0e8faa0d331"
+    },
+    {
+      "session_file": "root-verification-pre-final-fix/workspace.stdout",
+      "archive_file": "root-verification-pre-final-fix/workspace.stdout",
+      "sha256": "b8e1a9089eba3dbb4f3a5dd62a6ca0870e1289a11f5ea2fe8a50decb4c2c632e"
+    },
+    {
+      "session_file": "benchmark-handoff.md",
+      "archive_file": "implementation/benchmark-handoff.md",
+      "sha256": "fe39a44af32d5f1f918d645a33de1391f812de29822dd7cfa83ba61b4b974f54"
+    },
+    {
+      "session_file": "chemical-handoff.md",
+      "archive_file": "implementation/chemical-handoff.md",
+      "sha256": "ee3fb659a258d75f78e4af55c0268fd8037d003d1a9f2023fd666bdbe572b61b"
+    },
+    {
+      "session_file": "collect-verification.py",
+      "archive_file": "root-verification/tools/collect-verification.py",
+      "sha256": "faa33c1b3998c4fd318545bd0371b0f87f415450c0b5e1fc1b70ff4ba97125ef"
+    },
+    {
+      "session_file": "final-fix-brief.md",
+      "archive_file": "implementation/final-fix-brief.md",
+      "sha256": "beca66228a597ffba70be0f886d09f2dab7e0ab5d8b0f07a05241d9eacb37231"
+    },
+    {
+      "session_file": "final-fix-clippy.log",
+      "archive_file": "implementation/final-fix-clippy.log",
+      "sha256": "244176c3aa775e21919bae38e96b614e6387c6b5ac1707997e78f7d262b6332a"
+    },
+    {
+      "session_file": "final-fix-core-covering-confirmed.log",
+      "archive_file": "implementation/final-fix-core-covering-confirmed.log",
+      "sha256": "fd0aae3a1843ad8895bdc8a05cf52ca764eebff83d4503dd0306cc29b80ed397"
+    },
+    {
+      "session_file": "final-fix-core-covering.log",
+      "archive_file": "implementation/final-fix-core-covering.log",
+      "sha256": "46ddffdb6a5f88d3e19ae9ee73ffbf360c53c11ba332cc9028cd10e7e8b3d76b"
+    },
+    {
+      "session_file": "final-fix-core-expanded-green-confirmed.log",
+      "archive_file": "implementation/final-fix-core-expanded-green-confirmed.log",
+      "sha256": "c0ef9acc77216a58f92c1df974d30942e6eb3332ffa8694390ebf8e3e19f3728"
+    },
+    {
+      "session_file": "final-fix-core-expanded-green.log",
+      "archive_file": "implementation/final-fix-core-expanded-green.log",
+      "sha256": "0c4c23c9e0ae3aeb7f6400b7dddd054e4c5878b785fa48386d1dbf3fc0ae580d"
+    },
+    {
+      "session_file": "final-fix-core-expanded-red.log",
+      "archive_file": "implementation/final-fix-core-expanded-red.log",
+      "sha256": "76400990681b3ccf1c57aff7e1d0239fb7dca9b2195027b796791053015d8507"
+    },
+    {
+      "session_file": "final-fix-core-green.log",
+      "archive_file": "implementation/final-fix-core-green.log",
+      "sha256": "8a0e3c51010b9759d9b1d622e36219157cbe8306fe249fd28593c9b91feac0ce"
+    },
+    {
+      "session_file": "final-fix-core-red.log",
+      "archive_file": "implementation/final-fix-core-red.log",
+      "sha256": "13aee48c7752867572ac442b82db3faa744a0d992598fab2db354160428b982e"
+    },
+    {
+      "session_file": "final-fix-expanded-red-provenance.json",
+      "archive_file": "implementation/final-fix-expanded-red-provenance.json",
+      "sha256": "c2f6f13d1ea7d484cbfcc63329bd4b79cefac2d27d25bf305bb3040062b54cdf"
+    },
+    {
+      "session_file": "final-fix-fmt-check.log",
+      "archive_file": "implementation/final-fix-fmt-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "final-fix-fmt.log",
+      "archive_file": "implementation/final-fix-fmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "final-fix-force-cache.log",
+      "archive_file": "implementation/final-fix-force-cache.log",
+      "sha256": "789bcf9b16030115b717e389bbdb266645a977ec39cf47b6420011a1d5aa655b"
+    },
+    {
+      "session_file": "final-fix-lattice-lib.log",
+      "archive_file": "implementation/final-fix-lattice-lib.log",
+      "sha256": "487ee0cd5fd6bce3516f33cc3973261d7c56b1cf84c53f0c8d681f49e1844ba7"
+    },
+    {
+      "session_file": "final-fix-manifest.json",
+      "archive_file": "implementation/final-fix-manifest.json",
+      "sha256": "477614a9e8b5ccc8b12a66a5bca2d50583e045ce44b64950fac9e120413483a8"
+    },
+    {
+      "session_file": "final-fix-mcp-covering.log",
+      "archive_file": "implementation/final-fix-mcp-covering.log",
+      "sha256": "d055122bd4c37462ecbc8947f3b96a9708726efb76c0c5a9062b4e3b984bff62"
+    },
+    {
+      "session_file": "final-fix-mcp-expanded-red.log",
+      "archive_file": "implementation/final-fix-mcp-expanded-red.log",
+      "sha256": "62c9b7fba9ed8a8ec1db277e21b9a23b892a1a2a36beebbe06eb54561ddc3d46"
+    },
+    {
+      "session_file": "final-fix-mcp-green-confirmed.log",
+      "archive_file": "implementation/final-fix-mcp-green-confirmed.log",
+      "sha256": "44f3c0d16f4f5398e9d7715a4e89cfc27d5deaeff29ab10d0cd06bd0a94b78f1"
+    },
+    {
+      "session_file": "final-fix-mcp-green-final.log",
+      "archive_file": "implementation/final-fix-mcp-green-final.log",
+      "sha256": "4d808396f2871d41fd6d76059d4b2ec6b716fdfd63b88e795df0b8e59c80d0f6"
+    },
+    {
+      "session_file": "final-fix-mcp-green.log",
+      "archive_file": "implementation/final-fix-mcp-green.log",
+      "sha256": "c4502604476b25bcc0df779ef02720f317cc4c2904f3f986f0f426c3b742926f"
+    },
+    {
+      "session_file": "final-fix-mcp-red.log",
+      "archive_file": "implementation/final-fix-mcp-red.log",
+      "sha256": "667a6ed51fe5924fd4638f50416d399fbd2d2cc6266d8581930e603d59134b2d"
+    },
+    {
+      "session_file": "final-fix-preserved-evidence.json",
+      "archive_file": "implementation/final-fix-preserved-evidence.json",
+      "sha256": "f40bc1432feda69183dc802ded5d5e7a759b4657fe132ae920434bb2f6d162d6"
+    },
+    {
+      "session_file": "final-fix-report.md",
+      "archive_file": "implementation/final-fix-report.md",
+      "sha256": "007e737cb366e00eb17dc7945e012b9a296001968dd34a1a699d05933a0e07d8"
+    },
+    {
+      "session_file": "final-rereview.md",
+      "archive_file": "implementation/final-rereview.md",
+      "sha256": "41ba827300e3edfb0012effe397548536f2cc24c6354cadc9eeeac42f1e6fd37"
+    },
+    {
+      "session_file": "final-review.md",
+      "archive_file": "implementation/final-review.md",
+      "sha256": "a79ba995601a7dde7e31feabab55b6fbc27b2528ce30f6b11ecf04667a6174b5"
+    },
+    {
+      "session_file": "force-handoff.md",
+      "archive_file": "implementation/force-handoff.md",
+      "sha256": "624b9fa8ca00e6cef9de9950453c873a091236462b6edca13cc43b1442f47e2c"
+    },
+    {
+      "session_file": "progress.md",
+      "archive_file": "implementation/progress.md",
+      "sha256": "c206651c85ef3970a2fe301f4624ecf5cb78acefd5dc0aec6dd95ecf4676ccef"
+    },
+    {
+      "session_file": "run-mpi-verification.py",
+      "archive_file": "root-verification/tools/run-mpi-verification.py",
+      "sha256": "7bf992eb5165d58aefc9f021e15089c1091077e69e965fe55bc4c58bffee06bf"
+    },
+    {
+      "session_file": "runner-handoff.md",
+      "archive_file": "implementation/runner-handoff.md",
+      "sha256": "76e8d579b80453a907606bbab8b630c9cdc631107236e4bac60ca925083b2f28"
+    },
+    {
+      "session_file": "task-1-brief.md",
+      "archive_file": "implementation/task-1-brief.md",
+      "sha256": "c698e62694f80ece058b2f43b6e02922d52523ee8c5d9270add52cddcadac7ad"
+    },
+    {
+      "session_file": "task-1-report.md",
+      "archive_file": "implementation/task-1-report.md",
+      "sha256": "9da75ef758005b4df8fdb9aa78c3acd1801639d1c5dce7884b6dcc63c60b44c3"
+    },
+    {
+      "session_file": "task-1-rereview-1.md",
+      "archive_file": "implementation/task-1-rereview-1.md",
+      "sha256": "6394bb052bd6bc7f23aa69f98648e34881cadc4968506a0026e9bf4eba730a5c"
+    },
+    {
+      "session_file": "task-1-review.md",
+      "archive_file": "implementation/task-1-review.md",
+      "sha256": "530889f29dc159e2a8bab472d709e3d8ad562254089bdd79c5b02415bffb86bb"
+    },
+    {
+      "session_file": "task-2-brief.md",
+      "archive_file": "implementation/task-2-brief.md",
+      "sha256": "7da75825cc877d5da1da54bf85ae655f46258ad2c37e74c7ce11529bfa38d59d"
+    },
+    {
+      "session_file": "task-2-report.md",
+      "archive_file": "implementation/task-2-report.md",
+      "sha256": "87a2474e5d1f947dfae2021710254761886ce651d8c2eed74e05a1ec3bf941dd"
+    },
+    {
+      "session_file": "task-2-review.md",
+      "archive_file": "implementation/task-2-review.md",
+      "sha256": "8d5facfd2700ad4a3a794596ec77910ca6fbb5dfb6f56f578dab895f3a06c382"
+    },
+    {
+      "session_file": "task-3-brief.md",
+      "archive_file": "implementation/task-3-brief.md",
+      "sha256": "e6fb3dc39e84fa2660529f5542c545e13f45fabb601401adbc3b11f4bac60d51"
+    },
+    {
+      "session_file": "task-3-cli.log",
+      "archive_file": "implementation/task-3-cli.log",
+      "sha256": "2bcfd8feff0e88b05688b2db96227839e1ab66e67900f22c0a322b2b12b5a10e"
+    },
+    {
+      "session_file": "task-3-fix-round-1-cli.log",
+      "archive_file": "implementation/task-3-fix-round-1-cli.log",
+      "sha256": "5b65bf4e02b602be880a312df77f55cfbb34d3a27774f9dc89fde3886a051827"
+    },
+    {
+      "session_file": "task-3-fix-round-1-clippy.log",
+      "archive_file": "implementation/task-3-fix-round-1-clippy.log",
+      "sha256": "59b929c986c8f10a314067cf527d29488fc25adf0af50af22669c68d16212039"
+    },
+    {
+      "session_file": "task-3-fix-round-1-covering.log",
+      "archive_file": "implementation/task-3-fix-round-1-covering.log",
+      "sha256": "36c0854e3e638d99fcb6dbf750c3b1c2003de9010b246c404cda87ab02dbe62a"
+    },
+    {
+      "session_file": "task-3-fix-round-1-green.log",
+      "archive_file": "implementation/task-3-fix-round-1-green.log",
+      "sha256": "41010ddd41854b6434cc21acc0062f2237440dd6f6be229525e7971a59d2e5c3"
+    },
+    {
+      "session_file": "task-3-fix-round-1-red.log",
+      "archive_file": "implementation/task-3-fix-round-1-red.log",
+      "sha256": "9da4a84398815257314a6207191ea1bbc87ea5fc3522d77e25026850b3bfefb6"
+    },
+    {
+      "session_file": "task-3-focused.log",
+      "archive_file": "implementation/task-3-focused.log",
+      "sha256": "9bb5721e6b088768b4ce1312cc81eeefa805e64da1e0fd3a39742bab174ce047"
+    },
+    {
+      "session_file": "task-3-report.md",
+      "archive_file": "implementation/task-3-report.md",
+      "sha256": "df7ca26173deaeb394dbc84dc7168673bcedd001d02b5b2b30f2564f77cdabcd"
+    },
+    {
+      "session_file": "task-3-rereview-1.md",
+      "archive_file": "implementation/task-3-rereview-1.md",
+      "sha256": "63fe75f4be07469c3fd4faa01b783f2eb51df802dd3db4f92aa36c7d71b73588"
+    },
+    {
+      "session_file": "task-3-review.md",
+      "archive_file": "implementation/task-3-review.md",
+      "sha256": "cd399f1a6da230166af6d5bb96f1dc3eba9bf6357dd693b4e26b8096f4d7ce47"
+    },
+    {
+      "session_file": "task-3-workspace.log",
+      "archive_file": "implementation/task-3-workspace.log",
+      "sha256": "647432b88571353720c026a9806c6c277d0805a2d462e2540b295647d7a7c7d2"
+    },
+    {
+      "session_file": "task-4-brief.md",
+      "archive_file": "implementation/task-4-brief.md",
+      "sha256": "7b92a5e8523ce233e263564c60b81b0ee6dc8c91757c6861225c9bc961884d9b"
+    },
+    {
+      "session_file": "task-4-charge-green.log",
+      "archive_file": "implementation/task-4-charge-green.log",
+      "sha256": "b8b7b4c20b52d06e60b89c93e2a89b16c4032113d10d907459037719fa13788c"
+    },
+    {
+      "session_file": "task-4-charge-red.log",
+      "archive_file": "implementation/task-4-charge-red.log",
+      "sha256": "37bec9eeaae4231ebbc98b5c064fbaec97440d0423744f71803e80a2ed263f74"
+    },
+    {
+      "session_file": "task-4-chemical-final.log",
+      "archive_file": "implementation/task-4-chemical-final.log",
+      "sha256": "d1a33e926f18aa0a0f9faeed402c3164d13c99f5d35a9b5ddfde4a0106a7efcc"
+    },
+    {
+      "session_file": "task-4-cli-final.log",
+      "archive_file": "implementation/task-4-cli-final.log",
+      "sha256": "ff3dde6580d602b6631d7c9db68719b947ab411e58c62874eee2622e63993023"
+    },
+    {
+      "session_file": "task-4-clippy.log",
+      "archive_file": "implementation/task-4-clippy.log",
+      "sha256": "eefbc3ac1c6ad9d684bb8722a5ee3ffe81bb0beacc54b3e9e468ebfb984bb6a2"
+    },
+    {
+      "session_file": "task-4-compatibility-red.log",
+      "archive_file": "implementation/task-4-compatibility-red.log",
+      "sha256": "2e176932c13870bbbd77c413a29c9863cf74f584a3fadbcc435ecc7b56ef6958"
+    },
+    {
+      "session_file": "task-4-examples.log",
+      "archive_file": "implementation/task-4-examples.log",
+      "sha256": "0883117d78010aa242e71ffa4bdf4420cfa80a1fa9350ef44953fcd8aadb7b10"
+    },
+    {
+      "session_file": "task-4-mcp-covering.log",
+      "archive_file": "implementation/task-4-mcp-covering.log",
+      "sha256": "8ebf6d9698adaf465d71e7a2adbacbf9eb5d53da8b38e4ce4ca5c56e74ec33ed"
+    },
+    {
+      "session_file": "task-4-mcp-final.log",
+      "archive_file": "implementation/task-4-mcp-final.log",
+      "sha256": "af986f38b14e403fcaec9cf162e0afd45dd3b2f99674614ad228e82e29f214a5"
+    },
+    {
+      "session_file": "task-4-mcp-green.log",
+      "archive_file": "implementation/task-4-mcp-green.log",
+      "sha256": "5905a7c01e4af0bbfb8e0f679a5ab8d19eef65afc143a9d8a54bcc9917e0b5d7"
+    },
+    {
+      "session_file": "task-4-mcp-red.log",
+      "archive_file": "implementation/task-4-mcp-red.log",
+      "sha256": "c2b0dc655432f1fa0756c0a3f83afe5dafb5b4c8bea053e7ce91b176e41b78db"
+    },
+    {
+      "session_file": "task-4-mcp-sweep-red.log",
+      "archive_file": "implementation/task-4-mcp-sweep-red.log",
+      "sha256": "8108ec3b76b38d5756d245f2614037acc4c3bd72649e3785e4fd59f6d1c8d5b7"
+    },
+    {
+      "session_file": "task-4-python-covering.log",
+      "archive_file": "implementation/task-4-python-covering.log",
+      "sha256": "17330de6871af7b5aa6df7b8ee8398bbfacaa5c480793c80cff5fe33376cca2a"
+    },
+    {
+      "session_file": "task-4-python-final.log",
+      "archive_file": "implementation/task-4-python-final.log",
+      "sha256": "66b99978e843e10affb06a3e39aebe0d7c148fe592b9f54c140cb895366bb625"
+    },
+    {
+      "session_file": "task-4-python-green.log",
+      "archive_file": "implementation/task-4-python-green.log",
+      "sha256": "cabdbca1a76c89f51056329458bea1eda0306ce6eab57820f92ae3d79c371105"
+    },
+    {
+      "session_file": "task-4-python-red.log",
+      "archive_file": "implementation/task-4-python-red.log",
+      "sha256": "cde1eed0165473d05e44507a64f9915e24f0fa88cd8cd8d246cfce29e12721ed"
+    },
+    {
+      "session_file": "task-4-quoting-red.log",
+      "archive_file": "implementation/task-4-quoting-red.log",
+      "sha256": "dacd1657a78abc16aa6d31419db77b2428feede1c37d6ed19da2b0ce0683f398"
+    },
+    {
+      "session_file": "task-4-report.md",
+      "archive_file": "implementation/task-4-report.md",
+      "sha256": "161a66536ec02394563486e67e10f4017b5a2cb410e4f47494ab3f3d48c90365"
+    },
+    {
+      "session_file": "task-4-review.md",
+      "archive_file": "implementation/task-4-review.md",
+      "sha256": "99582b5b18681264d7ac27951602560da00ff6229491475fa8e2dd40b80bb7c7"
+    },
+    {
+      "session_file": "task-4-rust-covering.log",
+      "archive_file": "implementation/task-4-rust-covering.log",
+      "sha256": "2f0a31d5a774e5cee75e739b462e306c241e7e1307446f1cccb72b4fb89ebb73"
+    },
+    {
+      "session_file": "task-4-rust-final.log",
+      "archive_file": "implementation/task-4-rust-final.log",
+      "sha256": "42984c50e6dea94f249f7d36ce1e521ae0fc8f1bcb9b0d6c045ad9a7c3b8a008"
+    },
+    {
+      "session_file": "task-4-rust-green.log",
+      "archive_file": "implementation/task-4-rust-green.log",
+      "sha256": "10b1b150c5cfb3ecaf432ac6681ce0aafd8379ec7ed3224d31295df95d1a244f"
+    },
+    {
+      "session_file": "task-4-rust-red.log",
+      "archive_file": "implementation/task-4-rust-red.log",
+      "sha256": "9f743163d436fb90b97c5101afe99fa13334307a03e306dd4060fecb3ca38b9c"
+    },
+    {
+      "session_file": "task-4-xyz-count-red.log",
+      "archive_file": "implementation/task-4-xyz-count-red.log",
+      "sha256": "8e87a3fc82f584740b5dc52c4109a9a1d32f6be06ab6f5d3e1a08bbf7cc8a9cf"
+    },
+    {
+      "session_file": "task-5-brief.md",
+      "archive_file": "implementation/task-5-brief.md",
+      "sha256": "8032a4af65c87dac4f7bb814d794692ec9063f22a401badd3fa9fcaa09c63b90"
+    },
+    {
+      "session_file": "task-5-report.md",
+      "archive_file": "implementation/task-5-report.md",
+      "sha256": "62d95baf873ee7f417d4985beeb457fa99e3a5fbd9663fbe5b6f1fe0b45948c2"
+    },
+    {
+      "session_file": "task-5-rereview-1.md",
+      "archive_file": "implementation/task-5-rereview-1.md",
+      "sha256": "e810020042651578fad65a7218f31ce35dd2cf4e9773fc2852427e239efcb540"
+    },
+    {
+      "session_file": "task-5-review.md",
+      "archive_file": "implementation/task-5-review.md",
+      "sha256": "2cae986b9b92b0fd5746baa0a1604aafb2466adfb9512f05ebfb113ee317a72c"
+    },
+    {
+      "session_file": "verify-command.py",
+      "archive_file": "root-verification/tools/verify-command.py",
+      "sha256": "d0c61c0562de13dce5d4e27479aff9c9744a6794222ac774093d578dcea2d2b4"
+    },
+    {
+      "session_file": "final-probe/alloy-compile.stderr",
+      "archive_file": "final-review-probe/alloy-compile.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "final-probe/alloy-compile.stdout",
+      "archive_file": "final-review-probe/alloy-compile.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "final-probe/alloy-run.stderr",
+      "archive_file": "final-review-probe/alloy-run.stderr",
+      "sha256": "9c41f3f7cc5cff4c264fd242743111792d1beeab5f95dff5abfad3a4735e9f5d"
+    },
+    {
+      "session_file": "final-probe/alloy-run.stdout",
+      "archive_file": "final-review-probe/alloy-run.stdout",
+      "sha256": "696bf979f79e6634bcd570a67928a0c373df2456a393c45b2c724871935e6259"
+    },
+    {
+      "session_file": "final-probe/alloy.rs",
+      "archive_file": "final-review-probe/alloy.rs",
+      "sha256": "c560fd5c1f03658530effe5bd89d9793d7eaab27fe2d715a98bff1714859aabe"
+    },
+    {
+      "session_file": "final-probe/alloy.toml",
+      "archive_file": "final-review-probe/alloy.toml",
+      "sha256": "1f5496cde160e89a6c572d60e79a10e35c235895085ce97385d3afbe95b397a7"
+    },
+    {
+      "session_file": "final-probe/charges.xyz",
+      "archive_file": "final-review-probe/charges.xyz",
+      "sha256": "f69364f16fc3a62970cc8782efe69ce9fa1eaa3a5c4eb2351d7e4df5351b14a9"
+    },
+    {
+      "session_file": "final-probe/compile.stderr",
+      "archive_file": "final-review-probe/compile.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "final-probe/compile.stdout",
+      "archive_file": "final-review-probe/compile.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "final-probe/manifest.json",
+      "archive_file": "final-review-probe/manifest.json",
+      "sha256": "3cfc4c4140fb6e7c35fd35b882d0634908f75d54e924a59f0054e54e6d80a919"
+    },
+    {
+      "session_file": "final-probe/run.stderr",
+      "archive_file": "final-review-probe/run.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "session_file": "final-probe/run.stdout",
+      "archive_file": "final-review-probe/run.stdout",
+      "sha256": "db71f0485e71f38847f7b5f6771bdca126f4bb50772fa3d9a5243f8bbec1b1a0"
+    },
+    {
+      "session_file": "final-probe/spme_com.rs",
+      "archive_file": "final-review-probe/spme_com.rs",
+      "sha256": "e408cf0d050c9fe0f117763dc279c7225cbb984da4c449ba17a40d133b0a82ee"
+    }
+  ],
+  "excluded_regenerable": [
+    {
+      "session_file": "root-verification/original-probes",
+      "reason": "compiled binary; source/command/hash/logs retained",
+      "sha256": "36d020cc8d6b250159623d907a9122e00ebbbc3f33d363a90f16ffa13bf557a7"
+    },
+    {
+      "session_file": "review-10bd9ee..e51ff1f.diff",
+      "reason": "immutable review package; regenerate from recorded Git commit range",
+      "sha256": "9879e522676f6e5ce5fc05dc185d058f2f4c5b92ece038b0a5151f237a9020d3"
+    },
+    {
+      "session_file": "review-17a6a9a..3bf7f54.diff",
+      "reason": "immutable review package; regenerate from recorded Git commit range",
+      "sha256": "6f6c41432d901255b5b9ae9f223bef07c3077d93baf4b2590a00529689002b05"
+    },
+    {
+      "session_file": "review-3bf7f54..de8529a.diff",
+      "reason": "immutable review package; regenerate from recorded Git commit range",
+      "sha256": "407f1c27f697dc44b6ab5803a7412108c966cfd95d9fd8afc11cb99903b8cfc0"
+    },
+    {
+      "session_file": "review-8078e1d..c6fef76.diff",
+      "reason": "immutable review package; regenerate from recorded Git commit range",
+      "sha256": "ebc2942757d2d7408550e01529f2154538eaeb79c9aa25fa0f355db67f481806"
+    },
+    {
+      "session_file": "review-9fa3b9e..c5810fa.diff",
+      "reason": "immutable review package; regenerate from recorded Git commit range",
+      "sha256": "6197403b4e939778b6c7930b7f55d11c2aac7682408ffc29efa93eed0b90a58c"
+    },
+    {
+      "session_file": "review-b68abd1..10bd9ee-source.diff",
+      "reason": "immutable review package; regenerate from recorded Git commit range",
+      "sha256": "b72540d3a28e383ecf6c52adae063e1d47cb47021a3d92746da80fd9dfc2c2ca"
+    },
+    {
+      "session_file": "review-b68abd1..10bd9ee.diff",
+      "reason": "immutable review package; regenerate from recorded Git commit range",
+      "sha256": "c6b6f36f584b8b633d6e01087828b506a75105bf9f9461b6e3dc8c0072db6175"
+    },
+    {
+      "session_file": "review-c5810fa..17a6a9a.diff",
+      "reason": "immutable review package; regenerate from recorded Git commit range",
+      "sha256": "2ecf1bbb08d9a7d38d54d8cadde8af9c4da56f3bdc9d532e9a6813ff0ef76797"
+    },
+    {
+      "session_file": "review-c6fef76..dd22f47.diff",
+      "reason": "immutable review package; regenerate from recorded Git commit range",
+      "sha256": "c07d03bc087d4e538a70e488af60ba1d3c51daa40776a2b827856e3ffc5fbe88"
+    },
+    {
+      "session_file": "review-de8529a..10bd9ee.diff",
+      "reason": "immutable review package; regenerate from recorded Git commit range",
+      "sha256": "5c2ce559bdfbc494802db70a711cf95c6c6af4048333b2356fde4c7b4461b98a"
+    },
+    {
+      "session_file": "review-fdbe886..9fa3b9e.diff",
+      "reason": "immutable review package; regenerate from recorded Git commit range",
+      "sha256": "fd2facaefd11dbfec302e603e6560a4519c72962901a5e19bea9ad42ceb977d0"
+    },
+    {
+      "session_file": "final-probe/alloy",
+      "reason": "compiled review probe; sources/commands/hashes/logs retained",
+      "sha256": "50e6e4663bc6483b396c500852c7c7b822bc02b4672c7adfd64073e6b38a93e3"
+    },
+    {
+      "session_file": "final-probe/provenance.txt",
+      "reason": "compiled review probe; sources/commands/hashes/logs retained",
+      "sha256": "7744787d02ba36c0fed10d5e4c51bcf5d54c3c3a9f4c02e1335bd5e363c4c6bd"
+    },
+    {
+      "session_file": "final-probe/spme_com",
+      "reason": "compiled review probe; sources/commands/hashes/logs retained",
+      "sha256": "5cdd778ab36a6cc184013bb947766436477aba3e0e43e510b161aa4857a0f8a8"
+    }
+  ],
+  "cleanup_target": ".superpowers/sdd/2026-10-03-scientific-hardening",
+  "cleanup_policy": "Remove only this plan scratch after archive commit/hash/tracking checks; preserve branch/worktree and user originals"
+}

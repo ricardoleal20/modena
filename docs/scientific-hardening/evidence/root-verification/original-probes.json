@@ -1,0 +1,18 @@
+{
+  "label": "original-probes",
+  "command": [
+    "rtk",
+    "proxy",
+    "env",
+    "RAYON_NUM_THREADS=1",
+    ".superpowers/sdd/2026-10-03-scientific-hardening/root-verification/original-probes"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 0.40526537504047155,
+  "created_utc": "2026-10-04T03:17:20.238972+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "original-probes.stdout",
+  "stderr_file": "original-probes.stderr"
+}

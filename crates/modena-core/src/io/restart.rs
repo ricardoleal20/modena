@@ -1,33 +1,9 @@
-//! Restart/checkpoint files.
-//!
-//! A checkpoint carries the **full mechanical state** of a run — box, per-atom
-//! positions and velocities (flat SoA `3N`), and the global step counter — in
-//! a simple, human-inspectable text format. Everything is in the engine's
-//! reduced units; species/masses/charges are deliberately *not* carried (they
-//! come from the structure config, whose `convert_to_reduced` already
-//! normalizes them), so a restore is only valid against a config that builds
-//! the same atom count (checked at load time in the runner).
-//!
-//! Format (`{:0.16e}` floats — 17 significant digits, exact f64 round-trip):
-//!
-//! ```text
-//! MODENA_RESTART 1
-//! atoms 192
-//! step 200
-//! time 1.0000000000000000e-1
-//! box 1.234…e1 1.234…e1 1.234…e1
-//! triclinic ax ay az bx by bz cx cy cz      (only for a triclinic cell)
-//! positions
-//! …3N lines, one float per line…
-//! velocities
-//! …3N lines, one float per line…
-//! ```
-//!
-//! `time` is informational (`step · dt` at save time); the step is the
-//! authoritative counter. 10k atoms → ~60k lines (~1.5 MB) — fine for text.
-
-use std::fmt::Write as _;
+//! Versioned, validated and atomic scientific continuation checkpoints.
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::{ModenaError, Result};
 use crate::system::SimBox;
@@ -36,7 +12,8 @@ use crate::vec3::Vec3;
 /// Format tag (first token of the header line).
 const MAGIC: &str = "MODENA_RESTART";
 /// Current format version (second token of the header line).
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// A loaded/saved checkpoint. All values in reduced units.
 #[derive(Debug, Clone)]
@@ -54,49 +31,160 @@ pub struct Checkpoint {
     pub positions: Vec<f64>,
     /// Flat SoA velocities, length `3 · atoms`.
     pub velocities: Vec<f64>,
+    /// None for legacy v1 or mechanical-only imports. Full continuation needs v2.
+    pub continuation: Option<ContinuationState>,
 }
 
-/// Serialize a checkpoint to `path` (atomically enough for our purposes:
-/// truncated + written in one `fs::write`).
+/// All identity, cached mechanics, stochastic and extended variables needed
+/// for exact continuation. Physical signatures are normalized configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContinuationState {
+    pub forces: Vec<f64>,
+    pub masses: Vec<f64>,
+    pub species: Vec<u32>,
+    pub charges: Vec<f64>,
+    pub elements: Vec<String>,
+    pub constraint_count: usize,
+    pub conserved_com_dof: usize,
+    pub potential_energy: f64,
+    pub virial: f64,
+    pub physical_signature: Value,
+    pub integrator: Value,
+    pub thermostat: Value,
+    pub barostat: Value,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Version2 {
+    atoms: usize,
+    step: usize,
+    time: f64,
+    box_edges: [f64; 3],
+    box_vectors: Option<[[f64; 3]; 3]>,
+    positions: Vec<f64>,
+    velocities: Vec<f64>,
+    continuation: Option<ContinuationState>,
+}
+
+/// Write to a unique sibling, sync the contents, atomically rename, then sync
+/// the containing directory. Validation/serialization failures preserve the old file.
 pub fn save<P: AsRef<Path>>(path: P, cp: &Checkpoint) -> Result<()> {
-    debug_assert_eq!(cp.positions.len(), 3 * cp.atoms);
-    debug_assert_eq!(cp.velocities.len(), 3 * cp.atoms);
-    let mut out = String::with_capacity(64 * (6 * cp.atoms + 8));
-    // `writeln!` into a String is infallible; `.ok()` discards the never-
-    // produced `fmt::Error` without an unwrap in every call.
-    writeln!(out, "{MAGIC} {VERSION}").ok();
-    writeln!(out, "atoms {}", cp.atoms).ok();
-    writeln!(out, "step {}", cp.step).ok();
-    writeln!(out, "time {:0.16e}", cp.time).ok();
-    let s = cp.box_size.size;
-    writeln!(
-        out,
-        "box {:0.16e} {:0.16e} {:0.16e}",
-        s.0[0], s.0[1], s.0[2]
-    )
-    .ok();
-    if let Some([a, b, c]) = cp.box_size.vectors() {
-        writeln!(
-            out,
-            "triclinic {:0.16e} {:0.16e} {:0.16e} {:0.16e} {:0.16e} {:0.16e} {:0.16e} {:0.16e} {:0.16e}",
-            a.0[0], a.0[1], a.0[2], b.0[0], b.0[1], b.0[2], c.0[0], c.0[1], c.0[2]
-        )
-        .ok();
+    validate(cp)?;
+    let payload = Version2 {
+        atoms: cp.atoms,
+        step: cp.step,
+        time: cp.time,
+        box_edges: cp.box_size.size.0,
+        box_vectors: cp.box_size.vectors().map(|v| v.map(|x| x.0)),
+        positions: cp.positions.clone(),
+        velocities: cp.velocities.clone(),
+        continuation: cp.continuation.clone(),
+    };
+    let json = serde_json::to_vec(&payload)
+        .map_err(|e| ModenaError::Input(format!("checkpoint serialization: {e}")))?;
+    let path = path.as_ref();
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| ModenaError::Input("checkpoint path has no filename".into()))?;
+    let temp = parent.join(format!(
+        ".{}.{}.{}.tmp",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        sequence
+    ));
+    let mut created = false;
+    let result = (|| -> Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        created = true;
+        writeln!(file, "{MAGIC} {VERSION}")?;
+        file.write_all(&json)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)?;
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() && created {
+        let _ = std::fs::remove_file(&temp);
     }
-    out.push_str("positions\n");
-    for &p in &cp.positions {
-        writeln!(out, "{p:0.16e}").ok();
+    result
+}
+
+fn validate(cp: &Checkpoint) -> Result<()> {
+    let bad = |s: &str| ModenaError::Input(format!("checkpoint: {s}"));
+    let count = cp
+        .atoms
+        .checked_mul(3)
+        .ok_or_else(|| bad("atom buffer size overflow"))?;
+    if cp.atoms == 0 || cp.positions.len() != count || cp.velocities.len() != count {
+        return Err(bad("invalid atom count or buffer lengths"));
     }
-    out.push_str("velocities\n");
-    for &v in &cp.velocities {
-        writeln!(out, "{v:0.16e}").ok();
+    if !cp.time.is_finite()
+        || cp.time < 0.0
+        || cp
+            .positions
+            .iter()
+            .chain(&cp.velocities)
+            .any(|x| !x.is_finite())
+    {
+        return Err(bad("nonfinite or invalid mechanical state"));
     }
-    if let Some(parent) = path.as_ref().parent() {
-        // The log/trajectory writers assume the target dir exists; be a bit
-        // kinder for hand-written decks that point restart_file at results/.
-        std::fs::create_dir_all(parent)?;
+    if cp
+        .box_size
+        .size
+        .0
+        .iter()
+        .any(|x| !x.is_finite() || *x <= 0.0)
+        || !cp.box_size.volume().is_finite()
+        || cp.box_size.volume() <= 0.0
+        || cp
+            .box_size
+            .inv_basis_rows()
+            .iter()
+            .flat_map(|x| x.0)
+            .any(|x| !x.is_finite())
+    {
+        return Err(bad("box must have finite positive edges and volume"));
     }
-    std::fs::write(path, out)?;
+    if let Some(c) = &cp.continuation {
+        if c.forces.len() != count
+            || c.masses.len() != cp.atoms
+            || c.species.len() != cp.atoms
+            || c.charges.len() != cp.atoms
+            || c.elements.len() != cp.atoms
+        {
+            return Err(bad("continuation atom buffers have inconsistent lengths"));
+        }
+        if c.forces.iter().chain(&c.charges).any(|x| !x.is_finite())
+            || c.masses.iter().any(|x| !x.is_finite() || *x <= 0.0)
+            || !c.potential_energy.is_finite()
+            || !c.virial.is_finite()
+        {
+            return Err(bad(
+                "invalid continuation masses, energy, forces or charges",
+            ));
+        }
+        if c.constraint_count
+            .checked_add(c.conserved_com_dof)
+            .is_none_or(|x| x > count)
+            || ![0, 3].contains(&c.conserved_com_dof)
+            || !c.physical_signature.is_object()
+        {
+            return Err(bad("invalid physical DOF or signature"));
+        }
+    }
     Ok(())
 }
 
@@ -120,7 +208,42 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<Checkpoint> {
         .ok_or_else(|| bad("missing format version"))?
         .parse()
         .map_err(|e| bad(&format!("bad format version: {e}")))?;
-    if version != VERSION {
+    if header_parts.next().is_some() {
+        return Err(bad("trailing header tokens"));
+    }
+    if version == VERSION {
+        let payload: Version2 = serde_json::from_str(&lines.collect::<Vec<_>>().join("\n"))
+            .map_err(|e| bad(&format!("malformed v2 payload: {e}")))?;
+        let box_size = match payload.box_vectors {
+            Some(v) => {
+                let vectors = v.map(|a| Vec3::new(a[0], a[1], a[2]));
+                if v.iter().flatten().any(|x| !x.is_finite())
+                    || !vectors[0].dot(vectors[1].cross(vectors[2])).is_finite()
+                    || vectors[0].dot(vectors[1].cross(vectors[2])).abs() == 0.0
+                {
+                    return Err(bad("invalid triclinic basis"));
+                }
+                let box_size = SimBox::triclinic(vectors);
+                if box_size.size.0 != payload.box_edges {
+                    return Err(bad("inconsistent triclinic box edges"));
+                }
+                box_size
+            }
+            None => SimBox::from_array(payload.box_edges),
+        };
+        let cp = Checkpoint {
+            atoms: payload.atoms,
+            step: payload.step,
+            time: payload.time,
+            box_size,
+            positions: payload.positions,
+            velocities: payload.velocities,
+            continuation: payload.continuation,
+        };
+        validate(&cp)?;
+        return Ok(cp);
+    }
+    if version != 1 {
         return Err(bad(&format!(
             "unsupported version {version} (expected {VERSION})"
         )));
@@ -128,8 +251,9 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<Checkpoint> {
 
     // Key/value header lines until the `positions` marker.
     let mut atoms: Option<usize> = None;
-    let mut step = 0usize;
-    let mut time = 0.0f64;
+    let mut step = None;
+    let mut time = None;
+    let mut keys = std::collections::HashSet::new();
     let mut box_edges: Option<[f64; 3]> = None;
     let mut triclinic: Option<[Vec3; 3]> = None;
     loop {
@@ -137,12 +261,16 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<Checkpoint> {
             .next()
             .ok_or_else(|| bad("missing `positions` block"))?;
         let mut it = line.split_whitespace();
-        match it.next() {
+        let key = it.next();
+        if !keys.insert(key) {
+            return Err(bad("duplicate header key"));
+        }
+        match key {
             Some("atoms") => {
                 atoms = Some(parse_usize(it.next(), &bad)?);
             }
-            Some("step") => step = parse_usize(it.next(), &bad)?,
-            Some("time") => time = parse_f64_tokens(&mut it, 1, &bad)?[0],
+            Some("step") => step = Some(parse_usize(it.next(), &bad)?),
+            Some("time") => time = Some(parse_f64_tokens(&mut it, 1, &bad)?[0]),
             Some("box") => {
                 let e = parse_f64_tokens(&mut it, 3, &bad)?;
                 box_edges = Some([e[0], e[1], e[2]]);
@@ -155,29 +283,61 @@ pub fn load<P: AsRef<Path>>(path: P) -> Result<Checkpoint> {
                     Vec3::new(v[6], v[7], v[8]),
                 ]);
             }
-            Some("positions") => break,
+            Some("positions") => {
+                if it.next().is_some() {
+                    return Err(bad("trailing marker tokens"));
+                }
+                break;
+            }
             _ => return Err(bad(&format!("malformed header line: {line}"))),
+        }
+        if it.next().is_some() {
+            return Err(bad("trailing header values"));
         }
     }
     let atoms = atoms.ok_or_else(|| bad("missing `atoms` header"))?;
     let edges = box_edges.ok_or_else(|| bad("missing `box` header"))?;
     let box_size = match triclinic {
-        Some(v) => SimBox::triclinic(v),
+        Some(v) => {
+            if v.iter().flat_map(|x| x.0).any(|x| !x.is_finite())
+                || !v[0].dot(v[1].cross(v[2])).is_finite()
+                || v[0].dot(v[1].cross(v[2])).abs() == 0.0
+            {
+                return Err(bad("invalid triclinic basis"));
+            }
+            let b = SimBox::triclinic(v);
+            if b.size.0 != edges {
+                return Err(bad("inconsistent triclinic box edges"));
+            }
+            b
+        }
         None => SimBox::from_array(edges),
     };
 
-    let positions = parse_block(&mut lines, 3 * atoms, &bad)?;
+    let count = atoms
+        .checked_mul(3)
+        .ok_or_else(|| bad("atom buffer size overflow"))?;
+    if count > lines.clone().count() {
+        return Err(bad("atom count exceeds available data"));
+    }
+    let positions = parse_block(&mut lines, count, &bad)?;
     expect_marker(&mut lines, "velocities", &bad)?;
-    let velocities = parse_block(&mut lines, 3 * atoms, &bad)?;
+    let velocities = parse_block(&mut lines, count, &bad)?;
+    if lines.any(|line| !line.trim().is_empty()) {
+        return Err(bad("trailing corrupt data"));
+    }
 
-    Ok(Checkpoint {
+    let cp = Checkpoint {
         atoms,
-        step,
-        time,
+        step: step.ok_or_else(|| bad("missing step"))?,
+        time: time.ok_or_else(|| bad("missing time"))?,
         box_size,
         positions,
         velocities,
-    })
+        continuation: None,
+    };
+    validate(&cp)?;
+    Ok(cp)
 }
 
 /// Parse one integer (usize) header token.
@@ -235,6 +395,7 @@ fn expect_marker<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
 
     /// 17 significant digits round-trip exactly, including the awkward ones.
     #[test]
@@ -265,6 +426,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("cp.chk");
         let cp = Checkpoint {
+            continuation: None,
             atoms: 2,
             step: 91,
             time: 0.455,

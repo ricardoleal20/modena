@@ -5,3 +5,6 @@
 *.err
 log.lammps
 nve_*_energy.csv
+
+__pycache__/
+*.pyc

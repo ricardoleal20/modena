@@ -1,0 +1,27 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+   Compiling modena-mcp v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.55s
+     Running tests/final_integration.rs (target/debug/deps/final_integration-5c7b886115dc084c)
+
+running 2 tests
+
+thread 'discovery_request_lists_every_production_pair_family_with_schema_parameters' (35982963) panicked at crates/modena-mcp/tests/final_integration.rs:8:5:
+assertion `left == right` failed
+  left: 1
+ right: 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test discovery_request_lists_every_production_pair_family_with_schema_parameters ... FAILED
+
+thread 'exact_tiny_alloy_completes_real_mcp_probe_and_async_lifecycle' (35982964) panicked at crates/modena-core/src/lattice.rs:103:13:
+attempt to subtract with overflow
+test exact_tiny_alloy_completes_real_mcp_probe_and_async_lifecycle ... FAILED
+
+failures:
+
+failures:
+    discovery_request_lists_every_production_pair_family_with_schema_parameters
+    exact_tiny_alloy_completes_real_mcp_probe_and_async_lifecycle
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p modena-mcp --test final_integration`

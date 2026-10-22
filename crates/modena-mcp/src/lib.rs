@@ -35,7 +35,8 @@ use std::thread::{self, JoinHandle};
 
 use modena_core::{
     lattice, read_xyz, ConservationReport, ConservationVerdict, Energies, InputConfig,
-    IntegratorSpec, RunEvent, RunSummary, SimBox, Simulation, StructureSpec, ThermostatSpec,
+    IntegratorSpec, RunEvent, RunMetadata, RunSummary, SimBox, Simulation, StructureSpec,
+    ThermostatSpec,
 };
 
 pub mod protocol;
@@ -81,6 +82,7 @@ pub struct ThermoSample {
     pub step: usize,
     pub time: f64,
     pub energies: Energies,
+    pub thermo_units: modena_core::UnitSystem,
 }
 
 /// Queryable status of a run, snapshotted under the run's lock.
@@ -91,6 +93,13 @@ pub struct RunStatus {
     pub step: usize,
     pub total_steps: usize,
     pub latest_thermo: Option<Energies>,
+    pub metadata: Option<RunMetadata>,
+    /// Events and means have the same units as the runner's displayed output.
+    pub thermo_units: modena_core::UnitSystem,
+    pub conservation_units: &'static str,
+    pub mean_potential_energy: Option<f64>,
+    pub sample_count: usize,
+    pub sample_window: serde_json::Value,
     pub conservation: ConservationReport,
     pub error: Option<String>,
     /// Whether this is an NVE (microcanonical) run — velocity-Verlet with no
@@ -112,6 +121,11 @@ struct RunStatusInner {
     error: Option<String>,
     is_nve: bool,
     samples: VecDeque<ThermoSample>,
+    metadata: Option<RunMetadata>,
+    sample_count: usize,
+    mean_potential_energy: Option<f64>,
+    first_sample_step: Option<usize>,
+    last_sample_step: Option<usize>,
 }
 
 impl RunStatusInner {
@@ -124,6 +138,14 @@ impl RunStatusInner {
     }
 
     fn push_sample(&mut self, sample: ThermoSample) {
+        if sample.energies.potential.is_finite() {
+            self.sample_count += 1;
+            let old = self.mean_potential_energy.unwrap_or(0.0);
+            self.mean_potential_energy =
+                Some(old + (sample.energies.potential - old) / self.sample_count as f64);
+            self.first_sample_step.get_or_insert(sample.step);
+            self.last_sample_step = Some(sample.step);
+        }
         if self.samples.len() >= MAX_SAMPLES {
             self.samples.pop_front();
         }
@@ -137,6 +159,12 @@ impl RunStatusInner {
             step: self.step,
             total_steps: self.total_steps,
             latest_thermo: self.latest_thermo,
+            metadata: self.metadata,
+            thermo_units: self.metadata.map(|m| m.output_units).unwrap_or_default(),
+            conservation_units: "reduced",
+            mean_potential_energy: self.mean_potential_energy,
+            sample_count: self.sample_count,
+            sample_window: serde_json::json!({"first_step":self.first_sample_step,"last_step":self.last_sample_step,"includes_initial":false,"includes_equilibration":true,"policy":"all finite emitted post-initial samples in this invocation; no burn-in removal; mean is independent of 4096-event FIFO"}),
             conservation: self.conservation,
             error: self.error.clone(),
             is_nve: self.is_nve,
@@ -210,6 +238,9 @@ pub struct EstimateRunCostResult {
 /// Result of a synchronous [`RunManager::run_probe`].
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProbeResult {
+    pub metadata: RunMetadata,
+    pub thermo_units: modena_core::UnitSystem,
+    pub conservation_units: &'static str,
     pub steps: usize,
     pub final_thermo: Energies,
     pub conservation: ConservationReport,
@@ -332,10 +363,28 @@ impl RunManager {
 
     /// `list_potentials`: the registered pair potentials.
     pub fn list_potentials(&self) -> Vec<PotentialInfo> {
-        vec![PotentialInfo {
-            name: "lennard_jones".into(),
-            params: vec!["sigma".into(), "epsilon".into(), "cutoff".into()],
-        }]
+        // Derive the inventory from the same model alternatives used by the
+        // request schema, so production families/field names cannot drift.
+        let schema: serde_json::Value = serde_json::from_str(include_str!("config_schema.json"))
+            .expect("bundled input schema is valid JSON");
+        schema["config"]["properties"]["model"]["oneOf"]
+            .as_array()
+            .expect("bundled model schema has alternatives")
+            .iter()
+            .map(|model| PotentialInfo {
+                name: model["properties"]["type"]["const"]
+                    .as_str()
+                    .unwrap()
+                    .into(),
+                params: model["properties"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .filter(|key| key.as_str() != "type")
+                    .cloned()
+                    .collect(),
+            })
+            .collect()
     }
 
     /// `build_system`: validate + materialize a structure, returning derived
@@ -428,8 +477,12 @@ impl RunManager {
             steps,
             final_energies,
             conservation,
+            metadata,
         } = sim.run().map_err(|e| McpError::Simulation(e.to_string()))?;
         Ok(ProbeResult {
+            metadata,
+            thermo_units: metadata.output_units,
+            conservation_units: "reduced",
             steps,
             final_thermo: final_energies,
             conservation,
@@ -578,6 +631,12 @@ impl RunManager {
                     step: 0,
                     total_steps: 0,
                     latest_thermo: None,
+                    metadata: None,
+                    thermo_units: modena_core::UnitSystem::Reduced,
+                    conservation_units: "reduced",
+                    mean_potential_energy: None,
+                    sample_count: 0,
+                    sample_window: serde_json::Value::Null,
                     conservation: ConservationReport::default(),
                     error: Some("run lookup failed".into()),
                     is_nve: false,
@@ -663,8 +722,13 @@ fn run_loop(
             return;
         }
     };
+    let initial_step = sim.current_step();
+    let factors = config.normalized().ok().and_then(|c| c.unit_factors);
+    let sim_units = sim.metadata().output_units;
     {
         let mut st = status.lock().unwrap();
+        st.metadata = Some(sim.metadata());
+        st.is_nve = sim.metadata().ensemble == modena_core::Ensemble::Nve;
         st.state = RunState::Running;
     }
     // `run_streaming` borrows the flag for the call duration; the closure reads
@@ -686,18 +750,24 @@ fn run_loop(
                 let time = *time;
                 let energies = *energies;
                 st.step = step;
-                st.conservation.observe(energies.total);
+                let reduced_total = factors
+                    .map(|f| f.to_reduced_energy(energies.total))
+                    .unwrap_or(energies.total);
+                st.conservation.observe(reduced_total);
                 st.latest_thermo = Some(energies);
-                st.push_sample(ThermoSample {
-                    step,
-                    time,
-                    energies,
-                });
+                if step > initial_step {
+                    st.push_sample(ThermoSample {
+                        step,
+                        time,
+                        energies,
+                        thermo_units: sim_units,
+                    });
+                }
             }
             RunEvent::Frame { step, .. } => st.step = *step,
             RunEvent::Finished { summary } => {
                 let summary = *summary;
-                st.step = summary.steps;
+                st.step = initial_step + summary.steps;
                 st.conservation = summary.conservation;
                 st.latest_thermo = Some(summary.final_energies);
                 st.state = if stop.load(Ordering::Relaxed) {
@@ -838,7 +908,7 @@ fn build_structure(
             *m_o,
             *m_h,
             *seed,
-            1.0, // the MCP operates on reduced-unit configs; lengths pre-converted
+            1.0, // raw structure materialization uses supplied physical water constants
         )
         .map_err(|e| McpError::InvalidInput(e.to_string())),
     }
@@ -854,6 +924,15 @@ fn apply_sweep_field(
         return Err(McpError::InvalidInput(format!(
             "sweep value must be finite, got {value}"
         )));
+    }
+    if matches!(
+        field,
+        SweepField::LangevinTargetTemperature | SweepField::ThermostatTargetTemperature
+    ) && matches!(
+        config.barostat,
+        Some(modena_core::io::input::BarostatSpec::MonteCarlo { .. })
+    ) {
+        return Err(McpError::InvalidInput("canonical target-temperature sweeps with MC coupling are not supported; set controller and barostat targets together in separate configs".into()));
     }
     match field {
         SweepField::InitialTemperature => {
@@ -931,6 +1010,7 @@ fn integrator_kind(s: &IntegratorSpec) -> &'static str {
 fn is_nve_config(config: &InputConfig) -> bool {
     matches!(config.integrator, IntegratorSpec::VelocityVerlet { .. })
         && matches!(config.thermostat, None | Some(ThermostatSpec::None))
+        && config.barostat.is_none()
 }
 fn thermostat_kind(s: &Option<ThermostatSpec>) -> &'static str {
     match s {
@@ -992,7 +1072,7 @@ fn detect_transition(sweep: &SweepResult, out: &mut Vec<Anomaly>) {
         if row.status.state != RunState::Completed {
             continue;
         }
-        let mean_pe = mean_potential_energy(row.run_id, &row.status);
+        let mean_pe = row.status.mean_potential_energy;
         if let Some(pe) = mean_pe {
             if pe.is_finite() {
                 pts.push((row.value, pe));
@@ -1031,18 +1111,25 @@ fn detect_transition(sweep: &SweepResult, out: &mut Vec<Anomaly>) {
             "interval": [x0, x1],
             "slope_magnitude": best_slope,
             "n_completed": pts.len(),
+            "samples": sweep.runs.iter().map(|r|serde_json::json!({"run_id":r.run_id,"value":r.value,"count":r.status.sample_count,"mean_potential_energy":r.status.mean_potential_energy,"thermo_units":r.status.thermo_units,"window":r.status.sample_window})).collect::<Vec<_>>(),
             "note": "largest |d<PE>/d(param)| across the sweep; heuristic, not a proof of a transition",
         }),
     });
 }
 
-/// Mean potential energy from buffered samples, falling back to the latest thermo.
-fn mean_potential_energy(_run_id: RunId, status: &RunStatus) -> Option<f64> {
-    // The buffered samples live in RunStatusInner, not RunStatus. We approximate
-    // with the latest thermo PE when samples aren't on the snapshot. This is a
-    // reasonable proxy for the heuristic; a richer API would expose the sample
-    // mean directly.
-    status.latest_thermo.map(|t| t.potential)
+/// Runtime-facing scientific and execution capability inventory.
+pub fn capabilities() -> serde_json::Value {
+    serde_json::json!({
+        "backends": [
+            {"name":"cpu_rayon","present":true,"production_config":true},
+            {"name":"wgpu_gpu","present_in_core_source":true,"optional_build_feature":"gpu","runtime_available":null,"production_config":false,"runtime_probe":"not_performed"},
+            {"name":"mpi","present_in_core_source":true,"optional_build_feature":"mpi","runtime_available":null,"production_config":false,"runtime_probe":"not_performed"}
+        ],
+        "supported": ["shifted-force pair potentials and reduced-unit tables", "typed XYZ numeric model types, masses and charges", "shortest bond graph 1-2/1-3/1-4 LJ/Coulomb scales with explicit precedence", "Ewald/SPME periodic ions", "fixed-volume constrained molecules and rigid water", "CSVR/Langevin/NHC NVT", "unconstrained isotropic MC NPT with matching canonical thermal control", "identity-checked v2 continuation and explicit state_only import"],
+        "limitations": ["constraint pressure omits validated impulse stress and is diagnostic", "constrained or anisotropic NPT and legacy piston rejected", "Berendsen is equilibration only", "GPU/MPI library backends are not production config engines", "no electronic-structure, reactive or many-body models", "transition finite-difference heuristic includes equilibration and is not proof of a phase transition"],
+        "units": {"real":"Angstrom, ps, amu, e, kcal/mol, K, atm", "reduced_charge":"q*=q_e sqrt(332.06371/(sigma_Angstrom epsilon_kcal/mol))", "typed_xyz_reference_mass":"1 amu; global XYZ mass/charge overrides require plain XYZ", "thermo":"already converted runner output", "conservation":"internal reduced energy", "checkpoint":"internal reduced mechanics"},
+        "sweeps": {"initial_temperature":"initial draw only; does not change canonical target", "langevin_target_temperature":"Langevin only; rejects MC coupling", "thermostat_target_temperature":"CSVR/Berendsen thermostat only; rejects MC coupling; NHC target sweep not implemented", "density":"FCC only"}
+    })
 }
 
 #[cfg(test)]

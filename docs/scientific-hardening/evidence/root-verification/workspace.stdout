@@ -1,0 +1,433 @@
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test constrained_run_labels_pressure_as_diagnostic_and_nvt_energy_as_exchange ... ok
+test check_preserves_configured_output_sentinels ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+
+running 80 tests
+test conservation::tests::report_handles_near_zero_e0 ... ok
+test conservation::tests::verdict_thresholds ... ok
+test bonded::tests::angle_correct_across_periodic_boundary ... ok
+test bonded::tests::angle_force_sums_to_zero ... ok
+test bonded::tests::bond_force_signs_and_energy ... ok
+test conservation::tests::report_signs_and_observe ... ok
+test bonded::tests::dihedral_convention_trans_is_pi ... ok
+test bonded::tests::dihedral_n3_minima_at_60_180_300 ... ok
+test barostat::tests::berendsen_drives_pressure_toward_target ... ok
+test bonded::tests::dihedral_forces_sum_to_zero ... ok
+test decomp::tests::owner_of_wraps_periodically ... ok
+test decomp::tests::rank_grid_balanced_respects_min_edge ... ok
+test decomp::tests::rank_grid_balanced_small_box_is_single ... ok
+test barostat::tests::parrinello_rahman_runs_and_changes_box ... ok
+test constraints::tests::rattle_removes_radial_velocity ... ok
+test constraints::tests::shake_single_bond_satisfies_constraint ... ok
+test decomp::tests::rejects_subdomain_smaller_than_cutoff ... ok
+test decomp::tests::owner_of_partitions_all_atoms_no_overlap ... ok
+test decomp::tests::rejects_triclinic ... ok
+test ewald::tests::kvec_cutoff_respected ... ok
+test constraints::tests::settle_restores_distorted_water ... ok
+test constraints::tests::settle_projects_water_velocities ... ok
+test decomp::tests::domain_force_model_matches_serial_single_rank ... ok
+test io::restart::tests::float_roundtrip_is_exact ... ok
+test ewald::tests::neutral_system_energy_finite ... ok
+test lattice::tests::random_alloy_rejects_bad_concentration ... ok
+test ewald::tests::real_space_approaches_bare_coulomb ... ok
+test lattice::tests::fcc_atom_count ... ok
+test neighbor::tests::exclusions_remove_pairs_in_both_paths ... ok
+test lattice::tests::rocksalt_structure_and_charges ... ok
+test neighbor::tests::finds_neighbors_in_cubic_box ... ok
+test neighbor::tests::no_duplicate_pairs_with_coarse_grid ... ok
+test neighbor::tests::finds_periodic_image_neighbor ... ok
+test neighbor::tests::respects_cutoff ... ok
+test lattice::tests::random_alloy_counts_and_masses ... ok
+test neighbor::tests::skin_rebuilds_on_box_rescale_and_count_change ... ok
+test neighbor::tests::skin_skips_rebuild_until_threshold ... ok
+test neighbor::tests::skin_survives_periodic_wrapping ... ok
+test potential::buckingham::tests::energy_and_force_zero_at_cutoff ... ok
+test potential::buckingham::tests::no_nan_inside_cutoff ... ok
+test potential::lennard_jones::tests::energy_and_force_at_minimum ... ok
+test potential::lennard_jones::tests::energy_and_force_zero_at_cutoff ... ok
+test potential::lennard_jones::tests::multi_species_uses_cross_interaction_params ... ok
+test potential::lennard_jones::tests::override_replaces_lb_cross_params ... ok
+test potential::lennard_jones::tests::repulsive_regime_has_positive_radial_force ... ok
+test potential::lennard_jones::tests::single_type_matches_phase1_numerics ... ok
+test potential::mixing::tests::empty_types_errors ... ok
+test potential::mixing::tests::lb_table_is_symmetric ... ok
+test potential::mixing::tests::out_of_range_override_errors ... ok
+test potential::mixing::tests::override_replaces_mixing_default ... ok
+test potential::morse::tests::energy_and_force_zero_at_cutoff ... ok
+test potential::morse::tests::minimum_at_r0_has_zero_raw_force ... ok
+test potential::soft_sphere::tests::energy_and_force_zero_at_cutoff ... ok
+test potential::soft_sphere::tests::purely_repulsive ... ok
+test potential::tabulated::tests::energy_and_force_zero_at_cutoff ... ok
+test potential::tabulated::tests::hermite_interp_midpoint ... ok
+test potential::tabulated::tests::node_values_match_exactly ... ok
+test potential::tabulated::tests::rejects_non_increasing_nodes ... ok
+test replica_exchange::hardening_tests::accepted_swap_moves_cached_forces_box_and_velocities ... ok
+test replica_exchange::hardening_tests::boltzmann_swap_rejects_strongly_unfavorable_energy_exchange ... ok
+test replica_exchange::hardening_tests::constructor_rejects_invalid_temperatures_dt_and_gamma ... ok
+test replica_exchange::hardening_tests::final_energies_track_steps_after_last_swap ... ok
+test replica_exchange::hardening_tests::first_two_replica_swap_interval_attempts_the_pair ... ok
+test replica_exchange::hardening_tests::run_rejects_invalid_timestep ... ok
+test replica_exchange::hardening_tests::run_rejects_unknown_model_cutoff ... ok
+test ewald::tests::excluded_pair_feels_zero_coulomb ... ok
+test io::restart::tests::load_rejects_garbage ... ok
+test units::tests::argon_factors_sensible ... ok
+test units::tests::reduced_round_trip_is_identity ... ok
+test vec3::tests::min_image_wraps ... ok
+test neighbor::tests::skin_list_yields_identical_forces ... ok
+test io::restart::tests::save_load_roundtrip ... ok
+test spme::tests::spme_alpha_stable_across_kappa ... ok
+test spme::tests::spme_reciprocal_virial_is_strain_derivative ... ok
+test spme::tests::spme_matches_direct_on_deck ... ok
+test spme::tests::spme_matches_direct_displaced ... ok
+test thermostat::tests::bussi_rescaling_reproduces_theoretic_moments ... ok
+test spme::tests::spme_forces_are_derivative_of_energy ... ok
+test spme::tests::spme_force_model_matches_direct_ewald ... ok
+test neighbor::tests::parallel_rebuild_deterministic_and_complete ... ok
+
+test result: ok. 80 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 47.50s
+
+
+running 4 tests
+test failed_trial_rolls_back_mechanics_and_neighbor_state ... ok
+test interval_and_rng_state_continue_identically ... ok
+test accepted_and_rejected_model_moves_preserve_cache_integrity ... ok
+test ideal_gas_log_volume_moves_sample_gamma_volume_distribution ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+
+running 6 tests
+test bonded_forces_sum_to_zero ... ok
+test composite_decomposes_into_pair_plus_bonded ... ok
+test bonded_force_is_negative_gradient_of_energy ... ok
+test shake_rattle_rigid_dumbbell_conserves_length_and_energy ... ok
+test composite_pair_plus_bonded_conserves_energy ... ok
+test constrained_molecule_holds_bonds_and_conserves_energy ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+
+
+running 14 tests
+test real_coulomb_energy_and_force_are_reference_invariant ... ok
+test legacy_angle_and_dihedral_endpoint_exclusions_remain_compatible ... ok
+test shortest_ring_path_wins_and_exception_conflicts_fail ... ok
+test absurd_typed_atom_counts_are_errors_without_capacity_panics ... ok
+test rust_builder_real_typed_input_uses_shared_normalization ... ok
+test explicit_water_exceptions_must_be_compatible_with_mandatory_exclusions ... ok
+test typed_real_xyz_preserves_heterogeneous_identity_and_converts_once ... ok
+test legacy_exclude_bonded_uses_graph_even_without_angles ... ok
+test typed_import_rejects_global_identity_overrides_and_invalid_declarations ... ok
+test typed_identity_and_graph_policy_participate_in_continuation ... ok
+test previous_real_charge_convention_checkpoint_cannot_continue_silently ... ok
+test malformed_typed_xyz_and_unknown_type_are_rejected ... ok
+test real_runner_electrostatic_pair_energy_and_force_match_physical_bare_pair ... ok
+test graph_shortest_distances_and_explicit_precedence_scale_lj_and_coulomb_once ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 3 tests
+test builder_requires_core_sections ... ok
+test builder_to_config_matches_toml_semantics ... ok
+test builder_runs_nve_and_conserves ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 3 tests
+test pair_energy_and_forces_are_correct ... ok
+test nve_energy_is_conserved ... ok
+test nvt_langevin_stabilizes_temperature ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+
+
+running 5 tests
+test settle_projects_selected_water_and_leaves_unrelated_atoms_untouched ... ok
+test projections_reject_invalid_indices_and_masses ... ok
+test rattle_returns_error_when_iteration_budget_is_exhausted ... ok
+test shake_returns_error_when_iteration_budget_is_exhausted ... ok
+test settle_errors_on_singular_or_invalid_water ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test single_rank_decomposition_matches_serial ... ok
+test ownership_migration_after_displacement ... ok
+test multi_rank_decomposition_matches_serial ... ok
+test ghost_halo_is_sufficient ... ok
+test decomposed_nve_energy_conservation ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.49s
+
+
+running 9 tests
+test triclinic_wrap_brings_points_into_cell ... ok
+test triclinic_min_image_matches_orthorhombic_for_diagonal_cell ... ok
+test triclinic_min_image_wraps_lattice_vectors ... ok
+test ewald_real_space_is_bare_coulomb_for_small_kappa ... ok
+test spme_matches_ewald_deck_energy ... ok
+test ewald_force_is_negative_gradient ... ok
+test ewald_madelung_nacl ... ok
+test ewald_ionic_nve_energy_conservation ... ok
+test spme_ionic_nve_energy_conservation ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+
+running 4 tests
+test replica_exchange_uses_actual_cutoff_above_two_point_five ... ok
+test runner_applies_berendsen_barostat_and_moves_volume ... ok
+test replica_exchange_runs_and_swaps ... ok
+test nhc_extended_hamiltonian_is_conserved ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+
+
+running 12 tests
+test alloy_invalid_input_and_capacity_return_errors ... ok
+test public_velocity_initializer_respects_declared_com_manifold ... ok
+test tiny_alloy_populations_are_bounded_deterministic_and_exact ... ok
+test exact_review_alloy_constructs_and_runs_common_config ... ok
+test charged_mesh_csvr_and_nhc_consume_the_full_nine_mode_target ... ok
+test unsupported_mesh_com_checkpoint_is_rejected_and_state_only_reassesses_model ... ok
+test charged_rigid_water_uses_six_modes_per_molecule_without_com_removal ... ok
+test momentum_conserving_and_zero_charge_controls_keep_com_reduction ... ok
+test charged_mesh_net_force_is_common_translation_energy_derivative ... ok
+test constrained_charged_mesh_has_eight_modes_and_valid_tangent_velocities ... ok
+test charged_mesh_controllers_initialize_and_keep_full_kinetic_space ... ok
+test charged_mesh_split_continuation_preserves_full_space ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+
+running 1 test
+test spme_reuses_owned_work_buffers_and_shared_models_keep_box_states_separate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+
+
+running 11 tests
+test electrostatic_constructors_reject_nonfinite_parameters ... ok
+test concrete_cutoffs_are_real_model_requirements ... ok
+test tabulated_joint_gradient_including_lower_extrapolation ... ok
+test empty_system_invalidates_neighbor_cache_before_repopulation ... ok
+test charged_background_virial_is_three_times_energy ... ok
+test triclinic_neighbor_search_finds_nonadjacent_cartesian_bins ... ok
+test all_force_models_accumulate_existing_force_and_virial ... ok
+test excluded_ewald_energy_only_never_writes_a_force_slice ... ok
+test direct_ewald_virial_is_isotropic_strain_derivative ... ok
+test ewald_reciprocal_cache_keys_full_cell_basis ... ok
+test spme_full_net_charge_virial_is_strain_derivative ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 17 tests
+test box_tests::cubic_volume ... ok
+test box_tests::wrap_into_primary_image ... ok
+test thermo_tests::kinetic_energy_and_temperature ... ok
+test lattice_tests::fcc_atom_count_and_density ... ok
+test lattice_tests::fcc_elements_populated ... ok
+test lattice_tests::fcc_nearest_neighbor_distance ... ok
+test thermo_tests::total_momentum_tracks_mass_weighted_velocity ... ok
+test io_tests::trajectory_writer_appends_multiple_frames ... ok
+test io_tests::xyz_round_trip ... ok
+test thermo_tests::pressure_ideal_gas_limit ... ok
+test io_tests::log_writer_csv_format ... ok
+test validation_tests::zero_log_every_is_rejected ... ok
+test config_tests::reduced_config_parses ... ok
+test config_tests::real_units_converted_to_reduced ... ok
+test validation_tests::rock_salt_with_single_type_model_is_rejected ... ok
+test config_tests::topology_and_constraints_parse ... ok
+test xyz_real_units::xyz_positions_are_converted_under_real_units ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test constructors_reject_invalid_and_conflicting_pair_policies ... ok
+test domain_backend_rejects_special_pair_policy_and_changed_box ... ok
+test conflicting_model_and_neighbor_scales_and_bad_indices_are_errors ... ok
+test independent_scales_keep_a_pair_when_only_one_interaction_is_zero ... ok
+test weighted_ewald_correction_removes_bare_fraction_inside_and_outside_real_cutoff ... ok
+test spme_weighted_correction_and_strain_match_bare_fraction ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+
+running 9 tests
+test all_potentials_continuous_at_cutoff ... ok
+test all_potentials_outputs_finite ... ok
+test all_potentials_force_is_negative_energy_gradient ... ok
+test outputs_are_finite ... ok
+test cutoff_continuity ... ok
+test pair_energy_derivative_equals_negative_force ... ok
+test nve_drift_within_symplectic_bound ... ok
+test multi_species_lj_cross_interaction_conserves_energy ... ok
+test force_is_negative_gradient_of_energy ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.83s
+
+
+running 3 tests
+test checkpoint_roundtrip_is_bit_identical ... ok
+test nve_seam_continuity_and_combined_drift ... ok
+test water_two_phase_nvt_then_nve_restore ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.60s
+
+
+running 2 tests
+test rigid_water_free_rotor_conserves_kinetic_energy_across_timesteps ... ok
+test rigid_water_rotational_modes_have_canonical_equipartition ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.00s
+
+
+running 23 tests
+test finite_input_that_overflows_kinetic_initialization_is_rejected ... ok
+test initialization_uses_conserved_com_dof ... ok
+test initial_constraints_are_projected_before_sampling ... ok
+test box_scaling_refreshes_force_energy_and_virial_caches ... ok
+test lattice_generator_count_overflow_is_a_config_error ... ok
+test langevin_initialization_retains_stochastic_com_modes ... ok
+test full_u64_seed_range_is_supported ... ok
+test real_units_toml_and_direct_config_have_identical_physics ... ok
+test mc_config_requires_consistent_canonical_temperature_and_positive_proposal_controls ... ok
+test generated_water_rejects_overlapping_explicit_distance_pairs ... ok
+test mc_temperature_matching_requires_positive_controller_and_relative_small_scale_agreement ... ok
+test unknown_keys_are_errors ... ok
+test strict_config_rejects_invalid_numeric_and_scientific_combinations ... ok
+test invalid_checkpoint_write_preserves_existing_file ... ok
+test continuation_rejects_changed_physical_identity ... ok
+test intentional_protocol_switch_and_legacy_import_require_state_only ... ok
+test legacy_parser_rejects_nonfinite_overflow_and_trailing_corruption ... ok
+test continuation_preserves_com_modes_after_a_state_only_protocol_switch ... ok
+test continuation_binds_electrostatic_presence_method_and_parameters ... ok
+test state_only_mass_changes_reassess_com_and_preserve_subsequent_continuation ... ok
+test version_two_carries_atom_identity_and_rejects_corrupt_payloads ... ok
+test constraint_continuation_preserves_tangent_state_and_metadata ... ok
+test stochastic_and_extended_ensemble_split_continuation_is_exact ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+running 9 tests
+test triclinic_scaling_updates_basis_inverse_and_volume ... ok
+test triclinic_search_covers_translations_beyond_adjacent_fractional_cells ... ok
+test triclinic_image_is_nearest_euclidean_lattice_image ... ok
+test rotating_rigid_dimer_exposes_missing_constraint_pressure ... ok
+test failed_constraint_projection_is_an_integration_error ... ok
+test csvr_decorrelated_signed_factor_can_reverse_velocity_direction ... ok
+test csvr_one_step_has_canonical_conditional_moments ... ok
+test csvr_stationary_kinetic_energy_has_canonical_mean_and_variance ... ok
+test baoab_unrelated_dimer_preserves_free_atom_maxwell_variance ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
+
+
+running 10 tests
+test physical_dof_subtract_constraints_and_conserved_com_only ... ok
+test checkpoint_rejects_nonfinite_constraint_parameters ... ok
+test langevin_records_constraint_count_and_keeps_stochastic_com_dof ... ok
+test stateless_state_rejects_non_null ... ok
+test state_restore_rejects_different_kind_or_parameters ... ok
+test state_restore_rejects_constraint_mismatch_and_malformed_internal_state ... ok
+test csvr_json_state_reproduces_stochastic_continuation ... ok
+test langevin_json_state_reproduces_stochastic_continuation ... ok
+test nhc_json_state_preserves_extended_momenta_and_positions ... ok
+test csvr_one_dof_updates_without_gamma_shape_zero ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 4 tests
+test water_lattice_geometry_and_density ... ok
+test settle_restores_distorted_water ... ok
+test excluded_pair_free_flight_conserves ... ok
+test rigid_water_stack_conserves has been running for over 60 seconds
+test rigid_water_stack_conserves ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 65.48s
+
+
+running 16 tests
+test server::tests::notifications_get_no_response ... ok
+test server::tests::unknown_method_returns_rpc_error ... ok
+test server::tests::invalid_tool_args_is_error_result ... ok
+test tests::density_sweep_rescales_lattice ... ok
+test tests::rejects_invalid_sweep_combos ... ok
+test tests::estimate_run_cost_is_finite_and_positive ... ok
+test tests::build_system_reports_counts ... ok
+test server::tests::build_system_via_mcp ... ok
+test server::tests::initialize_and_tools_list ... ok
+test tests::run_probe_clamps_steps ... ok
+test server::tests::run_probe_via_mcp ... ok
+test tests::cancel_run_stops_early ... ok
+test tests::run_probe_returns_conservation ... ok
+test tests::async_run_completes_and_reports_status ... ok
+test tests::sweep_runs_to_completion ... ok
+test tests::detect_anomaly_flags_drift ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test canonical_temperature_sweep_rejects_mc_coupling_explicitly ... ok
+test barostat_run_is_not_nve_through_request_path ... ok
+test actual_means_counts_and_real_units_are_exposed ... ok
+test discovery_and_probe_surface_supported_domain ... ok
+test accumulated_mean_survives_event_fifo_and_transition_uses_it ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 2 tests
+test discovery_request_lists_every_production_pair_family_with_schema_parameters ... ok
+test exact_tiny_alloy_completes_real_mcp_probe_and_async_lifecycle ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test agent_sweep_workflow_is_reproducible ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+
+running 1 test
+test crates/modena-core/src/config/builder.rs - config::builder (line 6) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

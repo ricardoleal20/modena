@@ -58,12 +58,13 @@
 
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{ModenaError, Result};
 use crate::units::{UnitFactors, UnitSystem};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct InputConfig {
     #[serde(default)]
     pub units: UnitSystem,
@@ -93,8 +94,8 @@ pub struct InputConfig {
     pub unit_factors: Option<UnitFactors>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StructureSpec {
     /// FCC lattice generated in-place.
     Fcc {
@@ -207,7 +208,8 @@ fn default_water_m_h() -> f64 {
     1.008
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SpeciesSpec {
     pub element: String,
     /// Mass (real units: amu; reduced: relative to the reference mass).
@@ -227,7 +229,8 @@ pub struct SpeciesSpec {
 
 /// One harmonic bond: `atoms = [i, j]`, equilibrium length `r0`, stiffness `k`.
 /// `U = ½ k (r − r0)²`.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BondSpec {
     pub atoms: [usize; 2],
     pub r0: f64,
@@ -236,7 +239,8 @@ pub struct BondSpec {
 
 /// One harmonic angle: `atoms = [i, j, k]` (`j` is the vertex), equilibrium
 /// angle `theta0` (radians), stiffness `k`. `U = ½ k (θ − θ0)²`.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AngleSpec {
     pub atoms: [usize; 3],
     pub theta0: f64,
@@ -244,7 +248,8 @@ pub struct AngleSpec {
 }
 
 /// One periodic dihedral term (OPLS/CHARMM form `k(1 + cos(nφ − δ))`).
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DihedralTermSpec {
     pub n: i32,
     pub k: f64,
@@ -252,15 +257,26 @@ pub struct DihedralTermSpec {
 }
 
 /// One dihedral: `atoms = [i, j, k, l]` plus its Fourier terms.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DihedralSpec {
     pub atoms: [usize; 4],
     pub terms: Vec<DihedralTermSpec>,
 }
 
 /// The full bonded topology.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BondedTopologySpec {
+    /// LJ and Coulomb weights for shortest bond graph distance 1, 2, 3.
+    /// Omitted: all 1, or all 0 when exclude_bonded=true.
+    #[serde(default)]
+    pub lj_scales: Option<[f64; 3]>,
+    #[serde(default)]
+    pub coulomb_scales: Option<[f64; 3]>,
+    /// Explicit unordered pair policy overrides graph-derived weights.
+    #[serde(default)]
+    pub exceptions: Vec<PairExceptionSpec>,
     #[serde(default)]
     pub bonds: Vec<BondSpec>,
     #[serde(default)]
@@ -276,15 +292,26 @@ pub struct BondedTopologySpec {
     pub dihedrals: Vec<DihedralSpec>,
 }
 
+/// Explicit nonbonded atom-pair exception; overrides graph weights.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairExceptionSpec {
+    pub atoms: [usize; 2],
+    pub lj: f64,
+    pub coulomb: f64,
+}
+
 /// One rigid distance constraint: `atoms = [i, j]`, fixed length `length`.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConstraintSpec {
     pub atoms: [usize; 2],
     pub length: f64,
 }
 
 /// A set of SHAKE/RATTLE distance constraints.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConstraintsSpec {
     #[serde(default)]
     pub bonds: Vec<ConstraintSpec>,
@@ -299,7 +326,7 @@ fn default_mass() -> f64 {
 }
 
 /// Mixing rule for cross-species pair parameters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MixingRuleSpec {
     /// Lorentz–Berthelot (default): σ_ij = (σ_i+σ_j)/2, ε_ij = √(ε_i·ε_j).
@@ -308,22 +335,24 @@ pub enum MixingRuleSpec {
 }
 
 /// A per-type parameter entry for a multi-species potential.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TypeSpec {
     pub sigma: f64,
     pub epsilon: f64,
 }
 
 /// An explicit per-pair override.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct OverrideSpec {
     pub types: [u32; 2],
     pub sigma: f64,
     pub epsilon: f64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelSpec {
     /// Lennard-Jones 12-6. Single-species (`sigma`/`epsilon`) or multi-species
     /// (`types` + optional `overrides`). If `types` is present it takes
@@ -391,39 +420,45 @@ pub enum ModelSpec {
     },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuckinghamTypeSpec {
     pub a: f64,
     pub b: f64,
     pub rho: f64,
 }
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuckinghamOverrideSpec {
     pub types: [u32; 2],
     pub a: f64,
     pub b: f64,
     pub rho: f64,
 }
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MorseTypeSpec {
     pub d: f64,
     pub alpha: f64,
     pub r0: f64,
 }
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MorseOverrideSpec {
     pub types: [u32; 2],
     pub d: f64,
     pub alpha: f64,
     pub r0: f64,
 }
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SoftSphereTypeSpec {
     pub sigma: f64,
     pub epsilon: f64,
     pub n: i32,
 }
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SoftSphereOverrideSpec {
     pub types: [u32; 2],
     pub sigma: f64,
@@ -431,7 +466,7 @@ pub struct SoftSphereOverrideSpec {
     pub n: i32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InterpKindSpec {
     Linear,
@@ -441,8 +476,8 @@ fn default_interp() -> InterpKindSpec {
     InterpKindSpec::Linear
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IntegratorSpec {
     VelocityVerlet {
         dt: f64,
@@ -473,8 +508,8 @@ fn default_seed() -> u64 {
     42
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ThermostatSpec {
     Berendsen {
         target_temperature: f64,
@@ -497,9 +532,20 @@ fn default_tau() -> f64 {
 
 /// Pressure coupling (M5). `compressibility` is the isothermal compressibility
 /// β_T (1/pressure); in reduced LJ units a value ~1 is typical.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BarostatSpec {
+    /// Canonical isotropic NPT with symmetric proposals in log volume.
+    MonteCarlo {
+        target_pressure: f64,
+        target_temperature: f64,
+        #[serde(default = "default_mc_logv")]
+        max_log_volume: f64,
+        #[serde(default = "default_mc_interval")]
+        interval: usize,
+        #[serde(default = "default_seed")]
+        seed: u64,
+    },
     /// Berendsen weak-coupling barostat (good for equilibration).
     Berendsen {
         target_pressure: f64,
@@ -510,7 +556,7 @@ pub enum BarostatSpec {
         #[serde(default)]
         anisotropic: bool,
     },
-    /// Parrinello–Rahman barostat (samples the NPT ensemble).
+    /// Legacy experimental piston; production configuration rejects it.
     ParrinelloRahman {
         target_pressure: f64,
         #[serde(default = "default_tau")]
@@ -520,6 +566,13 @@ pub enum BarostatSpec {
         #[serde(default)]
         anisotropic: bool,
     },
+}
+
+fn default_mc_logv() -> f64 {
+    0.05
+}
+fn default_mc_interval() -> usize {
+    10
 }
 
 fn default_compressibility() -> f64 {
@@ -535,7 +588,7 @@ fn default_compressibility() -> f64 {
 /// Long-range electrostatics method: `ewald` (direct reciprocal sum, the
 /// default) or `spme` (mesh-based Smooth Particle Ewald, O(N log N) — the
 /// only viable path past a few thousand charged atoms).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EwaldMethod {
     /// Direct reciprocal-space Ewald sum (O(N²) in k-vectors × atoms).
@@ -545,7 +598,8 @@ pub enum EwaldMethod {
     Spme,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct EwaldSpec {
     /// Long-range method (`"ewald"` default, `"spme"` for mesh).
     #[serde(default)]
@@ -561,10 +615,11 @@ pub struct EwaldSpec {
 /// Coulomb's constant in real (kcal·Å/mol) units: `e²/(4πε₀) =
 /// 332.06371 kcal·Å/mol`. With charges in units of `e` and distances in Å, the
 /// Coulomb energy is `332.06371 · q_i q_j / r` (kcal/mol). Used to derive the
-/// reduced-charge factor `q* = q · √(COULOMB_KCAL_ANGSTROM · σ / ε)`.
+/// reduced-charge factor `q* = q · √(COULOMB_KCAL_ANGSTROM / (σ · ε))`.
 pub const COULOMB_KCAL_ANGSTROM: f64 = 332.06371;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunSpec {
     pub steps: usize,
     #[serde(default = "default_initial_temp")]
@@ -585,14 +640,16 @@ pub struct RunSpec {
     pub log_file: Option<String>,
     #[serde(default = "default_log_every")]
     pub log_every: usize,
-    /// Restore the full mechanical state (box, positions, velocities, step
-    /// counter) from a restart file written by a previous run's
-    /// `restart_file`. The structure must build the same atom count (checked
-    /// at build time); masses/charges/species come from the config, the state
-    /// comes from the file — all in reduced units. Initial velocities are
-    /// taken from the file, not drawn from `initial_temperature`.
+    /// Continue a v2 checkpoint, checking physical configuration and atom
+    /// identity and restoring all mechanical/RNG/extended state. Initial
+    /// velocities come from the checkpoint. Explicit state_only imports only
+    /// mechanics into a new protocol; legacy v1 requires that mode. Stored
+    /// values always use reduced units.
     #[serde(default)]
     pub restore_file: Option<String>,
+    /// Full continuation is the default; state_only starts a new protocol.
+    #[serde(default)]
+    pub restart_mode: RestartMode,
     /// Periodically write a checkpoint of the run state to this file (every
     /// `restart_every` steps, plus once at the end of the run — including an
     /// early stop). The canonical equilibrate-then-measure workflow: phase 1
@@ -602,6 +659,14 @@ pub struct RunSpec {
     /// Checkpoint cadence in steps (default 500; must be >= 1).
     #[serde(default = "default_restart_every")]
     pub restart_every: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RestartMode {
+    #[default]
+    Continue,
+    StateOnly,
 }
 
 impl Default for RunSpec {
@@ -619,6 +684,7 @@ impl Default for RunSpec {
             log_file: None,
             log_every: 10,
             restore_file: None,
+            restart_mode: RestartMode::Continue,
             restart_file: None,
             restart_every: 500,
         }
@@ -654,76 +720,26 @@ impl InputConfig {
     /// Parse a config from a TOML string (I/O-boundary unit conversion applied).
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(text: &str) -> Result<Self> {
-        let mut config: InputConfig = toml::from_str(text)?;
-        if config.units == UnitSystem::Real {
+        let config: InputConfig = toml::from_str(text)?;
+        config.normalized()
+    }
+
+    /// Common idempotent boundary for TOML, JSON and programmatic callers.
+    /// Real input without factors is raw; populated factors mark reduced data.
+    pub fn normalized(&self) -> Result<Self> {
+        self.validate()?;
+        let mut config = self.clone();
+        if config.units == UnitSystem::Real && config.unit_factors.is_none() {
             let factors = config.real_unit_factors()?;
             config.convert_to_reduced(&factors);
             config.unit_factors = Some(factors);
         }
-        // `step % log_every` panics on a zero divisor mid-run (and, on the MCP
-        // path, strands the run in `Running` forever).
         config.validate()?;
         Ok(config)
     }
 
-    /// Semantic validation of a parsed config (independent of unit conversion).
     pub(crate) fn validate(&self) -> Result<()> {
-        if self.run.log_every == 0 {
-            return Err(ModenaError::Config(
-                "run.log_every must be >= 1 (0 would divide by zero)".into(),
-            ));
-        }
-        if self.run.trajectory_every == 0 {
-            return Err(ModenaError::Config(
-                "run.trajectory_every must be >= 1 (0 would divide by zero)".into(),
-            ));
-        }
-        if self.run.restart_every == 0 {
-            return Err(ModenaError::Config(
-                "run.restart_every must be >= 1 (0 would divide by zero)".into(),
-            ));
-        }
-        if self.run.initial_temperature < 0.0 {
-            return Err(ModenaError::Config(
-                "run.initial_temperature must be >= 0".into(),
-            ));
-        }
-        if let StructureSpec::Water {
-            n_waters,
-            density,
-            d_oh,
-            hoh_angle,
-            ..
-        } = &self.structure
-        {
-            if self.units != UnitSystem::Real {
-                return Err(ModenaError::Config(
-                    "structure type = \"water\" requires units = \"real\" \
-                     (the density is g/cm³ and the defaults are the SPC/E \
-                     constants in Å/e/amu)"
-                        .into(),
-                ));
-            }
-            if *n_waters == 0 {
-                return Err(ModenaError::Config(
-                    "structure n_waters must be >= 1".into(),
-                ));
-            }
-            if !(*density > 0.0) {
-                return Err(ModenaError::Config(
-                    "structure density must be > 0 (g/cm³)".into(),
-                ));
-            }
-            if !(*d_oh > 0.0) {
-                return Err(ModenaError::Config("structure d_oh must be > 0".into()));
-            }
-            if !(0.0..180.0).contains(hoh_angle) {
-                return Err(ModenaError::Config(
-                    "structure hoh_angle must be in (0, 180) degrees".into(),
-                ));
-            }
-        }
-        Ok(())
+        crate::config::validation::validate(self)
     }
 
     /// Derive the real→reduced conversion factors from the model's reference
@@ -733,6 +749,17 @@ impl InputConfig {
     fn real_unit_factors(&self) -> Result<UnitFactors> {
         let (sigma, epsilon) = self.model.reference_sigma_epsilon()?;
         let mass_ref = self.structure.reference_mass();
+        for (name, value) in [
+            ("reference sigma", sigma),
+            ("reference epsilon", epsilon),
+            ("reference mass", mass_ref),
+        ] {
+            if !value.is_finite() || value <= 0.0 {
+                return Err(ModenaError::Config(format!(
+                    "{name} must be finite and positive"
+                )));
+            }
+        }
         Ok(UnitFactors::new(sigma, epsilon, mass_ref))
     }
 
@@ -858,6 +885,14 @@ impl InputConfig {
         // tau (time), target_temperature (temp).
         if let Some(b) = &mut self.barostat {
             match b {
+                BarostatSpec::MonteCarlo {
+                    target_pressure,
+                    target_temperature,
+                    ..
+                } => {
+                    *target_pressure = f.to_reduced_pressure(*target_pressure);
+                    *target_temperature = f.to_reduced_temperature(*target_temperature);
+                }
                 BarostatSpec::Berendsen {
                     target_pressure,
                     tau,
@@ -906,6 +941,7 @@ impl InputConfig {
 
         // Run: initial_temperature (temp).
         self.run.initial_temperature = f.to_reduced_temperature(self.run.initial_temperature);
+        self.run.neighbor_skin = f.to_reduced_length(self.run.neighbor_skin);
 
         // Bonded topology: r0/length (length), bond k (energy/length²), angle
         // k and dihedral k (energy). Angles/dihedral phases are in radians

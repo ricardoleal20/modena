@@ -1,0 +1,19 @@
+{
+  "label": "example-water-nvt-run",
+  "command": [
+    "rtk",
+    "proxy",
+    "target/release/modena",
+    "run",
+    "-i",
+    "examples/chemical/water_nvt.toml"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 0.007526499917730689,
+  "created_utc": "2026-10-04T03:12:16.037345+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "example-water-nvt-run.stdout",
+  "stderr_file": "example-water-nvt-run.stderr"
+}

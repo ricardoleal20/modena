@@ -1,0 +1,16 @@
+   Compiling nom v7.1.3
+   Compiling libloading v0.8.9
+   Compiling itertools v0.10.5
+   Compiling libffi-sys v4.2.2
+   Compiling custom_derive v0.1.7
+   Compiling smallvec v1.16.0
+   Compiling proptest v1.11.0
+   Compiling conv v0.3.3
+   Compiling libffi v5.2.0
+   Compiling clang-sys v1.9.1
+   Compiling cexpr v0.6.0
+   Compiling bindgen v0.72.1
+   Compiling mpi-sys v0.2.4
+   Compiling mpi v0.8.2
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.98s

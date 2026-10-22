@@ -1,0 +1,67 @@
+test_render_argon_style (test_parity.ParityTests.test_render_argon_style) ... ok
+test_run_nve_and_parse (test_parity.ParityTests.test_run_nve_and_parse) ... FAIL
+test_nonzero_subprocess_propagates (test_workflows.WorkflowTests.test_nonzero_subprocess_propagates) ... ok
+test_relative_source_paths_and_numeric_rows (test_workflows.WorkflowTests.test_relative_source_paths_and_numeric_rows) ... ERROR
+test_toml_quotes_and_nested_types (test_workflows.WorkflowTests.test_toml_quotes_and_nested_types) ... ERROR
+test_typed_surface (test_workflows.WorkflowTests.test_typed_surface) ... FAIL
+
+======================================================================
+ERROR: test_relative_source_paths_and_numeric_rows (test_workflows.WorkflowTests.test_relative_source_paths_and_numeric_rows)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/python/modena/tests/test_workflows.py", line 29, in test_relative_source_paths_and_numeric_rows
+    self.assertIn("OK",check(cfg,BINARY));result=run(cfg,BINARY)
+                       ^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/python/modena/run.py", line 46, in check
+    raise RuntimeError(f"modena check failed (rc={r.returncode}):\n{r.stdout}\n{r.stderr}")
+RuntimeError: modena check failed (rc=1):
+
+Error: failed to read input file /var/folders/m5/4v1jt6nn2wlcr98s_50cdv9w0000gn/T/tmpovxpf2cq.toml
+
+Caused by:
+    0: TOML parse error: TOML parse error at line 2, column 23
+         |
+       2 | file = "tmp314kk84r/a"b.xyz"
+         |                       ^
+       expected newline, `#`
+       
+    1: TOML parse error at line 2, column 23
+         |
+       2 | file = "tmp314kk84r/a"b.xyz"
+         |                       ^
+       expected newline, `#`
+       
+
+
+======================================================================
+ERROR: test_toml_quotes_and_nested_types (test_workflows.WorkflowTests.test_toml_quotes_and_nested_types)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/python/modena/tests/test_workflows.py", line 17, in test_toml_quotes_and_nested_types
+    parsed=tomllib.loads(cfg.to_toml())
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/tomllib/_parser.py", line 135, in loads
+    raise suffixed_err(
+tomllib.TOMLDecodeError: Expected newline or end of document after a statement (at line 4, column 14)
+
+======================================================================
+FAIL: test_run_nve_and_parse (test_parity.ParityTests.test_run_nve_and_parse)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/python/modena/tests/test_parity.py", line 50, in test_run_nve_and_parse
+    assert all(isinstance(row["total"], float) for row in res.steps_rows)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+
+======================================================================
+FAIL: test_typed_surface (test_workflows.WorkflowTests.test_typed_surface)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/python/modena/tests/test_workflows.py", line 22, in test_typed_surface
+    self.assertTrue(hasattr(c,name),name)
+AssertionError: False is not true : NoseHooverChain
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.650s
+
+FAILED (failures=2, errors=2)

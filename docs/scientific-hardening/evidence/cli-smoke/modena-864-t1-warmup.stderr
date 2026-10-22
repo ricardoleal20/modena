@@ -1,0 +1,22 @@
+Error: simulation failed
+
+Caused by:
+    configuration error: run.log_every must be >= 1
+        0.20 real         0.00 user         0.00 sys
+             2703360  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 340  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                   5  involuntary context switches
+            20586674  instructions retired
+            10481321  cycles elapsed
+             1114400  peak memory footprint

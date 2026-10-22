@@ -1,0 +1,57 @@
+    Finished `bench` profile [optimized] target(s) in 0.12s
+     Running benches/force_kernel.rs (target/release/deps/force_kernel-ffcb3e9650229448)
+Gnuplot not found, using plotters backend
+Testing force_cached_neighbors/lj_N256/256
+Success
+
+Testing force_with_rebuild/lj_N256/256
+Success
+
+Testing force_cached_neighbors/lj_N864/864
+Success
+
+Testing force_with_rebuild/lj_N864/864
+Success
+
+Testing force_cached_neighbors/lj_N2048/2048
+Success
+
+Testing force_with_rebuild/lj_N2048/2048
+Success
+
+Testing force_cached_neighbors/ionic_spme_N64/64
+Success
+
+Testing force_with_rebuild/ionic_spme_N64/64
+Success
+
+Testing force_cached_neighbors/ionic_spme_N216/216
+Success
+
+Testing force_with_rebuild/ionic_spme_N216/216
+Success
+
+Testing force_cached_neighbors/ionic_spme_N512/512
+Success
+
+Testing force_with_rebuild/ionic_spme_N512/512
+Success
+
+Testing force_cached_neighbors/molecular_spme_N81/81
+Success
+
+Testing force_with_rebuild/molecular_spme_N81/81
+Success
+
+Testing force_cached_neighbors/molecular_spme_N192/192
+Success
+
+Testing force_with_rebuild/molecular_spme_N192/192
+Success
+
+Testing force_cached_neighbors/molecular_spme_N375/375
+Success
+
+Testing force_with_rebuild/molecular_spme_N375/375
+Success
+

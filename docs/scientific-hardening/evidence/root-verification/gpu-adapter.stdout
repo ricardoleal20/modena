@@ -1,0 +1,12 @@
+
+running 7 tests
+test gpu_cell_list_empty_and_far_pairs ... ok
+test gpu_cell_list_matches_all_pairs_and_serial ... ok
+test gpu_cell_list_nve_conservation_and_rebuilds ... ok
+test gpu_nve_energy_conservation ... ok
+test gpu_pair_matches_serial_within_f32_tolerance ... ok
+test gpu_pair_scales_to_larger_system ... ok
+test gpu_rejects_unsupported_lj_scales_before_dispatch ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.11s
+

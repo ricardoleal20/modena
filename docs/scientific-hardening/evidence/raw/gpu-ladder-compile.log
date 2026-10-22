@@ -1,0 +1,24 @@
+    Checking once_cell v1.21.4
+   Compiling bytemuck_derive v1.12.0
+    Checking serde_core v1.0.229
+    Checking either v1.18.0
+    Checking naga v29.0.4
+    Checking tempfile v3.27.0
+    Checking rayon v1.12.0
+    Checking rusty-fork v0.3.1
+    Checking proptest v1.11.0
+    Checking bytemuck v1.25.2
+    Checking serde v1.0.229
+    Checking serde_json v1.0.151
+    Checking wgpu-types v29.0.4
+    Checking toml_datetime v0.6.11
+    Checking serde_spanned v0.6.9
+    Checking toml_edit v0.22.27
+    Checking toml v0.8.23
+    Checking wgpu-naga-bridge v29.0.4
+    Checking wgpu-hal v29.0.4
+    Checking wgpu-core-deps-apple v29.0.4
+    Checking wgpu-core v29.0.4
+    Checking wgpu v29.0.4
+    Checking modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.59s

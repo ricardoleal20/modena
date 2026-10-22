@@ -1,0 +1,31 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.79s
+     Running tests/runner_hardening.rs (target/debug/deps/runner_hardening-49206dd6d9b677f9)
+
+running 23 tests
+test finite_input_that_overflows_kinetic_initialization_is_rejected ... ok
+test initialization_uses_conserved_com_dof ... ok
+test initial_constraints_are_projected_before_sampling ... ok
+test box_scaling_refreshes_force_energy_and_virial_caches ... ok
+test full_u64_seed_range_is_supported ... ok
+test lattice_generator_count_overflow_is_a_config_error ... ok
+test langevin_initialization_retains_stochastic_com_modes ... ok
+test real_units_toml_and_direct_config_have_identical_physics ... ok
+test mc_config_requires_consistent_canonical_temperature_and_positive_proposal_controls ... ok
+test generated_water_rejects_overlapping_explicit_distance_pairs ... ok
+test mc_temperature_matching_requires_positive_controller_and_relative_small_scale_agreement ... ok
+test unknown_keys_are_errors ... ok
+test strict_config_rejects_invalid_numeric_and_scientific_combinations ... ok
+test continuation_rejects_changed_physical_identity ... ok
+test invalid_checkpoint_write_preserves_existing_file ... ok
+test intentional_protocol_switch_and_legacy_import_require_state_only ... ok
+test continuation_preserves_com_modes_after_a_state_only_protocol_switch ... ok
+test legacy_parser_rejects_nonfinite_overflow_and_trailing_corruption ... ok
+test state_only_mass_changes_reassess_com_and_preserve_subsequent_continuation ... ok
+test version_two_carries_atom_identity_and_rejects_corrupt_payloads ... ok
+test continuation_binds_electrostatic_presence_method_and_parameters ... ok
+test constraint_continuation_preserves_tangent_state_and_metadata ... ok
+test stochastic_and_extended_ensemble_split_continuation_is_exact ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+

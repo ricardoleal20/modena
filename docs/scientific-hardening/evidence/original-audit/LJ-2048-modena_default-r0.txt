@@ -1,0 +1,6 @@
+MODENA: loading /var/folders/m5/4v1jt6nn2wlcr98s_50cdv9w0000gn/T/modena-lj-audit-pr23lvi0/in.toml
+MODENA: finished 1000 steps in 1.373s
+  final  KE = 1716.073852   PE = -10303.729643   E_total = -8587.655791
+  final  T = 0.558618   P = -1.300257   W = -12895.350956
+  conservation  drift = 9.836e-6  (Healthy)
+  perf   1373.15 µs/step  (728 steps/s)

@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 use modena_core::runner::run_from_file;
-use modena_core::InputConfig;
+use modena_core::{Ensemble, InputConfig, PressureStatus};
 
 #[derive(Parser)]
 #[command(
@@ -42,7 +42,7 @@ fn main() -> Result<()> {
             let config = InputConfig::from_path(&input)
                 .with_context(|| format!("failed to read input file {}", input.display()))?;
             let base_dir = input.parent().unwrap_or_else(|| std::path::Path::new("."));
-            let sim = modena_core::Simulation::from_config(&config, base_dir)
+            let sim = modena_core::Simulation::from_config_without_outputs(&config, base_dir)
                 .context("failed to build simulation from config")?;
             println!(
                 "OK: {} atoms, box = {:?}, ready to run {} steps.",
@@ -69,11 +69,27 @@ fn main() -> Result<()> {
                 "  final  T = {:.6}   P = {:.6}   W = {:.6}",
                 e.temperature, e.pressure, e.virial
             );
-            let c = &summary.conservation;
             println!(
-                "  conservation  drift = {:.3e}  ({:?})",
-                c.relative_drift, c.verdict
+                "  thermo units = {:?} (real: kcal/mol, K, atm; reduced: engine units)",
+                summary.metadata.output_units
             );
+            if summary.metadata.pressure_status
+                == PressureStatus::DiagnosticWithoutConstraintImpulseStress
+            {
+                println!("  pressure diagnostic: omits constraint impulse stress; constrained pressure is not validated");
+            }
+            let c = &summary.conservation;
+            if summary.metadata.ensemble == Ensemble::Nve {
+                println!(
+                    "  conservation  drift = {:.3e}  ({:?})",
+                    c.relative_drift, c.verdict
+                );
+            } else {
+                println!(
+                    "  energy exchanged  relative change = {:.3e}",
+                    c.relative_drift
+                );
+            }
             let per_step_us = elapsed.as_secs_f64() / summary.steps.max(1) as f64 * 1e6;
             println!(
                 "  perf   {:.2} µs/step  ({:.0} steps/s)",

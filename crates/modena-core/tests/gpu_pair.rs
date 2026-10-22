@@ -18,6 +18,38 @@ use modena_core::{
 };
 
 #[test]
+fn gpu_rejects_unsupported_lj_scales_before_dispatch() {
+    let Some(gpu) = GpuPairForceModel::new(1.0, 1.0, 3.7) else {
+        eprintln!("no GPU adapter available — skipping GPU scale test");
+        return;
+    };
+    assert_eq!(gpu.neighbor_cutoff(), Some(3.7_f32 as f64));
+    let mut s = lattice::fcc(1.5, [2, 2, 2], "Ar");
+    let mut n = NeighborList::with_pair_scales(
+        3.7,
+        0.3,
+        &[modena_core::PairScale {
+            i: 0,
+            j: 1,
+            lj: 0.5,
+            coulomb: 1.0,
+        }],
+    )
+    .unwrap();
+    assert!(gpu
+        .compute(&mut s, &mut Virial::default(), &mut n)
+        .unwrap_err()
+        .to_string()
+        .contains("fractional"));
+    let gpu = GpuPairForceModel::with_gather(1.0, 1.0, 3.7, GpuGather::CellList).unwrap();
+    assert!(gpu
+        .compute(&mut s, &mut Virial::default(), &mut n)
+        .unwrap_err()
+        .to_string()
+        .contains("fractional"));
+}
+
+#[test]
 fn gpu_pair_matches_serial_within_f32_tolerance() {
     let Some(gpu) = GpuPairForceModel::new(1.0, 1.0, 2.5) else {
         eprintln!("no GPU adapter available — skipping GPU pair test");

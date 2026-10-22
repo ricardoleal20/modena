@@ -1,0 +1,32 @@
+{
+  "label": "mpi-2rank",
+  "command": [
+    "rtk",
+    "proxy",
+    "mpiexec",
+    "--oversubscribe",
+    "-n",
+    "2",
+    "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/debug/deps/mpi_decomp-117dedd74a6b85f5",
+    "--nocapture"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 3.722310750046745,
+  "created_utc": "2026-10-04T03:17:23.575749+00:00",
+  "rust_test_counts": [
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      1,
+      0,
+      0
+    ]
+  ],
+  "stdout_file": "mpi-2rank.stdout",
+  "stderr_file": "mpi-2rank.stderr"
+}

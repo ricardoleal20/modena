@@ -1,0 +1,73 @@
+{
+  "passed": true,
+  "observations": [
+    {
+      "name": "csvr_mean_T",
+      "observed": 0.99933785,
+      "expected": 1,
+      "absolute_tolerance": 0.01,
+      "independent_basis": "Gamma kinetic distribution, f=12",
+      "passed": true
+    },
+    {
+      "name": "csvr_variance_T",
+      "observed": 0.16712408,
+      "expected": 0.16666666666666666,
+      "absolute_tolerance": 0.01,
+      "independent_basis": "Gamma temperature variance=2/f",
+      "passed": true
+    },
+    {
+      "name": "baoab_free_atom_false",
+      "observed": 1.00073504,
+      "expected": 1,
+      "absolute_tolerance": 0.02,
+      "independent_basis": "Maxwell T/m=1; free spectator with or without independent dimer",
+      "passed": true
+    },
+    {
+      "name": "baoab_free_atom_true",
+      "observed": 1.00073504,
+      "expected": 1,
+      "absolute_tolerance": 0.02,
+      "independent_basis": "Maxwell T/m=1; free spectator with or without independent dimer",
+      "passed": true
+    },
+    {
+      "name": "barostat_pe_false",
+      "observed": 0.0,
+      "expected": 0,
+      "absolute_tolerance": 1e-09,
+      "independent_basis": "independent fresh force evaluation, printed precision",
+      "passed": true
+    },
+    {
+      "name": "barostat_force_false",
+      "observed": 0.0,
+      "expected": 0,
+      "absolute_tolerance": 1e-07,
+      "independent_basis": "independent fresh force evaluation, printed precision",
+      "passed": true
+    },
+    {
+      "name": "barostat_pe_true",
+      "observed": 0.0,
+      "expected": 0,
+      "absolute_tolerance": 1e-09,
+      "independent_basis": "independent fresh force evaluation, printed precision",
+      "passed": true
+    },
+    {
+      "name": "barostat_force_true",
+      "observed": 0.0,
+      "expected": 0,
+      "absolute_tolerance": 1e-07,
+      "independent_basis": "independent fresh force evaluation, printed precision",
+      "passed": true
+    }
+  ],
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "library_sha256": "02961aa7887afc856f1ff45a01a4f8e34545d8c98824f437099b846d4cb1a482",
+  "probe_source_sha256": "9b49e2255bc07af35e6dd97399f515c7656407fa0beb520b2f158d7a6c0e7e5d",
+  "limitation": "raw original bug labels remain historical; printed cache precision and correlated moments are not formal uncertainty"
+}

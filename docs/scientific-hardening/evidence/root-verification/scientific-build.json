@@ -1,0 +1,22 @@
+{
+  "label": "scientific-build",
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "build",
+    "--release",
+    "-p",
+    "modena-core",
+    "--example",
+    "scientific_validation"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 18.11225491692312,
+  "created_utc": "2026-10-04T03:09:33.807851+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "scientific-build.stdout",
+  "stderr_file": "scientific-build.stderr"
+}

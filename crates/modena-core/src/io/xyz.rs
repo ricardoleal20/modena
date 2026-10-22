@@ -18,6 +18,13 @@ pub struct XyzFrame {
 /// Read a single-frame XYZ file into a `System`. The simulation box must be
 /// supplied by the caller (XYZ carries no box info).
 pub fn read_xyz<P: AsRef<Path>>(path: P, box_size: SimBox) -> Result<System> {
+    Ok(read_xyz_with_identity(path, box_size)?.0)
+}
+
+/// Typed XYZ uses exactly `Properties=species:S:1:pos:R:3:type:I:1:mass:R:1:charge:R:1`.
+/// Type indices are zero-based model indices; mass/charge/positions use input units.
+/// Plain XYZ retains legacy mass=1, charge=0, type=0 behavior.
+pub fn read_xyz_with_identity<P: AsRef<Path>>(path: P, box_size: SimBox) -> Result<(System, bool)> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
     let mut line = String::new();
@@ -28,12 +35,26 @@ pub fn read_xyz<P: AsRef<Path>>(path: P, box_size: SimBox) -> Result<System> {
         .parse()
         .map_err(|e| ModenaError::Input(format!("XYZ atom count not an integer: {e}")))?;
 
-    // Comment line (ignored on read).
+    if n > u32::MAX as usize || n.checked_mul(3).is_none() {
+        return Err(ModenaError::Input(
+            "XYZ atom count exceeds supported indexed atom capacity".into(),
+        ));
+    }
+    // Plain comment is ignored; an explicit Properties declaration is strict.
     line.clear();
     reader.read_line(&mut line)?;
 
-    let mut elements = Vec::with_capacity(n);
-    let mut positions = Vec::with_capacity(n);
+    let typed = line
+        .split_whitespace()
+        .find(|s| s.starts_with("Properties="));
+    let typed = match typed {
+        None => false,
+        Some("Properties=species:S:1:pos:R:3:type:I:1:mass:R:1:charge:R:1") => true,
+        Some(_) => return Err(ModenaError::Input("unsupported XYZ Properties declaration; expected species:S:1:pos:R:3:type:I:1:mass:R:1:charge:R:1".into())),
+    };
+    let mut identities = Vec::new();
+    let mut elements = Vec::new();
+    let mut positions = Vec::new();
     for _ in 0..n {
         line.clear();
         if reader.read_line(&mut line)? == 0 {
@@ -43,7 +64,7 @@ pub fn read_xyz<P: AsRef<Path>>(path: P, box_size: SimBox) -> Result<System> {
             });
         }
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 4 {
+        if parts.len() < 4 || (typed && parts.len() != 7) {
             return Err(ModenaError::Input(format!("malformed XYZ line: {line}")));
         }
         let el = parts[0].to_string();
@@ -56,6 +77,26 @@ pub fn read_xyz<P: AsRef<Path>>(path: P, box_size: SimBox) -> Result<System> {
         let z: f64 = parts[3]
             .parse()
             .map_err(|e| ModenaError::Input(format!("bad z coordinate: {e}")))?;
+        if ![x, y, z].iter().all(|v| v.is_finite()) {
+            return Err(ModenaError::Input("XYZ coordinates must be finite".into()));
+        }
+        if typed {
+            let species: u32 = parts[4].parse().map_err(|_| {
+                ModenaError::Input("XYZ type must be a zero-based integer model index".into())
+            })?;
+            let mass: f64 = parts[5]
+                .parse()
+                .map_err(|_| ModenaError::Input("bad XYZ mass".into()))?;
+            let charge: f64 = parts[6]
+                .parse()
+                .map_err(|_| ModenaError::Input("bad XYZ charge".into()))?;
+            if !mass.is_finite() || mass <= 0.0 || !charge.is_finite() {
+                return Err(ModenaError::Input(
+                    "typed XYZ requires positive finite masses and finite charges".into(),
+                ));
+            }
+            identities.push((species, mass, charge));
+        }
         elements.push(el);
         positions.push(Vec3::new(x, y, z));
     }
@@ -67,7 +108,12 @@ pub fn read_xyz<P: AsRef<Path>>(path: P, box_size: SimBox) -> Result<System> {
         system.set_pos(i, *p);
     }
     system.elements = elements;
-    Ok(system)
+    for (i, (species, mass, charge)) in identities.into_iter().enumerate() {
+        system.species[i] = species;
+        system.masses[i] = mass;
+        system.charges[i] = charge;
+    }
+    Ok((system, typed))
 }
 
 /// Streaming XYZ trajectory writer (append mode).

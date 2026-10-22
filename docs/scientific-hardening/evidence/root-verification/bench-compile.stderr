@@ -1,0 +1,6 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+   Compiling modena-bench v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-bench)
+    Finished `bench` profile [optimized] target(s) in 23.12s
+  Executable benches/force_kernel.rs (target/release/deps/force_kernel-ffcb3e9650229448)
+  Executable benches/integrator_step.rs (target/release/deps/integrator_step-f68fff6a8775547a)
+  Executable benches/neighbor_build.rs (target/release/deps/neighbor_build-f981fab5e76530c4)

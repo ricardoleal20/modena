@@ -1,0 +1,3 @@
+Review HEAD 10bd9ee3077509ee472875f6697fd6d1a849753e
+Release default rlib target/release/libmodena_core.rlib SHA256 794cca85de5b6eae1dd3ec9ef80387b4b5f905254991a758f8460765d107b295 matches docs/scientific-hardening/evidence/raw/original-probes-current.json.
+Fixture copied from current scientific_validation.rs; no production-source changes; no benchmark.

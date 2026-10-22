@@ -1,39 +1,33 @@
-//! Force-kernel benchmark: one `ForceModel::compute` call (neighbor build +
-//! rayon-parallel pair evaluation) on FCC LJ systems.
-
+//! Force clearing + model compute + neighbor displacement check. Rebuild isolated.
+mod common;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use modena_core::{
-    lattice, ForceModel, LennardJones, NeighborList, PairForceModel, PairPotential, System, Virial,
-};
-
-fn build_system(n_per_side: u32) -> System {
-    lattice::fcc(1.5444, [n_per_side, n_per_side, n_per_side], "Ar")
-}
-
+use modena_core::{NeighborList, Virial};
 fn bench_force(c: &mut Criterion) {
-    let lj = LennardJones::new(1.0, 1.0, 2.5).unwrap();
-    let cutoff = lj.cutoff();
-    let model = PairForceModel::new(lj);
-
-    let mut group = c.benchmark_group("force_kernel");
-    for n in [4u32, 6, 8] {
-        let system = build_system(n);
-        group.throughput(criterion::Throughput::Elements(system.n() as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(n), &system, |b, sys| {
-            b.iter_batched(
-                || sys.clone(),
-                |mut s| {
-                    let mut nl = NeighborList::new(cutoff);
-                    let mut virial = Virial::default();
-                    let pe = model.compute(&mut s, &mut virial, &mut nl).unwrap();
-                    black_box(pe);
-                },
-                criterion::BatchSize::SmallInput,
-            );
-        });
+    for (name, mut system, model, cutoff) in common::workloads() {
+        let mut nl = NeighborList::with_skin(cutoff, 0.3);
+        nl.build(&system);
+        for rebuild in [false, true] {
+            let mut group = c.benchmark_group(if rebuild {
+                "force_with_rebuild"
+            } else {
+                "force_cached_neighbors"
+            });
+            group.throughput(criterion::Throughput::Elements(system.n() as u64));
+            group.bench_function(BenchmarkId::new(&name, system.n()), |b| {
+                b.iter(|| {
+                    system.zero_forces();
+                    if rebuild {
+                        nl.force_rebuild(&system);
+                    }
+                    let u = model
+                        .compute(&mut system, &mut Virial::default(), &mut nl)
+                        .unwrap();
+                    black_box(u);
+                })
+            });
+            group.finish();
+        }
     }
-    group.finish();
 }
-
 criterion_group!(benches, bench_force);
 criterion_main!(benches);

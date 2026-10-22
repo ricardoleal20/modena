@@ -1,0 +1,2 @@
+OK: 32 atoms, box = [3.3592, 3.3592, 3.3592], ready to run 100 steps.
+thermo_rows=11 conservation=Warning

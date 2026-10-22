@@ -1,0 +1,7 @@
+MODENA: loading examples/chemical/molecular_nvt.toml
+MODENA: finished 20 steps in 37.953ms
+  final  KE = 0.700073   PE = -0.658291   E_total = 0.041782
+  final  T = 78.286805   P = 34.689696   W = 10.582857
+  thermo units = Real (real: kcal/mol, K, atm; reduced: engine units)
+  energy exchanged  relative change = 2.867e-3
+  perf   1897.66 µs/step  (527 steps/s)

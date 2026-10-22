@@ -1,0 +1,24 @@
+{
+  "label": "clippy-mpi",
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--features",
+    "modena-core/mpi",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 2.4968555418308824,
+  "created_utc": "2026-10-04T03:07:01.523042+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "clippy-mpi.stdout",
+  "stderr_file": "clippy-mpi.stderr"
+}

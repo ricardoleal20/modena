@@ -8,6 +8,7 @@
 //! [`set_pos`](Self::set_pos)/[`vel`](Self::vel)/... bridge the two views.
 //! Masses, species, charges, and element labels stay per-atom (`N`).
 
+use crate::error::{ModenaError, Result};
 use crate::vec3::Vec3;
 
 /// Simulation box.
@@ -15,18 +16,14 @@ use crate::vec3::Vec3;
 /// Orthorhombic by default (stored as the per-axis edge `size`). M4 adds
 /// **triclinic** support: a general cell defined by three Bravais vectors
 /// `a`, `b`, `c` (the cell matrix `h = [a b c]`, columns). All minimum-image
-/// dispatch routes through [`min_image`](Self::min_image); the triclinic body
-/// converts to fractional coordinates `s = h⁻¹ r`, wraps there, and converts
-/// back, so callers (force kernel, neighbor search) are unchanged.
+/// dispatch routes through [`min_image`](Self::min_image); triclinic images
+/// use a bounded nearest-lattice search in Cartesian distance.
 ///
 /// `size` is always the **orthorhombic bounding box** of the cell — for an
 /// orthorhombic cell it *is* the cell; for a triclinic cell it is the
-/// enclosing box (edge_k = |a_k|+|b_k|+|c_k|). The cell-list neighbor search
-/// bins atoms inside this bounding box; because a pair with true (min-image)
-/// distance < cutoff has every Cartesian component < cutoff ≤ the bounding-box
-/// cell size, the ±1 stencil still finds it, so triclinic neighbor search is
-/// correct (and only slightly conservative). `volume` returns `det h` for a
-/// triclinic cell, not the bounding-box product.
+/// enclosing box (edge_k = |a_k|+|b_k|+|c_k|). Cartesian periodic cell stencils
+/// are insufficient for general oblique faces; neighbor providers must use a
+/// geometry-safe search. `volume` returns `|det h|` for a triclinic cell.
 ///
 /// The M5 barostats scale `size` and positions isotropically and are
 /// orthorhombic-only; combining a triclinic box with a barostat is a
@@ -136,7 +133,7 @@ impl SimBox {
 
     /// Minimum-image of a displacement vector. The single dispatch point for
     /// periodic wrapping in the engine. Orthorhombic fast path: per-axis
-    /// `dx -= L·round(dx/L)`. Triclinic: wrap in fractional coordinates.
+    /// `dx -= L·round(dx/L)`. Triclinic: bounded lattice enumeration.
     #[inline]
     pub fn min_image(&self, d: Vec3) -> Vec3 {
         match self.inv_rows {
@@ -149,12 +146,41 @@ impl SimBox {
                 Vec3(r)
             }
             Some(inv) => {
-                // Fractional displacement, wrapped to [-0.5, 0.5).
-                let s0 = wrap_half(inv[0].dot(d));
-                let s1 = wrap_half(inv[1].dot(d));
-                let s2 = wrap_half(inv[2].dot(d));
+                let s = [
+                    wrap_half(inv[0].dot(d)),
+                    wrap_half(inv[1].dot(d)),
+                    wrap_half(inv[2].dot(d)),
+                ];
                 let [a, b, c] = self.vectors.unwrap();
-                a * s0 + b * s1 + c * s2
+                let mut best = a * s[0] + b * s[1] + c * s[2];
+                let mut best2 = best.norm2();
+                // Any closer image q has |row_k·q| <= ||row_k|| R,
+                // so |s_k-n_k| <= ||row_k|| R. This finite bounding box
+                // contains every improvement, even for highly skew bases.
+                let radius = best2.sqrt();
+                let bounds = std::array::from_fn::<_, 3, _>(|k| {
+                    let width = inv[k].norm() * radius;
+                    let margin = 32.0 * f64::EPSILON * (1.0 + width);
+                    (
+                        (s[k] - width - margin).ceil() as i64,
+                        (s[k] + width + margin).floor() as i64,
+                    )
+                });
+                for i in bounds[0].0..=bounds[0].1 {
+                    for j in bounds[1].0..=bounds[1].1 {
+                        for k in bounds[2].0..=bounds[2].1 {
+                            let candidate = a * (s[0] - i as f64)
+                                + b * (s[1] - j as f64)
+                                + c * (s[2] - k as f64);
+                            let r2 = candidate.norm2();
+                            if r2 < best2 {
+                                best = candidate;
+                                best2 = r2;
+                            }
+                        }
+                    }
+                }
+                best
             }
         }
     }
@@ -183,13 +209,22 @@ impl SimBox {
 
     /// Scale one box axis by `factor` (used by M5 barostats; orthorhombic).
     pub fn scale_axis(&mut self, axis: usize, factor: f64) {
-        self.size.0[axis] *= factor;
+        if let Some(mut vectors) = self.vectors {
+            for v in &mut vectors {
+                v.0[axis] *= factor;
+            }
+            *self = Self::triclinic(vectors);
+        } else {
+            self.size.0[axis] *= factor;
+        }
     }
 
     /// Isotropic scale of all three axes (used by M5 barostats).
     pub fn scale_uniform(&mut self, factor: f64) {
-        for k in 0..3 {
-            self.size.0[k] *= factor;
+        if let Some(vectors) = self.vectors {
+            *self = Self::triclinic(vectors.map(|v| v * factor));
+        } else {
+            self.size *= factor;
         }
     }
 }
@@ -240,6 +275,8 @@ pub struct System {
     /// Element symbols for I/O (cosmetic; not used by the physics).
     pub elements: Vec<String>,
     pub box_size: SimBox,
+    constraint_count: usize,
+    conserved_com_dof: usize,
 }
 
 impl System {
@@ -253,6 +290,8 @@ impl System {
             charges: Vec::new(),
             elements: Vec::new(),
             box_size,
+            constraint_count: 0,
+            conserved_com_dof: 0,
         }
     }
 
@@ -262,6 +301,9 @@ impl System {
 
     /// Reserve `n` atoms and pre-zero velocities/forces.
     pub fn resize(&mut self, n: usize) {
+        // Resizing invalidates physical manifold metadata.
+        self.constraint_count = 0;
+        self.conserved_com_dof = 0;
         self.positions.resize(3 * n, 0.0);
         self.velocities.resize(3 * n, 0.0);
         self.forces.resize(3 * n, 0.0);
@@ -402,10 +444,38 @@ impl System {
         p
     }
 
-    /// Number of positional degrees of freedom (3N). Thermostats subtract the
-    /// COM constraints separately when needed.
+    /// Independent kinetic degrees of freedom. Manual systems default to 3N.
     pub fn dof(&self) -> usize {
-        3 * self.n()
+        (3 * self.n())
+            .saturating_sub(self.constraint_count)
+            .saturating_sub(self.conserved_com_dof)
+    }
+    /// Independent holonomic constraints (water contributes three).
+    pub fn constraint_count(&self) -> usize {
+        self.constraint_count
+    }
+    pub fn set_constraint_count(&mut self, count: usize) -> Result<()> {
+        if count > 3 * self.n() || self.conserved_com_dof > 3 * self.n() - count {
+            return Err(ModenaError::Physics(
+                "constraint count exceeds available DOF".into(),
+            ));
+        }
+        self.constraint_count = count;
+        Ok(())
+    }
+    /// COM components fixed by initialized conserved momentum. Stochastic
+    /// Langevin COM belongs to the ensemble and must use zero here.
+    pub fn conserved_com_dof(&self) -> usize {
+        self.conserved_com_dof
+    }
+    pub fn set_conserved_com_dof(&mut self, count: usize) -> Result<()> {
+        if count > 3 || count > 3 * self.n() - self.constraint_count {
+            return Err(ModenaError::Physics(
+                "conserved COM DOF must be 0..=3 and fit the system".into(),
+            ));
+        }
+        self.conserved_com_dof = count;
+        Ok(())
     }
 
     /// Instantaneous temperature from KE: T = 2 KE / (dof * kB), kB = 1 in

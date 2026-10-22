@@ -1,0 +1,8 @@
+spme kcut=3.2 U=-4.0629384131147578e-1 netF=[0.01053550625494074, -0.00428972063224793, -0.00556269470076666] minus_dU_dx=1.0535506247966175e-2
+spme kcut=4.8 U=-3.9908484971996411e-1 netF=[-0.0021962217383620477, -0.0016287639848177327, -0.0010855520432234774] minus_dU_dx=-2.1962217294779762e-3
+spme kcut=6.4 U=-3.9806558940626213e-1 netF=[0.00014550709671593085, 0.0009169903109268228, -0.00014407442982109723] minus_dU_dx=1.4550710081273621e-4
+ewald netF=[-3.0661237437890065e-16, -2.894819800536297e-16, 9.107298248878237e-18]
+runner spme initial metadata=RunMetadata { ensemble: Nve, kinetic_dof: 6, constraint_count: 0, conserved_com_dof: 3, pressure_status: UnconstrainedPairVirial, output_units: Reduced } P=[-1.1102230246251565e-16, 0.0, 0.0]
+runner spme final metadata=RunMetadata { ensemble: Nve, kinetic_dof: 6, constraint_count: 0, conserved_com_dof: 3, pressure_status: UnconstrainedPairVirial, output_units: Reduced } P=[-0.00018528772670978189, -0.00015971051779406498, -0.0001230941487824211]
+runner ewald initial metadata=RunMetadata { ensemble: Nve, kinetic_dof: 6, constraint_count: 0, conserved_com_dof: 3, pressure_status: UnconstrainedPairVirial, output_units: Reduced } P=[-1.1102230246251565e-16, 0.0, 0.0]
+runner ewald final metadata=RunMetadata { ensemble: Nve, kinetic_dof: 6, constraint_count: 0, conserved_com_dof: 3, pressure_status: UnconstrainedPairVirial, output_units: Reduced } P=[2.1094237467877974e-15, -9.992007221626409e-16, -1.1102230246251565e-15]

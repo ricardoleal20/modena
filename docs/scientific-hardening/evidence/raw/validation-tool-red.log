@@ -1,0 +1,14 @@
+test_nonfinite_or_outside_tolerance_is_failure_with_raw_evidence (test_validation.ValidationTests.test_nonfinite_or_outside_tolerance_is_failure_with_raw_evidence) ... FAIL
+
+======================================================================
+FAIL: test_nonfinite_or_outside_tolerance_is_failure_with_raw_evidence (test_validation.ValidationTests.test_nonfinite_or_outside_tolerance_is_failure_with_raw_evidence)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_validation.py", line 23, in test_nonfinite_or_outside_tolerance_is_failure_with_raw_evidence
+    self.assertEqual(result.returncode, 1)
+AssertionError: 2 != 1
+
+----------------------------------------------------------------------
+Ran 1 test in 0.033s
+
+FAILED (failures=1)

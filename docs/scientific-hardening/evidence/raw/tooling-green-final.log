@@ -1,0 +1,9 @@
+test_failure_retains_evidence_and_fails (test_benchmark.BenchmarkTests.test_failure_retains_evidence_and_fails) ... ok
+test_real_release_cli_uses_valid_no_file_deck_and_reports_drift (test_benchmark.BenchmarkTests.test_real_release_cli_uses_valid_no_file_deck_and_reports_drift) ... ok
+test_success_has_actual_steps_numeric_renderer_and_provenance (test_benchmark.BenchmarkTests.test_success_has_actual_steps_numeric_renderer_and_provenance) ... ok
+test_nonfinite_or_outside_tolerance_is_failure_with_raw_evidence (test_validation.ValidationTests.test_nonfinite_or_outside_tolerance_is_failure_with_raw_evidence) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 1.120s
+
+OK

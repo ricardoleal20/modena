@@ -1,0 +1,4 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+   Compiling modena-mcp v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-mcp)
+   Compiling modena-cli v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-cli)
+    Finished `release` profile [optimized] target(s) in 23.80s

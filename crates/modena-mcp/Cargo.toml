@@ -5,7 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Agent-native MCP interface for the MODENA molecular dynamics engine."
+repository.workspace = true
+description = "MCP interface for the MODENA molecular dynamics engine."
 
 [lib]
 name = "modena_mcp"

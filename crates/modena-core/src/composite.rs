@@ -3,8 +3,8 @@
 //!
 //! This is the M3 glue that lets a pair (non-bonded) model coexist with a
 //! [`crate::bonded::BondedForceModel`] (and, later, a Coulomb/Ewald model). It
-//! owns the **zero-then-accumulate** contract: `compute` zeroes `system.forces`
-//! and `virial` once, then each sub-model adds into them.
+//! follows the ForceModel accumulation contract: callers zero the buffers
+//! once before the complete force pass, then each sub-model adds into them.
 
 use crate::bonded::BondedForceModel;
 use crate::error::Result;
@@ -33,6 +33,15 @@ impl LongRangeForceModel {
 }
 
 impl ForceModel for LongRangeForceModel {
+    fn conserves_total_momentum(&self, system: &System) -> bool {
+        match self {
+            Self::Ewald(m) => m.conserves_total_momentum(system),
+            Self::Spme(m) => m.conserves_total_momentum(system),
+        }
+    }
+    fn neighbor_cutoff(&self) -> Option<f64> {
+        Some(self.real_cutoff())
+    }
     fn compute(
         &self,
         system: &mut System,
@@ -83,16 +92,32 @@ impl CompositeForceModel {
 }
 
 impl ForceModel for CompositeForceModel {
+    fn conserves_total_momentum(&self, system: &System) -> bool {
+        self.pair.conserves_total_momentum(system)
+            && self
+                .bonded
+                .as_ref()
+                .is_none_or(|m| m.conserves_total_momentum(system))
+            && self
+                .long_range
+                .as_ref()
+                .is_none_or(|m| m.conserves_total_momentum(system))
+    }
+    fn neighbor_cutoff(&self) -> Option<f64> {
+        Some(
+            self.pair.potential.cutoff().max(
+                self.long_range
+                    .as_ref()
+                    .map_or(0.0, LongRangeForceModel::real_cutoff),
+            ),
+        )
+    }
     fn compute(
         &self,
         system: &mut System,
         virial: &mut Virial,
         neighbors: &mut NeighborList,
     ) -> Result<f64> {
-        // Zero once; sub-models accumulate.
-        system.forces.fill(0.0);
-        virial.w = 0.0;
-
         let mut pe = self.pair.compute(system, virial, neighbors)?;
         if let Some(b) = &self.bonded {
             pe += b.compute(system, virial, neighbors)?;

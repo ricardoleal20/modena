@@ -1,0 +1,24 @@
+{
+  "label": "python",
+  "command": [
+    "rtk",
+    "proxy",
+    "env",
+    "MODENA_BINARY=/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/release/modena",
+    "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "python/modena/tests",
+    "-v"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 0.49356579105369747,
+  "created_utc": "2026-10-04T03:09:16.187574+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "python.stdout",
+  "stderr_file": "python.stderr"
+}

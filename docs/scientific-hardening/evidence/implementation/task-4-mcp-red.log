@@ -1,0 +1,34 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+   Compiling modena-mcp v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.02s
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-257a66f79feaa4cf)
+
+running 3 tests
+
+thread 'discovery_and_probe_surface_supported_domain' (35643180) panicked at crates/modena-mcp/tests/chemical_workflows.rs:22:86:
+missing capabilities Err(Other("unknown tool: get_capabilities"))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test discovery_and_probe_surface_supported_domain ... FAILED
+
+thread 'barostat_run_is_not_nve_through_request_path' (35643179) panicked at crates/modena-mcp/tests/chemical_workflows.rs:8:109:
+assertion `left == right` failed
+  left: Bool(true)
+ right: false
+
+thread 'actual_means_counts_and_reduced_units_are_exposed' (35643178) panicked at crates/modena-mcp/tests/chemical_workflows.rs:16:2:
+assertion `left == right` failed
+  left: Null
+ right: "reduced"
+test barostat_run_is_not_nve_through_request_path ... FAILED
+test actual_means_counts_and_reduced_units_are_exposed ... FAILED
+
+failures:
+
+failures:
+    actual_means_counts_and_reduced_units_are_exposed
+    barostat_run_is_not_nve_through_request_path
+    discovery_and_probe_surface_supported_domain
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p modena-mcp --test chemical_workflows`

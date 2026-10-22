@@ -1,0 +1,77 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.57s
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-7ee693a39689dd33)
+
+running 10 tests
+test real_coulomb_energy_and_force_are_reference_invariant ... ok
+test shortest_ring_path_wins_and_exception_conflicts_fail ... ok
+test rust_builder_real_typed_input_uses_shared_normalization ... ok
+test typed_real_xyz_preserves_heterogeneous_identity_and_converts_once ... ok
+test typed_import_rejects_global_identity_overrides_and_invalid_declarations ... ok
+test legacy_exclude_bonded_uses_graph_even_without_angles ... ok
+test typed_identity_and_graph_policy_participate_in_continuation ... ok
+test malformed_typed_xyz_and_unknown_type_are_rejected ... ok
+test graph_shortest_distances_and_explicit_precedence_scale_lj_and_coulomb_once ... ok
+test real_runner_electrostatic_pair_energy_and_force_match_physical_bare_pair ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/config_builder.rs (target/debug/deps/config_builder-78f0b60e89605c90)
+
+running 3 tests
+test builder_requires_core_sections ... ok
+test builder_to_config_matches_toml_semantics ... ok
+test builder_runs_nve_and_conserves ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/electrostatics.rs (target/debug/deps/electrostatics-e8935156cf95e69f)
+
+running 9 tests
+test triclinic_min_image_matches_orthorhombic_for_diagonal_cell ... ok
+test triclinic_min_image_wraps_lattice_vectors ... ok
+test triclinic_wrap_brings_points_into_cell ... ok
+test ewald_real_space_is_bare_coulomb_for_small_kappa ... ok
+test spme_matches_ewald_deck_energy ... ok
+test ewald_force_is_negative_gradient ... ok
+test ewald_madelung_nacl ... ok
+test ewald_ionic_nve_energy_conservation ... ok
+test spme_ionic_nve_energy_conservation ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+
+     Running tests/io_and_lattice.rs (target/debug/deps/io_and_lattice-4713acef291a0388)
+
+running 17 tests
+test box_tests::cubic_volume ... ok
+test box_tests::wrap_into_primary_image ... ok
+test thermo_tests::kinetic_energy_and_temperature ... ok
+test lattice_tests::fcc_atom_count_and_density ... ok
+test lattice_tests::fcc_nearest_neighbor_distance ... ok
+test lattice_tests::fcc_elements_populated ... ok
+test thermo_tests::total_momentum_tracks_mass_weighted_velocity ... ok
+test thermo_tests::pressure_ideal_gas_limit ... ok
+test io_tests::trajectory_writer_appends_multiple_frames ... ok
+test io_tests::log_writer_csv_format ... ok
+test io_tests::xyz_round_trip ... ok
+test validation_tests::zero_log_every_is_rejected ... ok
+test config_tests::reduced_config_parses ... ok
+test config_tests::real_units_converted_to_reduced ... ok
+test validation_tests::rock_salt_with_single_type_model_is_rejected ... ok
+test config_tests::topology_and_constraints_parse ... ok
+test xyz_real_units::xyz_positions_are_converted_under_real_units ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pair_scales.rs (target/debug/deps/pair_scales-e743e8d8a0501f15)
+
+running 6 tests
+test constructors_reject_invalid_and_conflicting_pair_policies ... ok
+test conflicting_model_and_neighbor_scales_and_bad_indices_are_errors ... ok
+test domain_backend_rejects_special_pair_policy_and_changed_box ... ok
+test independent_scales_keep_a_pair_when_only_one_interaction_is_zero ... ok
+test weighted_ewald_correction_removes_bare_fraction_inside_and_outside_real_cutoff ... ok
+test spme_weighted_correction_and_strain_match_bare_fraction ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+

@@ -1,0 +1,19 @@
+{
+  "label": "example-mc-npt-check",
+  "command": [
+    "rtk",
+    "proxy",
+    "target/release/modena",
+    "check",
+    "-i",
+    "examples/chemical/mc_npt.toml"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 0.007352125132456422,
+  "created_utc": "2026-10-04T03:12:15.724199+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "example-mc-npt-check.stdout",
+  "stderr_file": "example-mc-npt-check.stderr"
+}

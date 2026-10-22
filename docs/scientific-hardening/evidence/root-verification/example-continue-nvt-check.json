@@ -1,0 +1,19 @@
+{
+  "label": "example-continue-nvt-check",
+  "command": [
+    "rtk",
+    "proxy",
+    "target/release/modena",
+    "check",
+    "-i",
+    "examples/chemical/continue_nvt.toml"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 0.007596457842737436,
+  "created_utc": "2026-10-04T03:12:15.292076+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "example-continue-nvt-check.stdout",
+  "stderr_file": "example-continue-nvt-check.stderr"
+}

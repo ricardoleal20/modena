@@ -1,0 +1,19 @@
+   Compiling modena-mcp v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-257a66f79feaa4cf)
+
+running 1 test
+
+thread 'canonical_temperature_sweep_rejects_mc_coupling_explicitly' (35652833) panicked at crates/modena-mcp/tests/chemical_workflows.rs:35:2:
+MC coupled sweep must reject synchronously, received Ok(Object {"field": String("thermostat_target_temperature"), "run_ids": Array [Number(1), Number(2)], "sweep_id": Number(1)})
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test canonical_temperature_sweep_rejects_mc_coupling_explicitly ... FAILED
+
+failures:
+
+failures:
+    canonical_temperature_sweep_rejects_mc_coupling_explicitly
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p modena-mcp --test chemical_workflows`

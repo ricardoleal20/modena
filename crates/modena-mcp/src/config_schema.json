@@ -1,0 +1,1057 @@
+{
+  "config": {
+    "type": "object",
+    "properties": {
+      "units": {
+        "enum": [
+          "reduced",
+          "real"
+        ],
+        "description": "Real: Angstrom, ps, amu, e, kcal/mol, K, atm. Typed XYZ carries zero-based numeric model types and per-atom mass/charge. Reference mass 1 amu; no typed global overrides."
+      },
+      "structure": {
+        "$ref": "#/definitions/structure"
+      },
+      "model": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "lennard_jones"
+              },
+              "sigma": {
+                "type": "number"
+              },
+              "epsilon": {
+                "type": "number"
+              },
+              "cutoff": {
+                "type": "number"
+              },
+              "types": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "sigma": {
+                      "type": "number"
+                    },
+                    "epsilon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "sigma",
+                    "epsilon"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "overrides": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "sigma": {
+                      "type": "number"
+                    },
+                    "epsilon": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "types",
+                    "sigma",
+                    "epsilon"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "mixing": {
+                "enum": [
+                  "lorentz_berthelot"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "cutoff"
+            ],
+            "additionalProperties": false,
+            "description": "Scalar parameters or namespaced [[model.types]] (types take precedence); Rust validates model completeness."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "buckingham"
+              },
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              },
+              "rho": {
+                "type": "number"
+              },
+              "cutoff": {
+                "type": "number"
+              },
+              "types": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "a": {
+                      "type": "number"
+                    },
+                    "b": {
+                      "type": "number"
+                    },
+                    "rho": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "a",
+                    "b",
+                    "rho"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "overrides": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "a": {
+                      "type": "number"
+                    },
+                    "b": {
+                      "type": "number"
+                    },
+                    "rho": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "types",
+                    "a",
+                    "b",
+                    "rho"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "type",
+              "cutoff"
+            ],
+            "additionalProperties": false,
+            "description": "Scalar parameters or namespaced [[model.types]] (types take precedence); Rust validates model completeness."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "morse"
+              },
+              "d": {
+                "type": "number"
+              },
+              "alpha": {
+                "type": "number"
+              },
+              "r0": {
+                "type": "number"
+              },
+              "cutoff": {
+                "type": "number"
+              },
+              "types": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "d": {
+                      "type": "number"
+                    },
+                    "alpha": {
+                      "type": "number"
+                    },
+                    "r0": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "d",
+                    "alpha",
+                    "r0"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "overrides": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "d": {
+                      "type": "number"
+                    },
+                    "alpha": {
+                      "type": "number"
+                    },
+                    "r0": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "types",
+                    "d",
+                    "alpha",
+                    "r0"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "type",
+              "cutoff"
+            ],
+            "additionalProperties": false,
+            "description": "Scalar parameters or namespaced [[model.types]] (types take precedence); Rust validates model completeness."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "soft_sphere"
+              },
+              "sigma": {
+                "type": "number"
+              },
+              "epsilon": {
+                "type": "number"
+              },
+              "n": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "cutoff": {
+                "type": "number"
+              },
+              "types": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "sigma": {
+                      "type": "number"
+                    },
+                    "epsilon": {
+                      "type": "number"
+                    },
+                    "n": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "sigma",
+                    "epsilon",
+                    "n"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "overrides": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "sigma": {
+                      "type": "number"
+                    },
+                    "epsilon": {
+                      "type": "number"
+                    },
+                    "n": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "types",
+                    "sigma",
+                    "epsilon",
+                    "n"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "type",
+              "cutoff"
+            ],
+            "additionalProperties": false,
+            "description": "Scalar parameters or namespaced [[model.types]] (types take precedence); Rust validates model completeness."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "tabulated"
+              },
+              "file": {
+                "type": "string"
+              },
+              "interpolation": {
+                "enum": [
+                  "linear"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "file"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "integrator": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "velocity_verlet"
+              },
+              "dt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "type",
+              "dt"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "langevin_baoab"
+              },
+              "dt": {
+                "type": "number"
+              },
+              "gamma": {
+                "type": "number"
+              },
+              "target_temperature": {
+                "type": "number"
+              },
+              "seed": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "type",
+              "dt",
+              "gamma",
+              "target_temperature"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "nose_hoover_chain"
+              },
+              "dt": {
+                "type": "number"
+              },
+              "target_temperature": {
+                "type": "number"
+              },
+              "tau": {
+                "type": "number"
+              },
+              "chain_len": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "type",
+              "dt",
+              "target_temperature"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "thermostat": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "berendsen"
+              },
+              "target_temperature": {
+                "type": "number"
+              },
+              "tau": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "type",
+              "target_temperature"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "velocity_rescaling"
+              },
+              "target_temperature": {
+                "type": "number"
+              },
+              "tau": {
+                "type": "number"
+              },
+              "seed": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "type",
+              "target_temperature"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "barostat": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "monte_carlo"
+              },
+              "target_pressure": {
+                "type": "number"
+              },
+              "target_temperature": {
+                "type": "number"
+              },
+              "max_log_volume": {
+                "type": "number"
+              },
+              "interval": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "seed": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "type",
+              "target_pressure",
+              "target_temperature"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "berendsen"
+              },
+              "target_pressure": {
+                "type": "number"
+              },
+              "tau": {
+                "type": "number"
+              },
+              "compressibility": {
+                "type": "number"
+              },
+              "anisotropic": {
+                "const": false
+              }
+            },
+            "required": [
+              "type",
+              "target_pressure"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "electrostatics": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "enum": [
+              "ewald",
+              "spme"
+            ]
+          },
+          "kappa": {
+            "type": "number"
+          },
+          "real_cutoff": {
+            "type": "number"
+          },
+          "kspace_cutoff": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "kappa",
+          "real_cutoff",
+          "kspace_cutoff"
+        ],
+        "additionalProperties": false
+      },
+      "topology": {
+        "type": "object",
+        "properties": {
+          "bonds": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "atoms": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "r0": {
+                  "type": "number"
+                },
+                "k": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "atoms",
+                "r0",
+                "k"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "angles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "atoms": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "minItems": 3,
+                  "maxItems": 3
+                },
+                "theta0": {
+                  "type": "number"
+                },
+                "k": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "atoms",
+                "theta0",
+                "k"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "dihedrals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "atoms": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "minItems": 4,
+                  "maxItems": 4
+                },
+                "terms": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "n": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "k": {
+                        "type": "number"
+                      },
+                      "delta": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "n",
+                      "k",
+                      "delta"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "atoms",
+                "terms"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "exclude_bonded": {
+            "type": "boolean"
+          },
+          "lj_scales": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "coulomb_scales": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "atoms": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "lj": {
+                  "type": "number"
+                },
+                "coulomb": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "atoms",
+                "lj",
+                "coulomb"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "constraints": {
+        "type": "object",
+        "properties": {
+          "bonds": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "atoms": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "length": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "atoms",
+                "length"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "run": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "trajectory_every": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "log_every": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "restart_every": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "initial_temperature": {
+            "type": "number"
+          },
+          "neighbor_skin": {
+            "type": "number"
+          },
+          "trajectory_file": {
+            "type": "string"
+          },
+          "log_file": {
+            "type": "string"
+          },
+          "restart_file": {
+            "type": "string"
+          },
+          "restore_file": {
+            "type": "string"
+          },
+          "restart_mode": {
+            "enum": [
+              "continue",
+              "state_only"
+            ]
+          }
+        },
+        "required": [
+          "steps"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "structure",
+      "model",
+      "integrator",
+      "run"
+    ],
+    "additionalProperties": false,
+    "description": "Production CPU config. Paths relative to MCP work_dir; water requires real units; constrained pressure diagnostic; constrained/anisotropic NPT and piston rejected. MC requires matching positive canonical thermal target."
+  },
+  "structure": {
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "fcc"
+          },
+          "lattice_constant": {
+            "type": "number"
+          },
+          "replicas": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "element": {
+            "type": "string"
+          },
+          "mass": {
+            "type": "number"
+          },
+          "charge": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "type",
+          "lattice_constant",
+          "replicas"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "xyz"
+          },
+          "file": {
+            "type": "string"
+          },
+          "box_size": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "element": {
+            "type": "string"
+          },
+          "mass": {
+            "type": "number"
+          },
+          "charge": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "type",
+          "file",
+          "box_size"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "random_alloy"
+          },
+          "lattice_constant": {
+            "type": "number"
+          },
+          "replicas": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "species": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "element": {
+                  "type": "string"
+                },
+                "mass": {
+                  "type": "number"
+                },
+                "charge": {
+                  "type": "number"
+                },
+                "concentration": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "element",
+                "concentration"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "type",
+          "lattice_constant",
+          "replicas",
+          "species"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "rock_salt"
+          },
+          "lattice_constant": {
+            "type": "number"
+          },
+          "replicas": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "cation": {
+            "type": "string"
+          },
+          "anion": {
+            "type": "string"
+          },
+          "cation_mass": {
+            "type": "number"
+          },
+          "anion_mass": {
+            "type": "number"
+          },
+          "cation_charge": {
+            "type": "number"
+          },
+          "anion_charge": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "type",
+          "lattice_constant",
+          "replicas",
+          "cation",
+          "anion",
+          "cation_charge",
+          "anion_charge"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "water"
+          },
+          "n_waters": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "density": {
+            "type": "number"
+          },
+          "d_oh": {
+            "type": "number"
+          },
+          "hoh_angle": {
+            "type": "number"
+          },
+          "q_o": {
+            "type": "number"
+          },
+          "q_h": {
+            "type": "number"
+          },
+          "m_o": {
+            "type": "number"
+          },
+          "m_h": {
+            "type": "number"
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "type",
+          "n_waters"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  }
+}

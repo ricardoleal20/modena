@@ -1,0 +1,20 @@
+{
+  "label": "bench-compile",
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "bench",
+    "-p",
+    "modena-bench",
+    "--no-run"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 23.152597000123933,
+  "created_utc": "2026-10-04T03:11:46.755275+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "bench-compile.stdout",
+  "stderr_file": "bench-compile.stderr"
+}

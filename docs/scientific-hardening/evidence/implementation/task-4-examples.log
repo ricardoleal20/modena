@@ -1,0 +1,71 @@
+COMMAND ['./target/debug/modena', 'check', '-i', 'examples/chemical/molecular_nvt.toml']
+OK: 4 atoms, box = [6.666666666666667, 6.666666666666667, 6.666666666666667], ready to run 20 steps.
+ 
+EXIT 0
+COMMAND ['./target/debug/modena', 'run', '-i', 'examples/chemical/molecular_nvt.toml']
+MODENA: loading examples/chemical/molecular_nvt.toml
+MODENA: finished 20 steps in 68.130ms
+  final  KE = 0.700073   PE = -0.658291   E_total = 0.041782
+  final  T = 78.286805   P = 34.689696   W = 10.582857
+  thermo units = Real (real: kcal/mol, K, atm; reduced: engine units)
+  energy exchanged  relative change = 2.867e-3
+  perf   3406.50 µs/step  (294 steps/s)
+ 
+EXIT 0
+COMMAND ['./target/debug/modena', 'check', '-i', 'examples/chemical/continue_nvt.toml']
+OK: 4 atoms, box = [6.666666666666667, 6.666666666666667, 6.666666666666667], ready to run 10 steps.
+ 
+EXIT 0
+COMMAND ['./target/debug/modena', 'run', '-i', 'examples/chemical/continue_nvt.toml']
+MODENA: loading examples/chemical/continue_nvt.toml
+MODENA: finished 10 steps in 15.810ms
+  final  KE = 0.550310   PE = -0.508333   E_total = 0.041977
+  final  T = 61.539265   P = 44.424538   W = 14.245130
+  thermo units = Real (real: kcal/mol, K, atm; reduced: engine units)
+  energy exchanged  relative change = 4.671e-3
+  perf   1580.95 µs/step  (633 steps/s)
+ 
+EXIT 0
+COMMAND ['./target/debug/modena', 'check', '-i', 'examples/chemical/ionic_spme.toml']
+OK: 64 atoms, box = [5.64, 5.64, 5.64], ready to run 10 steps.
+ 
+EXIT 0
+COMMAND ['./target/debug/modena', 'run', '-i', 'examples/chemical/ionic_spme.toml']
+MODENA: loading examples/chemical/ionic_spme.toml
+MODENA: finished 10 steps in 14.070ms
+  final  KE = 19.195380   PE = -6596.068128   E_total = -6576.872748
+  final  T = 100.619687   P = -102479.095653   W = -6389.327395
+  thermo units = Real (real: kcal/mol, K, atm; reduced: engine units)
+  energy exchanged  relative change = 1.800e-5
+  perf   1407.04 µs/step  (711 steps/s)
+ 
+EXIT 0
+COMMAND ['./target/debug/modena', 'check', '-i', 'examples/chemical/mc_npt.toml']
+OK: 32 atoms, box = [4.8, 4.8, 4.8], ready to run 20 steps.
+ 
+EXIT 0
+COMMAND ['./target/debug/modena', 'run', '-i', 'examples/chemical/mc_npt.toml']
+MODENA: loading examples/chemical/mc_npt.toml
+MODENA: finished 20 steps in 2.497ms
+  final  KE = 47.783011   PE = -19.422753   E_total = 28.360258
+  final  T = 1.027592   P = -0.161468   W = -151.611153
+  thermo units = Reduced (real: kcal/mol, K, atm; reduced: engine units)
+  energy exchanged  relative change = 1.430e-1
+  perf   124.86 µs/step  (8009 steps/s)
+ 
+EXIT 0
+COMMAND ['./target/debug/modena', 'check', '-i', 'examples/chemical/water_nvt.toml']
+OK: 24 atoms, box = [2.9293842068304827, 2.9293842068304827, 2.9293842068304827], ready to run 5 steps.
+ 
+EXIT 0
+COMMAND ['./target/debug/modena', 'run', '-i', 'examples/chemical/water_nvt.toml']
+MODENA: loading examples/chemical/water_nvt.toml
+MODENA: finished 5 steps in 2.537ms
+  final  KE = 4.378690   PE = 0.770521   E_total = 5.149211
+  final  T = 97.930771   P = 417.188456   W = 5.613032
+  thermo units = Real (real: kcal/mol, K, atm; reduced: engine units)
+  pressure diagnostic: omits constraint impulse stress; constrained pressure is not validated
+  energy exchanged  relative change = -1.479e-2
+  perf   507.40 µs/step  (1971 steps/s)
+ 
+EXIT 0

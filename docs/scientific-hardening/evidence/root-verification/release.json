@@ -1,0 +1,19 @@
+{
+  "label": "release",
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "build",
+    "--workspace",
+    "--release"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 23.836482292041183,
+  "created_utc": "2026-10-04T03:07:32.456699+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "release.stdout",
+  "stderr_file": "release.stderr"
+}

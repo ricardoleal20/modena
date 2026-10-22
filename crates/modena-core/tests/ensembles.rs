@@ -107,7 +107,7 @@ fn replica_exchange_runs_and_swaps() {
     let system = lattice::fcc(1.6796, [2, 2, 2], "Ar"); // 32 atoms
 
     let temperatures = vec![0.5, 0.8, 1.2, 2.0];
-    let mut rex = ReplicaExchange::new(&system, temperatures, 0.005, 1.0, 42);
+    let mut rex = ReplicaExchange::new(&system, temperatures, 0.005, 1.0, 42).unwrap();
     let stats = rex
         .run(&*model, 500, 25, 0.005)
         .expect("replica-exchange run must complete");
@@ -134,6 +134,30 @@ fn replica_exchange_runs_and_swaps() {
         stats.swaps_attempted,
         stats.swaps_accepted
     );
+}
+
+#[test]
+fn replica_exchange_uses_actual_cutoff_above_two_point_five() {
+    let mut s = System::new(modena_core::SimBox::cubic(12.0));
+    s.resize(2);
+    s.set_pos(1, Vec3::new(3.2, 0.0, 0.0));
+    let pot = LennardJones::new(1.0, 1.0, 3.7).unwrap();
+    let model = PairForceModel::new(pot.clone());
+    let mut rex = ReplicaExchange::new(&s, vec![1e-4, 2e-4], 1e-4, 0.0, 42).unwrap();
+    let stats = rex.run(&model, 2, 10, 1e-4).unwrap();
+    for (s, u) in rex.systems().into_iter().zip(stats.final_energies) {
+        let d = s.box_size.min_image(s.pos(0) - s.pos(1));
+        assert!(d.norm() > 2.5 && d.norm() < 3.7);
+        let (expected, fr) = pot.energy_force(d.norm2(), 0, 0);
+        assert!(expected.abs() > 1e-5);
+        assert!(
+            (u - expected).abs() < 1e-14,
+            "replica neighbor list must include r > 2.5 pairs"
+        );
+        for k in 0..3 {
+            assert!((s.force(0).0[k] - d.0[k] * fr).abs() < 1e-14);
+        }
+    }
 }
 
 #[test]

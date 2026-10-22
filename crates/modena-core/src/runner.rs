@@ -1,6 +1,7 @@
 //! The simulation runner: builds engine objects from an `InputConfig`, runs the
 //! time-stepping loop, and streams trajectory/energy output.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -8,7 +9,9 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, StandardNormal};
 
-use crate::barostat::{Barostat, BerendsenBarostat, NoneBarostat, ParrinelloRahman};
+use crate::barostat::{
+    Barostat, BerendsenBarostat, MonteCarloBarostat, NoneBarostat, ParrinelloRahman,
+};
 use crate::bonded::{Angle, Bond, BondedForceModel, BondedTopology, Dihedral, DihedralTerm};
 use crate::composite::CompositeForceModel;
 use crate::composite::LongRangeForceModel;
@@ -20,12 +23,12 @@ use crate::force_model::{ForceModel, PairForceModel, Virial};
 use crate::integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 use crate::io::input::{
     BarostatSpec, BondedTopologySpec, ConstraintsSpec, EwaldMethod, EwaldSpec, InputConfig,
-    IntegratorSpec, InterpKindSpec, ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
+    IntegratorSpec, InterpKindSpec, ModelSpec, RestartMode, RunSpec, StructureSpec, ThermostatSpec,
 };
 use crate::io::log::LogWriter;
-use crate::io::xyz::{read_xyz, TrajectoryWriter};
+use crate::io::xyz::{read_xyz_with_identity, TrajectoryWriter};
 use crate::lattice::{fcc, random_alloy, rocksalt, water_lattice, AlloySpecies};
-use crate::neighbor::NeighborList;
+use crate::neighbor::{NeighborList, PairScale};
 use crate::nose_hoover::NoseHooverChain;
 use crate::potential::{
     Buckingham, BuckinghamOverride, BuckinghamTypeParams, InterpKind, LennardJones, LjOverride,
@@ -36,7 +39,7 @@ use crate::spme::SpmeForceModel;
 use crate::system::{SimBox, System};
 use crate::thermo::Energies;
 use crate::thermostat::{Berendsen, NoneThermostat, Thermostat, VelocityRescaling};
-use crate::units::UnitFactors;
+use crate::units::{UnitFactors, UnitSystem};
 use crate::vec3::Vec3;
 
 pub struct Simulation {
@@ -64,6 +67,8 @@ pub struct Simulation {
     /// internal reduced units back to real units for display. The physics stays
     /// reduced; only the rendered observables are scaled.
     unit_factors: Option<UnitFactors>,
+    physical_signature: serde_json::Value,
+    ensemble: Ensemble,
 }
 
 /// Events emitted by [`Simulation::run_streaming`]. One consumer is the MCP
@@ -93,11 +98,40 @@ pub enum RunEvent {
     Failed { error: String },
 }
 
+/// Thermodynamic interpretation shared by CLI and agent consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Ensemble {
+    Nve,
+    Nvt,
+    EquilibrationNpt,
+    CanonicalNpt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PressureStatus {
+    UnconstrainedPairVirial,
+    DiagnosticWithoutConstraintImpulseStress,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct RunMetadata {
+    pub ensemble: Ensemble,
+    pub kinetic_dof: usize,
+    pub constraint_count: usize,
+    pub conserved_com_dof: usize,
+    pub pressure_status: PressureStatus,
+    /// Real thermo: kcal/mol, K, atm; times ps and coordinates Angstrom.
+    pub output_units: UnitSystem,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RunSummary {
     pub steps: usize,
     pub final_energies: Energies,
     pub conservation: ConservationReport,
+    pub metadata: RunMetadata,
 }
 
 impl Simulation {
@@ -111,44 +145,33 @@ impl Simulation {
     /// Build a `Simulation` from a parsed config. `base_dir` resolves relative
     /// structure-file paths.
     pub fn from_config(config: &InputConfig, base_dir: &Path) -> Result<Self> {
-        let to_reduced_length = config
-            .unit_factors
+        Self::build_config(config, base_dir, true)
+    }
+
+    /// Perform all scientific setup and restart checks without opening outputs.
+    pub fn from_config_without_outputs(config: &InputConfig, base_dir: &Path) -> Result<Self> {
+        Self::build_config(config, base_dir, false)
+    }
+
+    fn build_config(raw: &InputConfig, base_dir: &Path, outputs: bool) -> Result<Self> {
+        let normalized = raw.normalized()?;
+        let config = &normalized;
+        let mut system = build_system(&config.structure, base_dir, config.unit_factors.as_ref())?;
+
+        crate::config::validation::validate_system(config, &system)?;
+        let checkpoint = config
+            .run
+            .restore_file
             .as_ref()
-            .map(|f| f.to_reduced_length(1.0))
-            .unwrap_or(1.0);
-        let mut system = build_system(&config.structure, base_dir, to_reduced_length)?;
+            .map(|file| crate::io::restart::load(base_dir.join(file)))
+            .transpose()?;
+        if checkpoint.as_ref().is_some_and(|cp| cp.atoms != system.n()) {
+            return Err(ModenaError::Config(
+                "restart atom count differs from the structure".into(),
+            ));
+        }
 
-        // Restart/restore: a `restore_file` checkpoint overwrites the box,
-        // positions, and velocities (all reduced units, consumed as-is) and
-        // skips the random velocity draw. Species/masses/charges still come
-        // from the structure config — only the same-atom-count state travels
-        // through the file.
-        let restored_step = match &config.run.restore_file {
-            Some(f) => {
-                let path = base_dir.join(f);
-                let cp = crate::io::restart::load(&path)?;
-                if cp.atoms != system.n() {
-                    return Err(ModenaError::Config(format!(
-                        "restart file `{}` carries {} atoms, but the structure \
-                         builds {} — a restore must use the same structure \
-                         (atom-for-atom)",
-                        path.display(),
-                        cp.atoms,
-                        system.n()
-                    )));
-                }
-                system.positions = cp.positions;
-                system.velocities = cp.velocities;
-                system.box_size = cp.box_size;
-                cp.step
-            }
-            None => {
-                init_velocities(&mut system, config.run.initial_temperature, config.run.seed);
-                0
-            }
-        };
-
-        let (pair_model, cutoff) = build_model(&config.model, base_dir)?;
+        let (pair_model, _) = build_model(&config.model, base_dir)?;
         // Species-range validation: a multi-species structure (rocksalt sets
         // species {0,1}; random_alloy whatever it was asked for) fed to a
         // single-type model would panic with "index out of bounds" inside the
@@ -165,26 +188,12 @@ impl Simulation {
                 )));
             }
         }
-        // Bonded exclusions: with `[topology] exclude_bonded = true`, the pair
-        // model never sees the topology's covalent neighbors (the 1-2, 1-3,
-        // and 1-4 pairs of a protein force field). The bonded model still
-        // evaluates those pairs — exclusion only gates the *pair* LJ sum —
-        // while the electrostatics models cancel the excluded charged pairs'
-        // mesh part via the erf correction.
-        let mut exclusions: Vec<(u32, u32)> = Vec::new();
-        if let Some(topo_spec) = &config.topology {
-            if topo_spec.exclude_bonded {
-                for b in &topo_spec.bonds {
-                    exclusions.push((b.atoms[0] as u32, b.atoms[1] as u32));
-                }
-                for a in &topo_spec.angles {
-                    exclusions.push((a.atoms[0] as u32, a.atoms[2] as u32));
-                }
-                for d in &topo_spec.dihedrals {
-                    exclusions.push((d.atoms[0] as u32, d.atoms[3] as u32));
-                }
-            }
-        }
+        let mut scales = config
+            .topology
+            .as_ref()
+            .map(|t| crate::config::topology_pair_scales(t, system.n()))
+            .transpose()?
+            .unwrap_or_default();
         // Rigid water: the structure implies its constraints (exact
         // per-molecule projection) and its intramolecular exclusions.
         let mut water_constraints: Option<Constraints> = None;
@@ -195,6 +204,22 @@ impl Simulation {
             ..
         } = &config.structure
         {
+            let pair_key = |i: usize, j: usize| (i.min(j), i.max(j));
+            let mut policy: std::collections::BTreeMap<_, _> = scales
+                .iter()
+                .copied()
+                .map(|p| (pair_key(p.i, p.j), p))
+                .collect();
+            let explicit: std::collections::HashMap<_, _> = config
+                .topology
+                .as_ref()
+                .map(|t| {
+                    t.exceptions
+                        .iter()
+                        .map(|e| (pair_key(e.atoms[0], e.atoms[1]), (e.lj, e.coulomb)))
+                        .collect()
+                })
+                .unwrap_or_default();
             let d_hh = 2.0 * d_oh * (hoh_angle.to_radians() * 0.5).sin();
             let mut waters = Vec::with_capacity(*n_waters as usize);
             for w in 0..*n_waters as usize {
@@ -204,22 +229,36 @@ impl Simulation {
                     d_oh: *d_oh,
                     d_hh,
                 });
-                exclusions.push((first as u32, (first + 1) as u32));
-                exclusions.push((first as u32, (first + 2) as u32));
-                exclusions.push(((first + 1) as u32, (first + 2) as u32));
+                for (i, j) in [
+                    (first, first + 1),
+                    (first, first + 2),
+                    (first + 1, first + 2),
+                ] {
+                    // Rigid water's physical intramolecular policy is mandatory.
+                    if explicit
+                        .get(&pair_key(i, j))
+                        .is_some_and(|&(lj, coulomb)| lj != 0.0 || coulomb != 0.0)
+                    {
+                        return Err(ModenaError::Config("explicit water intramolecular exceptions must preserve zero LJ/Coulomb exclusions".into()));
+                    }
+                    policy.insert(
+                        pair_key(i, j),
+                        PairScale {
+                            i,
+                            j,
+                            lj: 0.0,
+                            coulomb: 0.0,
+                        },
+                    );
+                }
             }
+            scales = policy.into_values().collect();
             water_constraints = Some(Constraints {
                 bonds: Vec::new(),
                 waters,
             });
         }
-        let ewald = build_electrostatics(&config.electrostatics, &exclusions)?;
-        // The shared neighbor list must cover the largest cutoff any sub-model
-        // uses — the pair cutoff or the Ewald real-space cutoff.
-        let neighbor_cutoff = match &ewald {
-            Some(e) => cutoff.max(e.real_cutoff()),
-            None => cutoff,
-        };
+        let ewald = build_electrostatics(&config.electrostatics)?;
         // Wrap in a composite only when there is something to compose (bonded
         // topology or Ewald); otherwise the bare pair model stands alone.
         let model: Box<dyn ForceModel> = match (&config.topology, &ewald) {
@@ -237,6 +276,9 @@ impl Simulation {
                 Box::new(comp)
             }
         };
+        let neighbor_cutoff = model.neighbor_cutoff().ok_or_else(|| {
+            ModenaError::Config("force model must provide its physical neighbor cutoff".into())
+        })?;
         // Verlet skin (config.run.neighbor_skin, default 0.3): the list is
         // rebuilt only when an atom moves > skin/2 since the last build. Each
         // sub-model still gates pairs by its own cutoff, so a list built at
@@ -245,21 +287,130 @@ impl Simulation {
         if !(skin >= 0.0) {
             return Err(ModenaError::Config("run.neighbor_skin must be >= 0".into()));
         }
-        let mut neighbors = NeighborList::with_skin_exclusions(neighbor_cutoff, skin, &exclusions);
+        let mut neighbors = NeighborList::with_pair_scales(neighbor_cutoff, skin, &scales)?;
+        neighbors.validate_pair_scales(system.n())?;
         let mut constraints = config.constraints.as_ref().map(build_constraints);
         match (&mut constraints, water_constraints) {
             (Some(c), Some(wc)) => c.waters.extend(wc.waters),
             (None, Some(wc)) => constraints = Some(wc),
             _ => {}
         }
-        let integrator = build_integrator(&config.integrator, constraints);
-        let thermostat = build_thermostat(&config.thermostat, &config.integrator);
-        let barostat = build_barostat(&config.barostat);
+        if let Some(c) = &constraints {
+            validate_constraint_pairs(c)?;
+        }
+        let physical_signature = physical_signature(config, &system, base_dir)?;
+        let count = constraints.as_ref().map_or(0, Constraints::count);
+        system.set_constraint_count(count)?;
+        let com_eligible = !matches!(config.integrator, IntegratorSpec::LangevinBaoab { .. })
+            && model.conserves_total_momentum(&system);
+        system.set_conserved_com_dof(if com_eligible && system.n() > 1 { 3 } else { 0 })?;
+        let restored_step = if let Some(cp) = &checkpoint {
+            system.positions = cp.positions.clone();
+            system.velocities = cp.velocities.clone();
+            system.box_size = cp.box_size;
+            // Only a momentum-conserving model/controller may restore COM3.
+            // Unsupported saved reductions remain COM0 and fail the full
+            // identity check below. State-only assesses the new masses/model.
+            if com_eligible {
+                let com = match (&config.run.restart_mode, &cp.continuation) {
+                    (RestartMode::Continue, Some(state)) => state.conserved_com_dof,
+                    _ => conserved_zero_com_dof(&system),
+                };
+                system.set_conserved_com_dof(com)?;
+            }
+            if let Some(c) = &constraints {
+                c.validate(&system)?;
+            }
+            cp.step
+        } else {
+            if let Some(c) = &constraints {
+                c.validate(&system)?;
+                c.settle(&mut system, 1e-10)?;
+                let reference = system.positions.clone();
+                c.shake(&mut system, &reference, 1e-10, 1000)?;
+            }
+            let remove_com = system.conserved_com_dof() != 0;
+            draw_velocities(
+                &mut system,
+                config.run.initial_temperature,
+                config.run.seed,
+                remove_com,
+            );
+            crate::config::validation::validate_system(config, &system)?;
+            if let Some(c) = &constraints {
+                c.rattle(&mut system, 1e-10, 1000)?;
+            }
+            rescale_temperature(&mut system, config.run.initial_temperature);
+            0
+        };
+        if matches!(config.thermostat,Some(ThermostatSpec::VelocityRescaling{target_temperature,..}) if target_temperature>0.0)
+            && system.kinetic_energy() == 0.0
+        {
+            return Err(ModenaError::Config(
+                "positive-temperature CSVR cannot heat zero kinetic energy".into(),
+            ));
+        }
+        crate::config::validation::validate_system(config, &system)?;
+        let mut integrator = build_integrator(&config.integrator, constraints.clone());
+        let mut thermostat = build_thermostat(&config.thermostat, &config.integrator);
+        let mut barostat = build_barostat(&config.barostat)?;
 
         // Initial force evaluation so F(t) is cached for the first integrator
         // half-kick.
         let mut virial = Virial::default();
-        let pe = model.compute(&mut system, &mut virial, &mut neighbors)?;
+        let mut pe = model.compute(&mut system, &mut virial, &mut neighbors)?;
+        if let Some(cp) = &checkpoint {
+            match config.run.restart_mode {
+                RestartMode::Continue => {
+                    let state=cp.continuation.as_ref().ok_or_else(||ModenaError::Config(
+                        "legacy/mechanical checkpoint requires explicit restart_mode = \"state_only\"; full continuation state is absent".into()))?;
+                    if state.physical_signature != physical_signature
+                        || state.masses != system.masses
+                        || state.species != system.species
+                        || state.charges != system.charges
+                        || state.elements != system.elements
+                        || state.constraint_count != system.constraint_count()
+                        || state.conserved_com_dof != system.conserved_com_dof()
+                    {
+                        return Err(ModenaError::Config("restart physical identity differs (model, dt, ensemble, seeds, topology, constraints or atoms); use restart_mode = \"state_only\" for an intentional new protocol".into()));
+                    }
+                    integrator.restore_state(&state.integrator)?;
+                    thermostat.restore_state(&state.thermostat)?;
+                    barostat.restore_state(&state.barostat)?;
+                    system.forces = state.forces.clone();
+                    pe = state.potential_energy;
+                    virial.w = state.virial;
+                }
+                RestartMode::StateOnly => {
+                    // State-only intentionally resets extended/RNG state; impose
+                    // the new protocol's constraint manifold before force caching.
+                    if let Some(c) = &constraints {
+                        c.settle(&mut system, 1e-10)?;
+                        let reference = system.positions.clone();
+                        c.shake(&mut system, &reference, 1e-10, 1000)?;
+                        c.rattle(&mut system, 1e-10, 1000)?;
+                        system.zero_forces();
+                        virial = Virial::default();
+                        neighbors.force_rebuild(&system);
+                        pe = model.compute(&mut system, &mut virial, &mut neighbors)?;
+                    }
+                    if com_eligible {
+                        // Constraint projection can change the imported
+                        // velocities; classify their resulting COM manifold.
+                        system.set_conserved_com_dof(conserved_zero_com_dof(&system))?;
+                    }
+                }
+            }
+        }
+        if !pe.is_finite() || !virial.w.is_finite() || system.forces.iter().any(|x| !x.is_finite())
+        {
+            return Err(ModenaError::Physics(
+                "initial force evaluation produced nonfinite values".into(),
+            ));
+        }
+        restored_step
+            .checked_add(config.run.steps)
+            .ok_or_else(|| ModenaError::Config("run step counter overflow".into()))?;
 
         let dt = match &config.integrator {
             IntegratorSpec::VelocityVerlet { dt } => *dt,
@@ -267,10 +418,38 @@ impl Simulation {
             IntegratorSpec::NoseHooverChain { dt, .. } => *dt,
         };
 
-        let trajectory_writer = open_trajectory(&config.run, base_dir)?;
-        let log_writer = open_log(&config.run, base_dir)?;
+        let trajectory_writer = if outputs {
+            open_trajectory(&config.run, base_dir)?
+        } else {
+            None
+        };
+        let log_writer = if outputs {
+            open_log(&config.run, base_dir)?
+        } else {
+            None
+        };
 
+        let ensemble = match config.barostat {
+            Some(BarostatSpec::MonteCarlo { .. }) => Ensemble::CanonicalNpt,
+            Some(_) => Ensemble::EquilibrationNpt,
+            None => match config.integrator {
+                IntegratorSpec::LangevinBaoab { gamma, .. } if gamma > 0.0 => Ensemble::Nvt,
+                IntegratorSpec::NoseHooverChain { .. } => Ensemble::Nvt,
+                _ => {
+                    if config
+                        .thermostat
+                        .as_ref()
+                        .is_some_and(|t| !matches!(t, ThermostatSpec::None))
+                    {
+                        Ensemble::Nvt
+                    } else {
+                        Ensemble::Nve
+                    }
+                }
+            },
+        };
         Ok(Self {
+            ensemble,
             system,
             model,
             integrator,
@@ -281,7 +460,11 @@ impl Simulation {
             steps: config.run.steps,
             current_step: restored_step,
             restart_every: config.run.restart_every,
-            restart_path: config.run.restart_file.as_ref().map(|f| base_dir.join(f)),
+            restart_path: if outputs {
+                config.run.restart_file.as_ref().map(|f| base_dir.join(f))
+            } else {
+                None
+            },
             trajectory_every: config.run.trajectory_every,
             trajectory_writer,
             log_every: config.run.log_every,
@@ -289,7 +472,27 @@ impl Simulation {
             current_pe: pe,
             current_virial: virial,
             unit_factors: config.unit_factors,
+            physical_signature,
         })
+    }
+
+    pub fn metadata(&self) -> RunMetadata {
+        RunMetadata {
+            ensemble: self.ensemble,
+            kinetic_dof: self.system.dof(),
+            constraint_count: self.system.constraint_count(),
+            conserved_com_dof: self.system.conserved_com_dof(),
+            output_units: if self.unit_factors.is_some() {
+                UnitSystem::Real
+            } else {
+                UnitSystem::Reduced
+            },
+            pressure_status: if self.system.constraint_count() > 0 {
+                PressureStatus::DiagnosticWithoutConstraintImpulseStress
+            } else {
+                PressureStatus::UnconstrainedPairVirial
+            },
+        }
     }
 
     pub fn system(&self) -> &System {
@@ -302,8 +505,8 @@ impl Simulation {
         self.current_step
     }
 
-    /// Write a checkpoint of the current state — box, positions, velocities
-    /// (reduced units), and the global step — to `path`. Called by the run
+    /// Atomically write v2 mechanical, identity, DOF, cached force, RNG and
+    /// extended state (reduced units) to `path`. Called by the run
     /// loop every `restart_every` steps and at run end; public for tests and
     /// callers that drive stepping manually.
     pub fn write_checkpoint(&self, path: &Path) -> Result<()> {
@@ -316,6 +519,21 @@ impl Simulation {
                 box_size: self.system.box_size,
                 positions: self.system.positions.clone(),
                 velocities: self.system.velocities.clone(),
+                continuation: Some(crate::io::restart::ContinuationState {
+                    forces: self.system.forces.clone(),
+                    masses: self.system.masses.clone(),
+                    species: self.system.species.clone(),
+                    charges: self.system.charges.clone(),
+                    elements: self.system.elements.clone(),
+                    constraint_count: self.system.constraint_count(),
+                    conserved_com_dof: self.system.conserved_com_dof(),
+                    potential_energy: self.current_pe,
+                    virial: self.current_virial.w,
+                    physical_signature: self.physical_signature.clone(),
+                    integrator: self.integrator.checkpoint_state()?,
+                    thermostat: self.thermostat.checkpoint_state()?,
+                    barostat: self.barostat.checkpoint_state()?,
+                }),
             },
         )
     }
@@ -379,24 +597,23 @@ impl Simulation {
             // Langevin the thermostat is `None` and the integrator already
             // handled temperature control.
             self.thermostat.apply(&mut self.system, dt);
-            if !is_none_thermostat(&*self.thermostat) {
-                // Velocities changed → recompute kinetic observables.
-                e = Energies::from(&self.system, self.current_pe, &self.current_virial);
-            }
-
             // Pressure coupling: scales the box + positions. Only `NoneBarostat`
             // is a true no-op; any real barostat changes V (and thus the
             // pressure/KE observables), so recompute the thermo snapshot.
-            self.barostat
-                .apply(&mut self.system, &self.current_virial, dt);
-            if !is_none_barostat(&*self.barostat) {
-                e = Energies::from(&self.system, self.current_pe, &self.current_virial);
-            }
+            self.barostat.apply_with_model(
+                &mut self.system,
+                &*self.model,
+                &mut self.neighbors,
+                &mut self.current_pe,
+                &mut self.current_virial,
+                dt,
+            )?;
+            e = Energies::from(&self.system, self.current_pe, &self.current_virial);
             conservation.observe(e.total);
 
             let time_reduced = step as f64 * dt;
             let time = self.display_time(time_reduced);
-            if step % self.log_every == 0 {
+            if step.is_multiple_of(self.log_every) {
                 self.log_sample(step, time, &e)?;
                 on_event(&RunEvent::Thermo {
                     step,
@@ -404,7 +621,7 @@ impl Simulation {
                     energies: self.display_energies(&e),
                 });
             }
-            if step % self.trajectory_every == 0 {
+            if step.is_multiple_of(self.trajectory_every) {
                 self.frame(step, time, &e)?;
                 on_event(&RunEvent::Frame {
                     step,
@@ -415,7 +632,7 @@ impl Simulation {
             // Periodic checkpoint (crash recovery): every `restart_every`
             // global steps. The end-of-run write below covers the last step.
             if let Some(path) = self.restart_path.clone() {
-                if step % self.restart_every.max(1) == 0 {
+                if step.is_multiple_of(self.restart_every.max(1)) {
                     self.write_checkpoint(&path)?;
                 }
             }
@@ -440,6 +657,7 @@ impl Simulation {
             steps: executed,
             final_energies: self.display_energies(&e),
             conservation,
+            metadata: self.metadata(),
         };
         on_event(&RunEvent::Finished { summary });
         Ok(summary)
@@ -517,23 +735,12 @@ impl Simulation {
     }
 }
 
-fn is_none_thermostat(t: &dyn Thermostat) -> bool {
-    // `NoneThermostat` is the only no-op; we detect it by type name to avoid
-    // adding a `is_noop()` method to the trait. Cheap, called once per step.
-    let type_name = std::any::type_name_of_val(t);
-    type_name.contains("NoneThermostat")
-}
-
-fn is_none_barostat(b: &dyn Barostat) -> bool {
-    // `NoneBarostat` is the constant-volume no-op. (`MonteCarloBarostat::apply`
-    // is also a no-op by design, but it is never constructed by `build_barostat`
-    // — MC volume moves run through its own `attempt` API, not the runner.)
-    let type_name = std::any::type_name_of_val(b);
-    type_name.contains("NoneBarostat")
-}
-
-fn build_system(spec: &StructureSpec, base_dir: &Path, to_reduced_length: f64) -> Result<System> {
-    debug_assert!(to_reduced_length > 0.0);
+fn build_system(
+    spec: &StructureSpec,
+    base_dir: &Path,
+    factors: Option<&UnitFactors>,
+) -> Result<System> {
+    let to_reduced_length = factors.map(|f| f.to_reduced_length(1.0)).unwrap_or(1.0);
     match spec {
         StructureSpec::Fcc {
             lattice_constant,
@@ -563,7 +770,20 @@ fn build_system(spec: &StructureSpec, base_dir: &Path, to_reduced_length: f64) -
             charge,
         } => {
             let path = base_dir.join(file);
-            let mut sys = read_xyz(&path, SimBox::from_array(*box_size))?;
+            let (mut sys, typed) = read_xyz_with_identity(&path, SimBox::from_array(*box_size))?;
+            if typed {
+                if mass.is_some() || charge.is_some() {
+                    return Err(ModenaError::Config("typed XYZ carries per-atom mass/charge; global mass/charge overrides are only valid for plain XYZ (reference mass is 1 amu in real units)".into()));
+                }
+                if let Some(f) = factors {
+                    for m in &mut sys.masses {
+                        *m = f.to_reduced_mass(*m);
+                    }
+                    for q in &mut sys.charges {
+                        *q = f.to_reduced_charge(*q);
+                    }
+                }
+            }
             // Real units: `box_size`/masses/charges were converted to reduced
             // units by `convert_to_reduced`, but the *positions live in the
             // file* and were never converted — an Å-scale XYZ file under
@@ -656,11 +876,20 @@ fn build_system(spec: &StructureSpec, base_dir: &Path, to_reduced_length: f64) -
 }
 
 /// Initialize velocities from a seeded Maxwell–Boltzmann distribution at
-/// `temperature`, remove the center-of-mass drift, and rescale to the exact
+/// `temperature`, remove COM drift only when declared conserved, and rescale to the exact
 /// target temperature. Public so out-of-runner engines (the GPU-d ladder
 /// driver in `examples/gpu_ladder.rs`) reproduce deck initialization
-/// bit-for-bit at the same seed.
+/// bit-for-bit at the same seed and physical DOF. Manual callers must set
+/// constraint count and conserved COM DOF before calling (normally three
+/// conserved COM modes for multi-atom NVE). This helper preserves the caller's
+/// metadata; Simulation sets it from the controller and force model. Charged
+/// finite-mesh SPME and Langevin retain the full COM kinetic space.
 pub fn init_velocities(system: &mut System, temperature: f64, seed: u64) {
+    draw_velocities(system, temperature, seed, system.conserved_com_dof() != 0);
+    rescale_temperature(system, temperature);
+}
+
+fn draw_velocities(system: &mut System, temperature: f64, seed: u64, remove_com: bool) {
     let mut rng = StdRng::seed_from_u64(seed);
     let n = system.n();
     let normal = StandardNormal;
@@ -678,12 +907,17 @@ pub fn init_velocities(system: &mut System, temperature: f64, seed: u64) {
         total_m += m;
     }
     // Remove center-of-mass drift.
-    let v_com = p_com * (1.0 / total_m);
-    for i in 0..n {
-        let v = system.vel(i) - v_com;
-        system.set_vel(i, v);
+    if remove_com {
+        let v_com = p_com * (1.0 / total_m);
+        for i in 0..n {
+            let v = system.vel(i) - v_com;
+            system.set_vel(i, v);
+        }
     }
-    // Rescale to the exact target temperature (compensate for COM removal).
+}
+
+fn rescale_temperature(system: &mut System, temperature: f64) {
+    let n = system.n();
     let ke = system.kinetic_energy();
     let dof = system.dof() as f64;
     if ke > 0.0 && dof > 0.0 {
@@ -695,6 +929,77 @@ pub fn init_velocities(system: &mut System, temperature: f64, seed: u64) {
                 system.set_vel(i, v);
             }
         }
+    }
+}
+
+fn physical_signature(
+    config: &InputConfig,
+    system: &System,
+    base_dir: &Path,
+) -> Result<serde_json::Value> {
+    let mut model =
+        serde_json::to_value(&config.model).map_err(|e| ModenaError::Config(e.to_string()))?;
+    if let ModelSpec::Tabulated { file, .. } = &config.model {
+        model.as_object_mut().unwrap().remove("file");
+        model["table_contents"] = std::fs::read_to_string(base_dir.join(file))?.into();
+    }
+    let factors = config.unit_factors.map(|f| {
+        [
+            f.sigma,
+            f.epsilon,
+            f.mass_ref,
+            f.time,
+            f.temperature,
+            f.pressure,
+            f.charge,
+        ]
+    });
+    Ok(
+        serde_json::json!({"schema":"modena-physical-v2", "model":model, "integrator":config.integrator,
+        "thermostat":config.thermostat.as_ref().filter(|t|!matches!(t,ThermostatSpec::None)),
+        "barostat":config.barostat,"electrostatics":config.electrostatics,
+        "topology":config.topology,"constraints":config.constraints,
+        "water_geometry":match &config.structure {StructureSpec::Water{n_waters,d_oh,hoh_angle,..}=>Some((*n_waters,*d_oh,*hoh_angle)),_=>None},
+        "initialization_seed":config.run.seed,"initial_temperature":config.run.initial_temperature,
+        "masses":system.masses,"species":system.species,"charges":system.charges,"elements":system.elements,
+        "output_unit_factors":factors}),
+    )
+}
+
+/// Reject repeated generated or explicit distance pairs before counting DOF.
+/// General constraint-rank analysis remains out of scope.
+fn validate_constraint_pairs(constraints: &Constraints) -> Result<()> {
+    let mut pairs = HashSet::new();
+    let distances =
+        constraints
+            .bonds
+            .iter()
+            .map(|b| (b.i, b.j))
+            .chain(constraints.waters.iter().flat_map(|w| {
+                [
+                    (w.first, w.first + 1),
+                    (w.first, w.first + 2),
+                    (w.first + 1, w.first + 2),
+                ]
+            }));
+    for (i, j) in distances {
+        if !pairs.insert((i.min(j), i.max(j))) {
+            return Err(ModenaError::Config(format!(
+                "duplicate constraint pair ({i}, {j}) in explicit/generated distances; constraints must be independent"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn conserved_zero_com_dof(system: &System) -> usize {
+    let momentum_scale: f64 = (0..system.n())
+        .map(|i| system.mass(i) * system.vel(i).norm())
+        .sum();
+    if system.n() > 1 && system.total_momentum().norm() <= 64.0 * f64::EPSILON * momentum_scale {
+        3
+    } else {
+        0
     }
 }
 
@@ -996,25 +1301,20 @@ fn build_constraints(spec: &ConstraintsSpec) -> Constraints {
 /// Translate the TOML electrostatics spec into the selected long-range model
 /// (`method = "spme"` → mesh SPME; anything else → direct Ewald). `None` → no
 /// electrostatics (the model composes as a no-op).
-fn build_electrostatics(
-    spec: &Option<EwaldSpec>,
-    exclusions: &[(u32, u32)],
-) -> Result<Option<LongRangeForceModel>> {
-    let excluded: Vec<(usize, usize)> = exclusions
-        .iter()
-        .map(|&(i, j)| (i as usize, j as usize))
-        .collect();
+fn build_electrostatics(spec: &Option<EwaldSpec>) -> Result<Option<LongRangeForceModel>> {
     match spec {
         Some(e) => {
             let model = match e.method {
-                EwaldMethod::Ewald => LongRangeForceModel::Ewald(
-                    EwaldForceModel::new(e.kappa, e.real_cutoff, e.kspace_cutoff)?
-                        .with_excluded_pairs(excluded),
-                ),
-                EwaldMethod::Spme => LongRangeForceModel::Spme(
-                    SpmeForceModel::new(e.kappa, e.real_cutoff, e.kspace_cutoff)?
-                        .with_excluded_pairs(excluded),
-                ),
+                EwaldMethod::Ewald => LongRangeForceModel::Ewald(EwaldForceModel::new(
+                    e.kappa,
+                    e.real_cutoff,
+                    e.kspace_cutoff,
+                )?),
+                EwaldMethod::Spme => LongRangeForceModel::Spme(SpmeForceModel::new(
+                    e.kappa,
+                    e.real_cutoff,
+                    e.kspace_cutoff,
+                )?),
             };
             Ok(Some(model))
         }
@@ -1024,8 +1324,23 @@ fn build_electrostatics(
 
 /// Translate the TOML barostat spec into a `Barostat`. `None` → constant-volume
 /// (`NoneBarostat`), applied as a no-op each step.
-fn build_barostat(spec: &Option<BarostatSpec>) -> Box<dyn Barostat> {
-    match spec {
+fn build_barostat(spec: &Option<BarostatSpec>) -> Result<Box<dyn Barostat>> {
+    let result: Box<dyn Barostat> = match spec {
+        Some(BarostatSpec::MonteCarlo {
+            target_pressure,
+            target_temperature,
+            max_log_volume,
+            interval,
+            seed,
+        }) => Box::new(
+            MonteCarloBarostat::new(
+                *target_pressure,
+                *target_temperature,
+                *max_log_volume,
+                *seed,
+            )
+            .with_interval(*interval)?,
+        ),
         Some(BarostatSpec::Berendsen {
             target_pressure,
             tau,
@@ -1051,7 +1366,8 @@ fn build_barostat(spec: &Option<BarostatSpec>) -> Box<dyn Barostat> {
             Box::new(b)
         }
         None => Box::new(NoneBarostat),
-    }
+    };
+    Ok(result)
 }
 
 fn build_thermostat(

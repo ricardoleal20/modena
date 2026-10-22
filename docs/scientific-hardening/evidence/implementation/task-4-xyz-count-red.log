@@ -1,0 +1,22 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.26s
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-7ee693a39689dd33)
+
+running 1 test
+
+thread 'absurd_typed_atom_counts_are_errors_without_capacity_panics' (35676845) panicked at /rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452/library/alloc/src/raw_vec/mod.rs:28:5:
+capacity overflow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'absurd_typed_atom_counts_are_errors_without_capacity_panics' (35676845) panicked at crates/modena-core/tests/chemical_workflows.rs:371:5:
+invalid count panicked instead of returning input error
+test absurd_typed_atom_counts_are_errors_without_capacity_panics ... FAILED
+
+failures:
+
+failures:
+    absurd_typed_atom_counts_are_errors_without_capacity_panics
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p modena-core --test chemical_workflows`

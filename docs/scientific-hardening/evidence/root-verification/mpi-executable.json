@@ -1,0 +1,40 @@
+{
+  "cargo_artifact": {
+    "reason": "compiler-artifact",
+    "package_id": "path+file:///Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core#0.1.0",
+    "manifest_path": "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core/Cargo.toml",
+    "target": {
+      "kind": [
+        "test"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "mpi_decomp",
+      "src_path": "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core/tests/mpi_decomp.rs",
+      "edition": "2021",
+      "doc": false,
+      "doctest": false,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": 2,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": true
+    },
+    "features": [
+      "default",
+      "mpi"
+    ],
+    "filenames": [
+      "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/debug/deps/mpi_decomp-117dedd74a6b85f5"
+    ],
+    "executable": "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/debug/deps/mpi_decomp-117dedd74a6b85f5",
+    "fresh": false
+  },
+  "binary_sha256": "f79bb102c6c02cd3b161936f62e43a2d864b44f8278885486bf6a15a73db7dd6",
+  "ranks": 2,
+  "unique_tests": 1
+}

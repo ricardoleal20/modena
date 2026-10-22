@@ -1,0 +1,767 @@
+{
+  "passed": true,
+  "verified_source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "rust": {
+    "passed": 266,
+    "failed": 0,
+    "ignored": 1
+  },
+  "python": 10,
+  "tooling": 10,
+  "gpu": {
+    "passed": 7,
+    "adapter_available": true,
+    "skipped": 0
+  },
+  "mpi": {
+    "unique_tests": 1,
+    "ranks": 2,
+    "passed_per_rank": 1,
+    "skipped": 0
+  },
+  "numerical_observations": 67,
+  "original_probe_observations": 8,
+  "example_check_run_actions": 10,
+  "checks": [
+    {
+      "label": "workspace",
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "test",
+        "--workspace"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 184.02474400005303,
+      "created_utc": "2026-10-04T03:05:32.091784+00:00",
+      "rust_test_counts": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0
+        ],
+        [
+          80,
+          0,
+          0
+        ],
+        [
+          4,
+          0,
+          0
+        ],
+        [
+          6,
+          0,
+          0
+        ],
+        [
+          14,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0
+        ],
+        [
+          5,
+          0,
+          0
+        ],
+        [
+          5,
+          0,
+          0
+        ],
+        [
+          9,
+          0,
+          0
+        ],
+        [
+          4,
+          0,
+          0
+        ],
+        [
+          12,
+          0,
+          0
+        ],
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          11,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          17,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          6,
+          0,
+          0
+        ],
+        [
+          9,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0
+        ],
+        [
+          23,
+          0,
+          0
+        ],
+        [
+          9,
+          0,
+          0
+        ],
+        [
+          10,
+          0,
+          0
+        ],
+        [
+          4,
+          0,
+          0
+        ],
+        [
+          16,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          5,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0
+        ],
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          0
+        ]
+      ],
+      "stdout_file": "workspace.stdout",
+      "stderr_file": "workspace.stderr"
+    },
+    {
+      "label": "fmt",
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.18630691710859537,
+      "created_utc": "2026-10-04T03:02:53.550050+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "fmt.stdout",
+      "stderr_file": "fmt.stderr"
+    },
+    {
+      "label": "clippy-default",
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 2.064846167108044,
+      "created_utc": "2026-10-04T03:06:55.859038+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "clippy-default.stdout",
+      "stderr_file": "clippy-default.stderr"
+    },
+    {
+      "label": "clippy-gpu",
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--features",
+        "modena-core/gpu",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 3.010884416056797,
+      "created_utc": "2026-10-04T03:06:58.947054+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "clippy-gpu.stdout",
+      "stderr_file": "clippy-gpu.stderr"
+    },
+    {
+      "label": "clippy-mpi",
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--features",
+        "modena-core/mpi",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 2.4968555418308824,
+      "created_utc": "2026-10-04T03:07:01.523042+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "clippy-mpi.stdout",
+      "stderr_file": "clippy-mpi.stderr"
+    },
+    {
+      "label": "release",
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "build",
+        "--workspace",
+        "--release"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 23.836482292041183,
+      "created_utc": "2026-10-04T03:07:32.456699+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "release.stdout",
+      "stderr_file": "release.stderr"
+    },
+    {
+      "label": "scientific-build",
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "build",
+        "--release",
+        "-p",
+        "modena-core",
+        "--example",
+        "scientific_validation"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 18.11225491692312,
+      "created_utc": "2026-10-04T03:09:33.807851+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "scientific-build.stdout",
+      "stderr_file": "scientific-build.stderr"
+    },
+    {
+      "label": "bench-compile",
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "bench",
+        "-p",
+        "modena-bench",
+        "--no-run"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 23.152597000123933,
+      "created_utc": "2026-10-04T03:11:46.755275+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "bench-compile.stdout",
+      "stderr_file": "bench-compile.stderr"
+    },
+    {
+      "label": "python",
+      "command": [
+        "rtk",
+        "proxy",
+        "env",
+        "MODENA_BINARY=/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/release/modena",
+        "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "python/modena/tests",
+        "-v"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.49356579105369747,
+      "created_utc": "2026-10-04T03:09:16.187574+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "python.stdout",
+      "stderr_file": "python.stderr"
+    },
+    {
+      "label": "tooling",
+      "command": [
+        "rtk",
+        "proxy",
+        "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "bench/tests",
+        "-v"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 2.1916055001784116,
+      "created_utc": "2026-10-04T03:09:17.886233+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "tooling.stdout",
+      "stderr_file": "tooling.stderr"
+    },
+    {
+      "label": "numerical",
+      "command": [
+        "rtk",
+        "proxy",
+        "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+        "bench/validate.py",
+        "--output",
+        ".superpowers/sdd/2026-10-03-scientific-hardening/root-verification/scientific"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.6840550000779331,
+      "created_utc": "2026-10-04T03:11:24.288109+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "numerical.stdout",
+      "stderr_file": "numerical.stderr"
+    },
+    {
+      "label": "gpu-adapter",
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "test",
+        "-p",
+        "modena-core",
+        "--features",
+        "gpu",
+        "--test",
+        "gpu_pair",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 5.032556208083406,
+      "created_utc": "2026-10-04T03:12:39.367360+00:00",
+      "rust_test_counts": [
+        [
+          7,
+          0,
+          0
+        ]
+      ],
+      "stdout_file": "gpu-adapter.stdout",
+      "stderr_file": "gpu-adapter.stderr"
+    },
+    {
+      "label": "mpi-build",
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "test",
+        "-p",
+        "modena-core",
+        "--features",
+        "mpi",
+        "--test",
+        "mpi_decomp",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 9.02117562503554,
+      "created_utc": "2026-10-04T03:14:08.365622+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "mpi-build.stdout",
+      "stderr_file": "mpi-build.stderr"
+    },
+    {
+      "label": "mpi-2rank",
+      "command": [
+        "rtk",
+        "proxy",
+        "mpiexec",
+        "--oversubscribe",
+        "-n",
+        "2",
+        "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/debug/deps/mpi_decomp-117dedd74a6b85f5",
+        "--nocapture"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 3.722310750046745,
+      "created_utc": "2026-10-04T03:17:23.575749+00:00",
+      "rust_test_counts": [
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          1,
+          0,
+          0
+        ]
+      ],
+      "stdout_file": "mpi-2rank.stdout",
+      "stderr_file": "mpi-2rank.stderr"
+    },
+    {
+      "label": "original-probe-build",
+      "command": [
+        "rtk",
+        "proxy",
+        "rustc",
+        "--edition=2021",
+        "-O",
+        "-C",
+        "lto=thin",
+        "-C",
+        "codegen-units=1",
+        "docs/scientific-hardening/evidence/original-audit/probes.rs",
+        "--extern",
+        "modena_core=target/release/libmodena_core.rlib",
+        "-L",
+        "dependency=target/release/deps",
+        "-o",
+        ".superpowers/sdd/2026-10-03-scientific-hardening/root-verification/original-probes"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 9.147960958071053,
+      "created_utc": "2026-10-04T03:14:00.965979+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "original-probe-build.stdout",
+      "stderr_file": "original-probe-build.stderr"
+    },
+    {
+      "label": "original-probes",
+      "command": [
+        "rtk",
+        "proxy",
+        "env",
+        "RAYON_NUM_THREADS=1",
+        ".superpowers/sdd/2026-10-03-scientific-hardening/root-verification/original-probes"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.40526537504047155,
+      "created_utc": "2026-10-04T03:17:20.238972+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "original-probes.stdout",
+      "stderr_file": "original-probes.stderr"
+    },
+    {
+      "label": "example-molecular-nvt-check",
+      "command": [
+        "rtk",
+        "proxy",
+        "target/release/modena",
+        "check",
+        "-i",
+        "examples/chemical/molecular_nvt.toml"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.010618041967973113,
+      "created_utc": "2026-10-04T03:12:15.038590+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "example-molecular-nvt-check.stdout",
+      "stderr_file": "example-molecular-nvt-check.stderr"
+    },
+    {
+      "label": "example-molecular-nvt-run",
+      "command": [
+        "rtk",
+        "proxy",
+        "target/release/modena",
+        "run",
+        "-i",
+        "examples/chemical/molecular_nvt.toml"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.04528570803813636,
+      "created_utc": "2026-10-04T03:12:15.182416+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "example-molecular-nvt-run.stdout",
+      "stderr_file": "example-molecular-nvt-run.stderr"
+    },
+    {
+      "label": "example-continue-nvt-check",
+      "command": [
+        "rtk",
+        "proxy",
+        "target/release/modena",
+        "check",
+        "-i",
+        "examples/chemical/continue_nvt.toml"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.007596457842737436,
+      "created_utc": "2026-10-04T03:12:15.292076+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "example-continue-nvt-check.stdout",
+      "stderr_file": "example-continue-nvt-check.stderr"
+    },
+    {
+      "label": "example-continue-nvt-run",
+      "command": [
+        "rtk",
+        "proxy",
+        "target/release/modena",
+        "run",
+        "-i",
+        "examples/chemical/continue_nvt.toml"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.022593415807932615,
+      "created_utc": "2026-10-04T03:12:15.411144+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "example-continue-nvt-run.stdout",
+      "stderr_file": "example-continue-nvt-run.stderr"
+    },
+    {
+      "label": "example-ionic-spme-check",
+      "command": [
+        "rtk",
+        "proxy",
+        "target/release/modena",
+        "check",
+        "-i",
+        "examples/chemical/ionic_spme.toml"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.007202832959592342,
+      "created_utc": "2026-10-04T03:12:15.514479+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "example-ionic-spme-check.stdout",
+      "stderr_file": "example-ionic-spme-check.stderr"
+    },
+    {
+      "label": "example-ionic-spme-run",
+      "command": [
+        "rtk",
+        "proxy",
+        "target/release/modena",
+        "run",
+        "-i",
+        "examples/chemical/ionic_spme.toml"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.00802691699936986,
+      "created_utc": "2026-10-04T03:12:15.620097+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "example-ionic-spme-run.stdout",
+      "stderr_file": "example-ionic-spme-run.stderr"
+    },
+    {
+      "label": "example-mc-npt-check",
+      "command": [
+        "rtk",
+        "proxy",
+        "target/release/modena",
+        "check",
+        "-i",
+        "examples/chemical/mc_npt.toml"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.007352125132456422,
+      "created_utc": "2026-10-04T03:12:15.724199+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "example-mc-npt-check.stdout",
+      "stderr_file": "example-mc-npt-check.stderr"
+    },
+    {
+      "label": "example-mc-npt-run",
+      "command": [
+        "rtk",
+        "proxy",
+        "target/release/modena",
+        "run",
+        "-i",
+        "examples/chemical/mc_npt.toml"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.007302375044673681,
+      "created_utc": "2026-10-04T03:12:15.828777+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "example-mc-npt-run.stdout",
+      "stderr_file": "example-mc-npt-run.stderr"
+    },
+    {
+      "label": "example-water-nvt-check",
+      "command": [
+        "rtk",
+        "proxy",
+        "target/release/modena",
+        "check",
+        "-i",
+        "examples/chemical/water_nvt.toml"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.007810916053131223,
+      "created_utc": "2026-10-04T03:12:15.932616+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "example-water-nvt-check.stdout",
+      "stderr_file": "example-water-nvt-check.stderr"
+    },
+    {
+      "label": "example-water-nvt-run",
+      "command": [
+        "rtk",
+        "proxy",
+        "target/release/modena",
+        "run",
+        "-i",
+        "examples/chemical/water_nvt.toml"
+      ],
+      "returncode": 0,
+      "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+      "source_status": "",
+      "elapsed_seconds": 0.007526499917730689,
+      "created_utc": "2026-10-04T03:12:16.037345+00:00",
+      "rust_test_counts": [],
+      "stdout_file": "example-water-nvt-run.stdout",
+      "stderr_file": "example-water-nvt-run.stderr"
+    }
+  ],
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python_version": "3.12.14 (main, Aug 25 2026, 13:50:33) [Clang 22.1.3 ]",
+  "python_executable": "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "mpi_version": "mpiexec (Open MPI) 5.0.10\n\nReport bugs to https://www.open-mpi.org/community/help/",
+  "cpu": "Apple M3 Pro",
+  "binaries": {
+    "modena": "29126a7234925633a8574711a3143daf6d75d1235d8c3334ceae7acfff38299b",
+    "modena-mcp": "920699f073d1145688e800c3113ccb496ebbbf9a11ab036f1655045cbe453655",
+    "core_default_release": "02961aa7887afc856f1ff45a01a4f8e34545d8c98824f437099b846d4cb1a482",
+    "scientific_validation": "1150cafdb4803cbd605ba79896e12e29fce7126993383efd4d12c698a6aba656"
+  },
+  "archive_fixture_hashes_verified": 12
+}

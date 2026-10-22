@@ -1,0 +1,20 @@
+   Compiling modena-mcp v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running tests/final_integration.rs (target/debug/deps/final_integration-5c7b886115dc084c)
+
+running 2 tests
+test discovery_request_lists_every_production_pair_family_with_schema_parameters ... ok
+
+thread 'exact_tiny_alloy_completes_real_mcp_probe_and_async_lifecycle' (35971386) panicked at crates/modena-mcp/tests/final_integration.rs:38:5:
+assertion failed: call_tool("run_async", &json!({"config":invalid}), &mgr).is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test exact_tiny_alloy_completes_real_mcp_probe_and_async_lifecycle ... FAILED
+
+failures:
+
+failures:
+    exact_tiny_alloy_completes_real_mcp_probe_and_async_lifecycle
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p modena-mcp --test final_integration`

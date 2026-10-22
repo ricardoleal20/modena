@@ -1,0 +1,22 @@
+    Finished `bench` profile [optimized] target(s) in 0.04s
+     Running benches/integrator_step.rs (target/release/deps/integrator_step-f68fff6a8775547a)
+Gnuplot not found, using plotters backend
+Testing integrator_cached_neighbors/lj_N256/256
+Success
+Testing integrator_cached_neighbors/lj_N864/864
+Success
+Testing integrator_cached_neighbors/lj_N2048/2048
+Success
+Testing integrator_cached_neighbors/ionic_spme_N64/64
+Success
+Testing integrator_cached_neighbors/ionic_spme_N216/216
+Success
+Testing integrator_cached_neighbors/ionic_spme_N512/512
+Success
+Testing integrator_cached_neighbors/molecular_spme_N81/81
+Success
+Testing integrator_cached_neighbors/molecular_spme_N192/192
+Success
+Testing integrator_cached_neighbors/molecular_spme_N375/375
+Success
+

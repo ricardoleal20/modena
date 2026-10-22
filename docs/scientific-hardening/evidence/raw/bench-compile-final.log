@@ -1,0 +1,19 @@
+   Compiling serde v1.0.229
+   Compiling regex-syntax v0.8.11
+   Compiling clap_builder v4.6.6
+   Compiling toml_datetime v0.6.11
+   Compiling serde_spanned v0.6.9
+   Compiling tinytemplate v1.2.1
+   Compiling ciborium v0.2.2
+   Compiling toml_edit v0.22.27
+   Compiling regex-automata v0.4.18
+   Compiling clap v4.6.6
+   Compiling toml v0.8.23
+   Compiling regex v1.13.1
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+   Compiling criterion v0.5.1
+   Compiling modena-bench v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-bench)
+    Finished `bench` profile [optimized] target(s) in 24.81s
+  Executable benches/force_kernel.rs (target/release/deps/force_kernel-ffcb3e9650229448)
+  Executable benches/integrator_step.rs (target/release/deps/integrator_step-f68fff6a8775547a)
+  Executable benches/neighbor_build.rs (target/release/deps/neighbor_build-f981fab5e76530c4)

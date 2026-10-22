@@ -1,0 +1,36 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-7ee693a39689dd33)
+
+running 4 tests
+
+thread 'malformed_typed_xyz_and_unknown_type_are_rejected' (35628761) panicked at crates/modena-core/tests/chemical_workflows.rs:46:2:
+accepted Na 2 4 6 0 -23 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'typed_real_xyz_preserves_heterogeneous_identity_and_converts_once' (35628762) panicked at crates/modena-core/tests/chemical_workflows.rs:35:2:
+assertion `left == right` failed
+  left: [0, 0]
+ right: [0, 1]
+test malformed_typed_xyz_and_unknown_type_are_rejected ... FAILED
+test typed_real_xyz_preserves_heterogeneous_identity_and_converts_once ... FAILED
+
+thread 'graph_shortest_distances_and_explicit_precedence_scale_lj_and_coulomb_once' (35628759) panicked at crates/modena-core/tests/chemical_workflows.rs:77:2:
+graph scale config rejected: Some(Toml(TomlError { message: "unknown field `lj_scales`, expected one of `bonds`, `angles`, `exclude_bonded`, `dihedrals`", raw: Some("units = \"reduced\"\n[structure]\ntype=\"xyz\"\nfile=\"atoms.xyz\"\nbox_size=[24.0,24.0,24.0]\n[model]\ntype=\"lennard_jones\"\ncutoff=8.0\n[[model.types]]\nsigma=2.0\nepsilon=0.5\n[[model.types]]\nsigma=2.0\nepsilon=0.5\n[integrator]\ntype=\"velocity_verlet\"\ndt=0.00001\n[run]\nsteps=1\ninitial_temperature=0.0\n[electrostatics]\nmethod=\"ewald\"\nkappa=0.4\nreal_cutoff=4.0\nkspace_cutoff=2.0\n[topology]\nlj_scales=[0.0,0.2,0.5]\ncoulomb_scales=[0.1,0.4,0.8]\n[[topology.bonds]]\natoms=[0,1]\nr0=3.0\nk=0.0\n[[topology.bonds]]\natoms=[1,2]\nr0=3.0\nk=0.0\n[[topology.bonds]]\natoms=[2,3]\nr0=3.0\nk=0.0\n[[topology.exceptions]]\natoms=[3,0]\nlj=0.7\ncoulomb=0.6\n"), keys: ["topology"], span: Some(372..381) }))
+test graph_shortest_distances_and_explicit_precedence_scale_lj_and_coulomb_once ... FAILED
+
+thread 'legacy_exclude_bonded_uses_graph_even_without_angles' (35628760) panicked at crates/modena-core/tests/chemical_workflows.rs:98:2:
+nonbonded graph neighbors remain -0.0030389891685551835
+test legacy_exclude_bonded_uses_graph_even_without_angles ... FAILED
+
+failures:
+
+failures:
+    graph_shortest_distances_and_explicit_precedence_scale_lj_and_coulomb_once
+    legacy_exclude_bonded_uses_graph_even_without_angles
+    malformed_typed_xyz_and_unknown_type_are_rejected
+    typed_real_xyz_preserves_heterogeneous_identity_and_converts_once
+
+test result: FAILED. 0 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `-p modena-core --test chemical_workflows`

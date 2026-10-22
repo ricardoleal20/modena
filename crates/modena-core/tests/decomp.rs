@@ -227,6 +227,8 @@ fn decomposed_nve_energy_conservation() {
             sys.set_pos(i, x);
         }
         sys.wrap_positions();
+        sys.zero_forces();
+        vir.w = 0.0;
         let pe = model.compute(&mut sys, &mut vir, &mut nl).unwrap();
         for i in 0..sys.n() {
             let m = sys.mass(i);

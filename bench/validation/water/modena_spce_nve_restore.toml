@@ -47,6 +47,7 @@ initial_temperature = 298.15
 seed = 87287
 log_file = "results/modena_spce_nve_thermo.csv"
 log_every = 50
+restart_mode = "state_only"
 restore_file = "results/modena_spce_nvt.chk"
 restart_file = "results/modena_spce_nve.chk"
 restart_every = 500

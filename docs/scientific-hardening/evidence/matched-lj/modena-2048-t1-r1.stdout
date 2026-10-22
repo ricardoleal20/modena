@@ -1,0 +1,7 @@
+MODENA: loading /Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/scientific-hardening-matched/modena-2048-t1-r1.toml
+MODENA: finished 1000 steps in 2.614s
+  final  KE = 1657.149663   PE = -10246.225131   E_total = -8589.075468
+  final  T = 0.539700   P = -1.160112   W = -11757.530023
+  thermo units = Reduced (real: kcal/mol, K, atm; reduced: engine units)
+  conservation  drift = 1.919e-5  (Healthy)
+  perf   2613.62 µs/step  (383 steps/s)

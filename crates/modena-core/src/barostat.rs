@@ -7,18 +7,21 @@
 //! fractional coordinates are preserved and the density moves toward the target
 //! pressure.
 //!
-//! M5 ships two barostats:
-//! - [`BerendsenBarostat`] — weak-coupling (Berendsen et al., 1984). Deterministic,
-//!   robust, drives P → P0; does not sample the exact NPT ensemble (use it for
-//!   equilibration).
-//! - [`ParrinelloRahman`] — the proper equation-of-motion barostat (Parrinello &
-//!   Rahman, 1981) with an explicit piston degree of freedom integrated across
-//!   steps. Samples the NPT ensemble.
-//!
-//! Both support isotropic and anisotropic (per-axis, orthorhombic) coupling.
+//! Canonical isotropic NPT uses [`MonteCarloBarostat`] with a canonical
+//! temperature controller. [`BerendsenBarostat`] is equilibration only. The
+//! direct legacy [`ParrinelloRahman`] and scalar anisotropic APIs remain
+//! experimental; production configuration rejects them. Constrained box
+//! rescaling is unsupported until the required coupling and stress exist.
 
-use rand::rngs::StdRng;
-use rand::SeedableRng;
+use crate::error::{ModenaError, Result};
+use crate::force_model::ForceModel;
+use crate::neighbor::NeighborList;
+use crate::thermostat::{
+    checkpoint_rng, restore_rng, restore_stateless, state_error, validate_state_parameters,
+};
+use chacha20::ChaCha12Rng;
+use rand::{RngExt, SeedableRng};
+use serde_json::{json, Value};
 
 use crate::force_model::Virial;
 use crate::system::System;
@@ -26,6 +29,39 @@ use crate::system::System;
 /// Pressure coupling. Applied once per step; scales the box and all positions.
 pub trait Barostat: Send {
     fn apply(&mut self, system: &mut System, virial: &Virial, dt: f64);
+    /// Apply coupling and refresh all mechanical caches after a box move.
+    /// Returns true when a volume move was accepted/applied.
+    fn apply_with_model(
+        &mut self,
+        system: &mut System,
+        model: &dyn ForceModel,
+        neighbors: &mut NeighborList,
+        pe: &mut f64,
+        virial: &mut Virial,
+        dt: f64,
+    ) -> Result<bool> {
+        let old_box = system.box_size;
+        self.apply(system, virial, dt);
+        if old_box == system.box_size {
+            return Ok(false);
+        }
+        if !system.box_size.volume().is_finite() || system.box_size.volume() <= 0.0 {
+            return Err(ModenaError::Physics(
+                "barostat produced invalid volume".into(),
+            ));
+        }
+        neighbors.force_rebuild(system);
+        system.zero_forces();
+        *virial = Virial::default();
+        *pe = model.compute(system, virial, neighbors)?;
+        Ok(true)
+    }
+    fn checkpoint_state(&self) -> Result<Value> {
+        Ok(Value::Null)
+    }
+    fn restore_state(&mut self, state: &Value) -> Result<()> {
+        restore_stateless(state)
+    }
 }
 
 /// No pressure coupling — NVE/NVT (constant volume).
@@ -83,6 +119,19 @@ impl BerendsenBarostat {
 }
 
 impl Barostat for BerendsenBarostat {
+    fn checkpoint_state(&self) -> Result<Value> {
+        Ok(
+            json!({"kind":"berendsen", "target_pressure":self.target_pressure, "tau":self.tau,
+            "compressibility":self.compressibility, "anisotropic":self.anisotropic}),
+        )
+    }
+    fn restore_state(&mut self, state: &Value) -> Result<()> {
+        if state == &self.checkpoint_state()? {
+            Ok(())
+        } else {
+            Err(state_error("Berendsen barostat parameters differ"))
+        }
+    }
     fn apply(&mut self, system: &mut System, virial: &Virial, dt: f64) {
         if self.tau <= 0.0 {
             return;
@@ -120,7 +169,7 @@ impl Barostat for BerendsenBarostat {
 /// Parrinello–Rahman barostat (isotropic or anisotropic orthorhombic). Carries
 /// a piston degree of freedom per coupled axis, integrated with a symplectic
 /// kick-drift over each `apply`. The piston mass is tied to the coupling time
-/// constant: `W = dof · kT · τ²`. Samples the NPT ensemble.
+/// constant: `W = dof · kT · τ²`. Experimental legacy dynamics, not validated canonical NPT.
 pub struct ParrinelloRahman {
     pub target_pressure: f64,
     pub tau: f64,
@@ -153,6 +202,32 @@ impl ParrinelloRahman {
 }
 
 impl Barostat for ParrinelloRahman {
+    fn checkpoint_state(&self) -> Result<Value> {
+        Ok(
+            json!({"kind":"legacy_piston", "target_pressure":self.target_pressure, "tau":self.tau,
+            "temperature":self.temperature, "anisotropic":self.anisotropic, "piston_vel":self.piston_vel}),
+        )
+    }
+    fn restore_state(&mut self, state: &Value) -> Result<()> {
+        validate_state_parameters(
+            state,
+            &self.checkpoint_state()?,
+            &[
+                "kind",
+                "target_pressure",
+                "tau",
+                "temperature",
+                "anisotropic",
+            ],
+        )?;
+        let v: [f64; 3] = serde_json::from_value(state["piston_vel"].clone())
+            .map_err(|e| state_error(&e.to_string()))?;
+        if v.iter().any(|x| !x.is_finite()) {
+            return Err(state_error("nonfinite piston velocity"));
+        }
+        self.piston_vel = v;
+        Ok(())
+    }
     fn apply(&mut self, system: &mut System, virial: &Virial, dt: f64) {
         if self.tau <= 0.0 || self.temperature <= 0.0 {
             return;
@@ -238,89 +313,216 @@ impl Barostat for ParrinelloRahman {
     }
 }
 
-/// Monte Carlo volume barostat: one Metropolis volume move per step. Proposes a
-/// random isotropic volume change and accepts/rejects on the NPT criterion
-/// ΔH = β ΔU + N ln(V_new/V_old) + β P0 (V_new − V_old). Samples the exact
-/// isothermal–isobaric ensemble (unlike Berendsen). Requires a force model to
-/// recompute U after the move, so `apply_with_model` is used instead of `apply`.
+/// Canonical isotropic volume Metropolis moves with symmetric log-volume
+/// proposals. The proposal Jacobian adds one to the particle count in the
+/// acceptance exponent. This API supports unconstrained particles only.
 pub struct MonteCarloBarostat {
     pub target_pressure: f64,
-    pub beta: f64, // 1/(kT)
+    pub beta: f64,
     pub max_logv: f64,
-    rng: StdRng,
-    /// Accepted / attempted counts (diagnostic).
+    pub interval: usize,
+    rng: ChaCha12Rng,
     pub accepted: usize,
     pub attempted: usize,
+    elapsed_steps: usize,
 }
-
 impl MonteCarloBarostat {
     pub fn new(target_pressure: f64, temperature: f64, max_logv: f64, seed: u64) -> Self {
         Self {
             target_pressure,
             beta: 1.0 / temperature,
             max_logv,
-            rng: StdRng::seed_from_u64(seed),
+            interval: 1,
+            rng: ChaCha12Rng::seed_from_u64(seed),
             accepted: 0,
             attempted: 0,
+            elapsed_steps: 0,
         }
     }
-
-    /// Attempt one volume move. `pe` is the current potential energy; returns
-    /// the (possibly updated) PE. The caller passes the force model so U can be
-    /// recomputed for the trial configuration.
+    pub fn with_interval(mut self, interval: usize) -> Result<Self> {
+        self.interval = interval;
+        self.validate()?;
+        Ok(self)
+    }
+    fn validate(&self) -> Result<()> {
+        if [self.target_pressure, self.beta, self.max_logv]
+            .iter()
+            .any(|v| !v.is_finite() || *v <= 0.0)
+            || self.interval == 0
+        {
+            return Err(ModenaError::Config(
+                "MC barostat requires finite positive P, T, proposal width and interval".into(),
+            ));
+        }
+        Ok(())
+    }
+    fn propose(&mut self, system: &mut System) -> f64 {
+        let delta = self.rng.random_range(-self.max_logv..self.max_logv);
+        let mu = (delta / 3.0_f64).exp();
+        system.box_size.scale_uniform(mu);
+        for x in &mut system.positions {
+            *x *= mu;
+        }
+        delta
+    }
+    fn accepts(
+        &mut self,
+        n: usize,
+        old_v: f64,
+        new_v: f64,
+        old_pe: f64,
+        new_pe: f64,
+        delta: f64,
+    ) -> bool {
+        let log_accept = -self.beta * (new_pe - old_pe + self.target_pressure * (new_v - old_v))
+            + (n as f64 + 1.0) * delta;
+        let log_draw = self.rng.random::<f64>().ln();
+        log_accept.is_finite() && (log_accept >= 0.0 || log_draw < log_accept)
+    }
+    /// Compatibility energy callback. Restores the complete System on rejection.
+    /// Production callers use the fallible model hook to preserve neighbor/virial caches.
     pub fn attempt<F>(&mut self, system: &mut System, current_pe: f64, mut recompute_pe: F) -> f64
     where
         F: FnMut(&mut System) -> f64,
     {
-        use rand::RngExt;
-        let n = system.n() as f64;
-        let v_old = system.box_size.volume();
-        // Trial: V_new = V_old · exp(δ), δ ∈ [−max, max].
-        let delta: f64 = self.rng.random_range(-self.max_logv..self.max_logv);
-        let scale = delta.exp(); // V_new / V_old
-        let mu = scale.cbrt(); // linear scale
-
-        // Save state for rejection.
-        let old_size = system.box_size.size;
-        let old_positions = system.positions.clone();
-
-        // Apply trial.
-        system.box_size.scale_uniform(mu);
-        for x in system.positions.iter_mut() {
-            *x *= mu;
+        if self.validate().is_err() || system.constraint_count() != 0 {
+            return current_pe;
         }
-
-        let pe_new = recompute_pe(system);
-        let v_new = system.box_size.volume();
-
-        // NPT Metropolis: accept with prob min(1, exp(−β[ΔU + P0 ΔV] − N ln(V_new/V_old))).
-        let dh = self.beta * (pe_new - current_pe + self.target_pressure * (v_new - v_old))
-            + n * (v_new / v_old).ln();
-        let accept = dh <= 0.0 || {
-            let r: f64 = self.rng.random_range(0.0..1.0);
-            (-dh).exp() > r
-        };
-
+        let old = system.clone();
+        let delta = self.propose(system);
+        let pe = recompute_pe(system);
         self.attempted += 1;
-        if accept {
+        self.elapsed_steps += self.interval;
+        if pe.is_finite()
+            && self.accepts(
+                system.n(),
+                old.box_size.volume(),
+                system.box_size.volume(),
+                current_pe,
+                pe,
+                delta,
+            )
+        {
             self.accepted += 1;
-            pe_new
+            pe
         } else {
-            system.box_size.size = old_size;
-            system.positions = old_positions;
+            *system = old;
             current_pe
         }
     }
-
-    /// No-op default `apply` (MC needs the model; use [`Self::attempt`]).
-    fn _apply_marker(&self) {}
 }
-
-#[allow(unused_variables)]
 impl Barostat for MonteCarloBarostat {
-    fn apply(&mut self, system: &mut System, virial: &Virial, dt: f64) {
-        // MC volume moves are driven by `attempt` (needs the force model for ΔU).
-        // `apply` is a no-op so a `NoneBarostat`-style slot still type-checks.
+    fn apply(&mut self, _system: &mut System, _virial: &Virial, _dt: f64) {}
+    fn apply_with_model(
+        &mut self,
+        system: &mut System,
+        model: &dyn ForceModel,
+        neighbors: &mut NeighborList,
+        pe: &mut f64,
+        virial: &mut Virial,
+        _dt: f64,
+    ) -> Result<bool> {
+        self.validate()?;
+        if system.constraint_count() != 0 {
+            return Err(ModenaError::Config(
+                "MC box moves do not support constrained particles".into(),
+            ));
+        }
+        self.elapsed_steps = self
+            .elapsed_steps
+            .checked_add(1)
+            .ok_or_else(|| state_error("MC step count overflow"))?;
+        if !self.elapsed_steps.is_multiple_of(self.interval) {
+            return Ok(false);
+        }
+        let old = system.clone();
+        let old_pe = *pe;
+        let old_virial = *virial;
+        self.attempted = self
+            .attempted
+            .checked_add(1)
+            .ok_or_else(|| state_error("MC attempt count overflow"))?;
+        let delta = self.propose(system);
+        let trial = (|| -> Result<f64> {
+            if !system.box_size.volume().is_finite()
+                || system.box_size.volume() <= 0.0
+                || system.positions.iter().any(|x| !x.is_finite())
+            {
+                return Err(ModenaError::Physics(
+                    "MC proposal produced nonfinite geometry".into(),
+                ));
+            }
+            neighbors.force_rebuild(system);
+            system.zero_forces();
+            *virial = Virial::default();
+            let trial_pe = model.compute(system, virial, neighbors)?;
+            if !trial_pe.is_finite()
+                || !virial.w.is_finite()
+                || system.forces.iter().any(|x| !x.is_finite())
+            {
+                return Err(ModenaError::Physics(
+                    "MC trial produced nonfinite forces/energy".into(),
+                ));
+            }
+            Ok(trial_pe)
+        })();
+        let accepted = trial.as_ref().is_ok_and(|trial_pe| {
+            self.accepts(
+                system.n(),
+                old.box_size.volume(),
+                system.box_size.volume(),
+                old_pe,
+                *trial_pe,
+                delta,
+            )
+        });
+        if accepted {
+            self.accepted = self
+                .accepted
+                .checked_add(1)
+                .ok_or_else(|| state_error("MC acceptance count overflow"))?;
+            *pe = trial?;
+            Ok(true)
+        } else {
+            *system = old;
+            *pe = old_pe;
+            *virial = old_virial;
+            neighbors.force_rebuild(system);
+            trial.map(|_| false)
+        }
+    }
+    fn checkpoint_state(&self) -> Result<Value> {
+        self.validate()?;
+        Ok(
+            json!({"kind":"monte_carlo_logv", "target_pressure":self.target_pressure, "beta":self.beta,
+            "max_logv":self.max_logv,"interval":self.interval,"accepted":self.accepted,"attempted":self.attempted,
+            "elapsed_steps":self.elapsed_steps,"rng":checkpoint_rng(&self.rng)?}),
+        )
+    }
+    fn restore_state(&mut self, state: &Value) -> Result<()> {
+        validate_state_parameters(
+            state,
+            &self.checkpoint_state()?,
+            &["kind", "target_pressure", "beta", "max_logv", "interval"],
+        )?;
+        let number = |key: &str| -> Result<usize> {
+            state[key]
+                .as_u64()
+                .and_then(|x| usize::try_from(x).ok())
+                .ok_or_else(|| state_error("invalid MC counter"))
+        };
+        let accepted = number("accepted")?;
+        let attempted = number("attempted")?;
+        let elapsed = number("elapsed_steps")?;
+        if accepted > attempted || attempted != elapsed / self.interval {
+            return Err(state_error("inconsistent MC counters"));
+        }
+        let rng = restore_rng(&state["rng"], self.rng.get_seed())?;
+        self.rng = rng;
+        self.accepted = accepted;
+        self.attempted = attempted;
+        self.elapsed_steps = elapsed;
+        Ok(())
     }
 }
 

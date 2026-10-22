@@ -1,0 +1,20 @@
+{
+  "label": "tooling",
+  "command": [
+    "rtk",
+    "proxy",
+    "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "bench/tests",
+    "-v"
+  ],
+  "returncode": 0,
+  "elapsed_seconds": 2.1303297081030905,
+  "created_utc": "2026-10-04T02:26:03.737206+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "tooling.stdout",
+  "stderr_file": "tooling.stderr"
+}

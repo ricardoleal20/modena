@@ -1,0 +1,22 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.21s
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-7ee693a39689dd33)
+
+running 14 tests
+test real_coulomb_energy_and_force_are_reference_invariant ... ok
+test legacy_angle_and_dihedral_endpoint_exclusions_remain_compatible ... ok
+test absurd_typed_atom_counts_are_errors_without_capacity_panics ... ok
+test shortest_ring_path_wins_and_exception_conflicts_fail ... ok
+test rust_builder_real_typed_input_uses_shared_normalization ... ok
+test explicit_water_exceptions_must_be_compatible_with_mandatory_exclusions ... ok
+test typed_real_xyz_preserves_heterogeneous_identity_and_converts_once ... ok
+test typed_import_rejects_global_identity_overrides_and_invalid_declarations ... ok
+test legacy_exclude_bonded_uses_graph_even_without_angles ... ok
+test previous_real_charge_convention_checkpoint_cannot_continue_silently ... ok
+test typed_identity_and_graph_policy_participate_in_continuation ... ok
+test malformed_typed_xyz_and_unknown_type_are_rejected ... ok
+test real_runner_electrostatic_pair_energy_and_force_match_physical_bare_pair ... ok
+test graph_shortest_distances_and_explicit_precedence_scale_lj_and_coulomb_once ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+

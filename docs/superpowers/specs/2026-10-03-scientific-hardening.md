@@ -1,0 +1,11 @@
+# MODENA scientific hardening
+
+Implement the concrete priorities from the accepted MODENA/LAMMPS audit. The deliverable is a reproducible classical MD foundation for pair potentials, ions, and existing fixed-volume molecular models. It does not claim universal LAMMPS parity or implement new electronic-structure, reactive, many-body, resident GPU, or distributed production engines.
+
+Acceptance: canonical CSVR moments and constrained Langevin sampling; explicit physical DOF; failed constraints are errors; no stale forces after box moves or replica swaps; consistent tabulated derivatives and electrostatic strain virials; indexed exclusions and reusable SPME workspaces; restart continuation preserves stochastic and extended state and checks physical identity; typed molecular import and graph-based separately weighted LJ/Coulomb special pairs; strict input validation; useful Python/MCP access; reproducible failure-sensitive benchmark and validation tools, corrected scientific claims, and a documented supported-domain matrix.
+
+Isotropic Monte Carlo NPT for unconstrained systems provides the canonical pressure route with the log-volume proposal Jacobian. Berendsen remains equilibration only. The legacy piston is experimental and must not be silently sold as canonical NPT. Anisotropic scalar-virial coupling and constrained box rescaling must fail clearly until the required full stress/coupling algorithms exist. Fixed-volume constrained dynamics remain supported; report the limits of their pressure observables explicitly if constraint impulse virials are not validated.
+
+All defects receive a meaningful regression observed failing before production changes. Statistical validation uses independent analytical expectations, multiple fixed seeds where helpful, and explicit sampling tolerances. Benchmarks record actual steps, precision, threads, hardware, raw outputs, warmup, energy drift, failure status, and timing scope. No speedup claim without matched resources and Hamiltonians.
+
+Preserve existing research, audit data, and user files. Work in the attached isolated worktree. Commit changes in cohesive gitmoji + imperative Action commits, with no AI attribution. No PR or remote publication is requested.

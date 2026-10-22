@@ -1,0 +1,23 @@
+test_honors_cargo_target_dir_for_a_source_build (test_client.BinaryTests.test_honors_cargo_target_dir_for_a_source_build) ... ok
+test_missing_binary_explains_how_to_build_or_select_it (test_client.BinaryTests.test_missing_binary_explains_how_to_build_or_select_it) ... ok
+test_nonexecutable_build_artifact_is_not_selected (test_client.BinaryTests.test_nonexecutable_build_artifact_is_not_selected) ... ok
+test_cli_failure_is_reported_before_parsing_an_incomplete_log (test_client.TemporaryInputTests.test_cli_failure_is_reported_before_parsing_an_incomplete_log) ... ok
+test_serialization_failure_leaves_no_temporary_input (test_client.TemporaryInputTests.test_serialization_failure_leaves_no_temporary_input) ... ok
+test_species_tables_and_overrides_belong_to_the_model (test_config.ConfigTests.test_species_tables_and_overrides_belong_to_the_model) ... ok
+test_strings_round_trip_quotes_backslashes_controls_and_unicode (test_config.ConfigTests.test_strings_round_trip_quotes_backslashes_controls_and_unicode) ... ok
+test_python_transport_matches_a_handwritten_cli_input (test_parity.ParityTests.test_python_transport_matches_a_handwritten_cli_input) ... ok
+test_render_argon_style (test_parity.ParityTests.test_render_argon_style) ... ok
+test_run_nve_and_parse (test_parity.ParityTests.test_run_nve_and_parse) ... ok
+test_combined_real_water_and_electrostatic_topology (test_workflows.WorkflowTests.test_combined_real_water_and_electrostatic_topology) ... ok
+test_continuation_state_only_and_intentional_output_paths (test_workflows.WorkflowTests.test_continuation_state_only_and_intentional_output_paths) ... ok
+test_nested_dihedral_renderer_and_absolute_table_path (test_workflows.WorkflowTests.test_nested_dihedral_renderer_and_absolute_table_path) ... ok
+test_nonzero_subprocess_propagates (test_workflows.WorkflowTests.test_nonzero_subprocess_propagates) ... ok
+test_relative_source_paths_and_numeric_rows (test_workflows.WorkflowTests.test_relative_source_paths_and_numeric_rows) ... ok
+test_toml_del_and_non_ascii_keys_quote_correctly (test_workflows.WorkflowTests.test_toml_del_and_non_ascii_keys_quote_correctly) ... ok
+test_toml_quotes_and_nested_types (test_workflows.WorkflowTests.test_toml_quotes_and_nested_types) ... ok
+test_typed_surface (test_workflows.WorkflowTests.test_typed_surface) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.476s
+
+OK

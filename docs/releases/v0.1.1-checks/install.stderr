@@ -1,0 +1,21 @@
+  Installing modena-cli v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-cli)
+warning: default toolchain implicitly overridden with `stable-aarch64-apple-darwin` by rustup toolchain file
+  |
+  = help: use `cargo +stable install` if you meant to use the stable toolchain
+  = note: rustup selects the toolchain based on the parent environment and not the environment of the package being installed
+    Blocking waiting for file lock on build directory
+   Compiling libc v0.2.189
+   Compiling serde v1.0.229
+   Compiling serde_spanned v0.6.9
+   Compiling toml_datetime v0.6.11
+   Compiling toml_edit v0.22.27
+   Compiling getrandom v0.4.3
+   Compiling rand v0.10.2
+   Compiling rand_distr v0.6.0
+   Compiling toml v0.8.23
+   Compiling modena-core v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-core)
+   Compiling modena-cli v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-cli)
+    Finished `release` profile [optimized] target(s) in 2m 25s
+  Installing /private/tmp/modena-oss-install/bin/modena
+   Installed package `modena-cli v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-cli)` (executable `modena`)
+warning: be sure to add `/private/tmp/modena-oss-install/bin` to your PATH to be able to run the installed binaries

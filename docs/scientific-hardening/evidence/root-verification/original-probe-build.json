@@ -1,0 +1,29 @@
+{
+  "label": "original-probe-build",
+  "command": [
+    "rtk",
+    "proxy",
+    "rustc",
+    "--edition=2021",
+    "-O",
+    "-C",
+    "lto=thin",
+    "-C",
+    "codegen-units=1",
+    "docs/scientific-hardening/evidence/original-audit/probes.rs",
+    "--extern",
+    "modena_core=target/release/libmodena_core.rlib",
+    "-L",
+    "dependency=target/release/deps",
+    "-o",
+    ".superpowers/sdd/2026-10-03-scientific-hardening/root-verification/original-probes"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 9.147960958071053,
+  "created_utc": "2026-10-04T03:14:00.965979+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "original-probe-build.stdout",
+  "stderr_file": "original-probe-build.stderr"
+}

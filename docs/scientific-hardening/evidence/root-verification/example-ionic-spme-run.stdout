@@ -1,0 +1,7 @@
+MODENA: loading examples/chemical/ionic_spme.toml
+MODENA: finished 10 steps in 1.018ms
+  final  KE = 19.195380   PE = -6596.068128   E_total = -6576.872748
+  final  T = 100.619687   P = -102479.095653   W = -6389.327395
+  thermo units = Real (real: kcal/mol, K, atm; reduced: engine units)
+  energy exchanged  relative change = 1.800e-5
+  perf   101.84 µs/step  (9820 steps/s)

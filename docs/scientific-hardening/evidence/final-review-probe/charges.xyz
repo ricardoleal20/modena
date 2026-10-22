@@ -1,0 +1,5 @@
+3
+Properties=species:S:1:pos:R:3:type:I:1:mass:R:1:charge:R:1
+X 1.1 2.3 3.4 0 1 1
+X 2.7 3.2 3.8 0 1 -0.7
+X 6.2 5.8 7.0 0 1 -0.3

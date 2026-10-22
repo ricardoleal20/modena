@@ -10,9 +10,12 @@ use modena_core::{InputConfig, Simulation};
 
 /// Minimal tempdir (avoid pulling a dev-dependency just for this).
 fn tempdir() -> PathBuf {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let mut p = std::env::temp_dir();
     p.push(format!(
-        "modena_restart_{}",
+        "modena_restart_{}_{}_{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -302,7 +305,7 @@ restart_every = 500
     assert!(sim1.current_step() == 1000);
 
     // Phase 2: NVE restore + 500 steps (no thermostat block).
-    let nve = format!("{WATER}\nsteps = 500\nrestore_file = \"nvt.chk\"\nlog_file = \"nve.csv\"\n");
+    let nve = format!("{WATER}\nsteps = 500\nrestart_mode = \"state_only\"\nrestore_file = \"nvt.chk\"\nlog_file = \"nve.csv\"\n");
     let mut sim2 = sim_from_toml(&dir, &nve);
     assert_eq!(
         sim2.current_step(),

@@ -711,12 +711,25 @@ fn storage_entry(binding: u32, write_only: bool) -> wgpu::BindGroupLayoutEntry {
 }
 
 impl ForceModel for GpuPairForceModel {
+    fn neighbor_cutoff(&self) -> Option<f64> {
+        Some(self.params.cutoff as f64)
+    }
     fn compute(
         &self,
         system: &mut System,
         virial: &mut Virial,
         neighbors: &mut NeighborList,
     ) -> Result<f64> {
+        neighbors.validate_pair_scales(system.n())?;
+        if neighbors.pair_scales().iter().any(|p| {
+            if self.gather == GpuGather::CellList {
+                !(p.lj == 1.0 || (p.lj == 0.0 && p.coulomb == 0.0))
+            } else {
+                p.lj != 1.0
+            }
+        }) {
+            return Err(ModenaError::Config("GPU backend does not support fractional/independently excluded LJ pairs; cell-list gather supports binary 0/0 exclusions".into()));
+        }
         if system.box_size.is_triclinic() {
             return Err(ModenaError::Config(
                 "GPU pair kernel supports orthorhombic boxes only (triclinic given)".into(),

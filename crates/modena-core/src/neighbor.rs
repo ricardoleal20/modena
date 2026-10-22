@@ -1,5 +1,6 @@
 //! Cell-list neighbor search with a Verlet skin, for orthorhombic periodic
-//! boxes (triclinic routes through `SimBox::min_image` — M4 swaps the body).
+//! boxes; triclinic cells use guaranteed-correct all-pair enumeration with
+//! the lattice minimum image, since a Cartesian bounding stencil is unsafe.
 //!
 //! Builds a *half* neighbor list (each pair `(i, j)` with `i < j` stored once)
 //! and the force kernel applies Newton's third law, halving the pair work vs
@@ -27,17 +28,16 @@ pub struct NeighborList {
     pairs: Vec<(usize, usize)>,
     /// Reference positions at the last rebuild (for the skin displacement test).
     ref_positions: Vec<f64>,
-    /// Box lengths at the last rebuild. A barostat can rescale the box without
+    /// Full box at the last rebuild. A barostat can rescale the box without
     /// any atom moving: the grid dimensions were computed from the old box, and
     /// after a shrink `cell_size < list_cutoff` would silently miss pairs. A
     /// box change therefore forces a rebuild.
-    ref_box: [f64; 3],
+    ref_box: Option<crate::system::SimBox>,
     built: bool,
     /// Number of grid rebuilds performed (for tests + diagnostics).
     rebuild_count: usize,
-    /// Bonded exclusions: pairs that must never interact through this model
-    /// (1-2/1-3/1-4 in a protein force field).
-    exclusions: ExclSet,
+    /// Indexed independently weighted special pairs; 0/0 pairs are omitted.
+    exclusions: PairScaleSet,
     // Grid state (rebuilt as needed).
     dims: [usize; 3],
     cell_size: [f64; 3],
@@ -45,15 +45,84 @@ pub struct NeighborList {
     next: Vec<i32>, // linked list of atoms within a cell
 }
 
-/// Half-open pair-exclusion set via a sorted mini-scan (exclusion lists are
-/// short — 1-2/1-3/1-4 per residue — a `HashSet` costs more below ~10²).
-#[derive(Default, Clone)]
-struct ExclSet(Vec<(u32, u32)>);
+/// Independently weighted nonbonded pair. Missing pairs use (1, 1).
+/// Indices are normalized by constructors. Finite nonnegative weights are
+/// accepted (including amplification > 1); self pairs and conflicting duplicates
+/// are errors. Atom bounds are validated against the live System by providers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PairScale {
+    pub i: usize,
+    pub j: usize,
+    pub lj: f64,
+    pub coulomb: f64,
+}
 
-impl ExclSet {
-    fn contains(&self, i: u32, j: u32) -> bool {
-        let (a, b) = if i < j { (i, j) } else { (j, i) };
-        self.0.iter().any(|&(x, y)| x == a && y == b)
+/// Indexed normalized policy; an empty policy has no per-pair hashing cost.
+#[derive(Default, Clone)]
+pub(crate) struct PairScaleSet {
+    entries: Vec<PairScale>,
+    index: std::collections::HashMap<(usize, usize), usize>,
+}
+
+impl PairScaleSet {
+    pub(crate) fn new(scales: &[PairScale]) -> crate::error::Result<Self> {
+        use crate::error::ModenaError;
+        let mut set = Self::default();
+        for &scale in scales {
+            let (i, j) = if scale.i < scale.j {
+                (scale.i, scale.j)
+            } else {
+                (scale.j, scale.i)
+            };
+            if i == j
+                || !scale.lj.is_finite()
+                || !scale.coulomb.is_finite()
+                || scale.lj < 0.0
+                || scale.coulomb < 0.0
+            {
+                return Err(ModenaError::Config(
+                    "pair scales need distinct indices and finite nonnegative LJ/Coulomb weights"
+                        .into(),
+                ));
+            }
+            let scale = PairScale { i, j, ..scale };
+            if let Some(old) = set.get(i, j) {
+                if old != scale {
+                    return Err(ModenaError::Config(format!(
+                        "conflicting scales for pair ({i}, {j})"
+                    )));
+                }
+            } else {
+                set.index.insert((i, j), set.entries.len());
+                set.entries.push(scale);
+            }
+        }
+        Ok(set)
+    }
+    pub(crate) fn get(&self, i: usize, j: usize) -> Option<PairScale> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        let key = if i < j { (i, j) } else { (j, i) };
+        self.index.get(&key).map(|&idx| self.entries[idx])
+    }
+    pub(crate) fn scale(&self, i: usize, j: usize) -> (f64, f64) {
+        self.get(i, j).map_or((1.0, 1.0), |p| (p.lj, p.coulomb))
+    }
+    fn contains(&self, i: usize, j: usize) -> bool {
+        self.get(i, j)
+            .is_some_and(|p| p.lj == 0.0 && p.coulomb == 0.0)
+    }
+    pub(crate) fn entries(&self) -> &[PairScale] {
+        &self.entries
+    }
+    pub(crate) fn validate(&self, n: usize) -> crate::error::Result<()> {
+        if self.entries.iter().any(|p| p.j >= n) {
+            return Err(crate::error::ModenaError::Config(
+                "pair-scale index outside System atom range".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -73,23 +142,46 @@ impl NeighborList {
     /// the pair kernel must never see (`exclusions` are normalized to
     /// `(min, max)` internally).
     pub fn with_skin_exclusions(cutoff: f64, skin: f64, exclusions: &[(u32, u32)]) -> Self {
-        assert!(cutoff > 0.0, "neighbor cutoff must be > 0");
-        assert!(skin >= 0.0, "skin must be >= 0");
+        let scales: Vec<PairScale> = exclusions
+            .iter()
+            .map(|&(i, j)| PairScale {
+                i: i as usize,
+                j: j as usize,
+                lj: 0.0,
+                coulomb: 0.0,
+            })
+            .collect();
+        Self::with_pair_scales(cutoff, skin, &scales)
+            .expect("invalid neighbor/exclusion parameters")
+    }
+
+    /// Construct a validated independent LJ/Coulomb policy. Only 0/0 pairs
+    /// are removed from the list, so one disabled interaction cannot hide the other.
+    pub fn with_pair_scales(
+        cutoff: f64,
+        skin: f64,
+        scales: &[PairScale],
+    ) -> crate::error::Result<Self> {
+        if !cutoff.is_finite()
+            || cutoff <= 0.0
+            || !skin.is_finite()
+            || skin < 0.0
+            || !(cutoff + skin).is_finite()
+        {
+            return Err(crate::error::ModenaError::Config(
+                "neighbor cutoff must be finite positive and skin finite nonnegative".into(),
+            ));
+        }
         let list_cutoff = cutoff + skin;
-        let excl = ExclSet(
-            exclusions
-                .iter()
-                .map(|&(i, j)| if i < j { (i, j) } else { (j, i) })
-                .collect(),
-        );
-        Self {
+        let excl = PairScaleSet::new(scales)?;
+        Ok(Self {
             cutoff,
             skin,
             list_cutoff,
             list_cutoff2: list_cutoff * list_cutoff,
             pairs: Vec::new(),
             ref_positions: Vec::new(),
-            ref_box: [0.0; 3],
+            ref_box: None,
             built: false,
             rebuild_count: 0,
             exclusions: excl,
@@ -97,12 +189,28 @@ impl NeighborList {
             cell_size: [cutoff; 3],
             head: Vec::new(),
             next: Vec::new(),
-        }
+        })
     }
 
     /// Phase-1-compatible constructor: no skin (rebuild every call).
     pub fn new(cutoff: f64) -> Self {
         Self::with_skin(cutoff, 0.0)
+    }
+
+    pub fn pair_scale(&self, i: usize, j: usize) -> (f64, f64) {
+        self.exclusions.scale(i, j)
+    }
+
+    pub(crate) fn scales(&self) -> &PairScaleSet {
+        &self.exclusions
+    }
+
+    pub fn pair_scales(&self) -> &[PairScale] {
+        self.exclusions.entries()
+    }
+
+    pub fn validate_pair_scales(&self, n: usize) -> crate::error::Result<()> {
+        self.exclusions.validate(n)
     }
 
     pub fn cutoff(&self) -> f64 {
@@ -131,6 +239,7 @@ impl NeighborList {
     pub fn build(&mut self, system: &System) {
         let n = system.n();
         if n == 0 {
+            self.built = false;
             self.pairs.clear();
             return;
         }
@@ -151,13 +260,7 @@ impl NeighborList {
     /// shrink `cell_size < list_cutoff` and the ±1 stencil silently misses
     /// pairs. A changed atom count would index `ref_positions` out of bounds.
     fn state_is_current(&self, system: &System) -> bool {
-        self.ref_positions.len() == 3 * system.n()
-            && self.ref_box
-                == [
-                    system.box_size.size.0[0],
-                    system.box_size.size.0[1],
-                    system.box_size.size.0[2],
-                ]
+        self.ref_positions.len() == 3 * system.n() && self.ref_box == Some(system.box_size)
     }
 
     /// Force a rebuild regardless of skin (used by tests and the initial build).
@@ -213,6 +316,9 @@ impl NeighborList {
         self.dims = dims;
         self.cell_size = cell_size;
 
+        // Triclinic cell faces need a geometry-safe search: Cartesian wrapped
+        // bins can miss partners in nonadjacent bounding-box cells. Enumerate
+        // all pairs for these cells. The orthorhombic path remains accelerated.
         // Small-box fast path (committee finding K): when every axis has ≤ 3
         // cells the ±1 stencil (with periodic wrap) covers the entire box, so
         // the binning buys nothing — it became a ~11× overscan of distance
@@ -221,14 +327,14 @@ impl NeighborList {
         // contiguous j>i double loop visits the same candidate set
         // (∏min(d,3)·N/… ≈ N²/2 here) with dense sequential access and no
         // per-cell indirection. Same pair set, same min-image predicate.
-        if dims.iter().all(|&d| d <= 3) {
+        if box_size.is_triclinic() || dims.iter().all(|&d| d <= 3) {
             let lc2 = self.list_cutoff2;
             self.pairs.clear();
             self.pairs.reserve(n * 27);
             for i in 0..n {
                 let ri = system.pos(i);
                 for j in (i + 1)..n {
-                    if self.exclusions.contains(i as u32, j as u32) {
+                    if self.exclusions.contains(i, j) {
                         continue;
                     }
                     let d = box_size.min_image(ri - system.pos(j));
@@ -239,7 +345,7 @@ impl NeighborList {
             }
             self.ref_positions.clear();
             self.ref_positions.extend_from_slice(system.positions_raw());
-            self.ref_box = [box_size.size.0[0], box_size.size.0[1], box_size.size.0[2]];
+            self.ref_box = Some(box_size);
             self.built = true;
             return;
         }
@@ -302,7 +408,7 @@ impl NeighborList {
         // Snapshot reference positions and box for the skin test.
         self.ref_positions.clear();
         self.ref_positions.extend_from_slice(system.positions_raw());
-        self.ref_box = [box_size.size.0[0], box_size.size.0[1], box_size.size.0[2]];
+        self.ref_box = Some(box_size);
         self.built = true;
     }
 
@@ -337,7 +443,7 @@ impl NeighborList {
                     while p >= 0 {
                         let j = p as usize;
                         // Half list: only store i < j, skipping exclusions.
-                        if j > i && !self.exclusions.contains(i as u32, j as u32) {
+                        if j > i && !self.exclusions.contains(i, j) {
                             let rj = system.pos(j);
                             let d = box_size.min_image(ri - rj);
                             if d.norm2() < lc2 {

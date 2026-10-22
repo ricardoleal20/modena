@@ -1,0 +1,101 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.33s
+     Running tests/final_integration.rs (target/debug/deps/final_integration-20f1df006aa846f7)
+
+running 12 tests
+
+thread 'tiny_alloy_populations_are_bounded_deterministic_and_exact' (35982352) panicked at crates/modena-core/src/lattice.rs:103:13:
+attempt to subtract with overflow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'public_velocity_initializer_respects_declared_com_manifold' (35982351) panicked at crates/modena-core/tests/final_integration.rs:183:9:
+assertion failed: (s.kinetic_energy() -
+                if n == 1 { 1.5 } else if com == 0 { 4.5 } else { 3.0 }).abs()
+    < 1e-12
+
+thread 'alloy_invalid_input_and_capacity_return_errors' (35982342) panicked at crates/modena-core/tests/final_integration.rs:324:9:
+assertion failed: random_alloy(3.0, [1, 1, 1], &mixture(&bad), 42).is_err()
+test tiny_alloy_populations_are_bounded_deterministic_and_exact ... FAILED
+test public_velocity_initializer_respects_declared_com_manifold ... FAILED
+test alloy_invalid_input_and_capacity_return_errors ... FAILED
+
+thread 'exact_review_alloy_constructs_and_runs_common_config' (35982349) panicked at crates/modena-core/src/lattice.rs:103:13:
+attempt to subtract with overflow
+test exact_review_alloy_constructs_and_runs_common_config ... FAILED
+
+thread 'constrained_charged_mesh_has_eight_modes_and_valid_tangent_velocities' (35982348) panicked at crates/modena-core/tests/final_integration.rs:144:9:
+assertion `left == right` failed
+  left: 3
+ right: 0
+test constrained_charged_mesh_has_eight_modes_and_valid_tangent_velocities ... FAILED
+
+thread 'charged_mesh_controllers_initialize_and_keep_full_kinetic_space' (35982343) panicked at crates/modena-core/tests/final_integration.rs:122:9:
+assertion `left == right` failed: 
+[structure]
+type="xyz"
+file="charges.xyz"
+box_size=[9.0,9.0,9.0]
+[model]
+type="lennard_jones"
+sigma=1.0
+epsilon=0.0
+cutoff=4.2
+[integrator]
+type="velocity_verlet"
+dt=0.001
+[electrostatics]
+method="spme"
+kappa=0.8
+real_cutoff=4.2
+kspace_cutoff=4.8
+[run]
+steps=10
+initial_temperature=1.0
+seed=51
+log_every=1
+
+  left: 3
+ right: 0
+
+thread 'charged_mesh_csvr_and_nhc_consume_the_full_nine_mode_target' (35982344) panicked at crates/modena-core/tests/final_integration.rs:358:9:
+assertion `left == right` failed: controller target is not nine modes; nhc=false
+  left: [-0.051114389759641436, -0.43827922125240454, 1.5032091832353645, -0.655397433122864, -0.31547664886817833, -0.15954093345823295, 0.706509652043427, 0.7537542569417027, -1.3436693328318907]
+ right: [-0.05127438168440033, -0.4396510685251537, 1.507914342226247, -0.6574488769002512, -0.31646411475608677, -0.16004030870543517, 0.7087210809506818, 0.7561135650529878, -1.347875119965615]
+
+thread 'charged_rigid_water_uses_six_modes_per_molecule_without_com_removal' (35982347) panicked at crates/modena-core/tests/final_integration.rs:398:5:
+assertion `left == right` failed
+  left: 9
+ right: 12
+test charged_rigid_water_uses_six_modes_per_molecule_without_com_removal ... FAILED
+test charged_mesh_controllers_initialize_and_keep_full_kinetic_space ... FAILED
+test charged_mesh_csvr_and_nhc_consume_the_full_nine_mode_target ... FAILED
+
+thread 'unsupported_mesh_com_checkpoint_is_rejected_and_state_only_reassesses_model' (35982353) panicked at crates/modena-core/tests/final_integration.rs:243:5:
+COM3 mesh checkpoint must fail closed
+test unsupported_mesh_com_checkpoint_is_rejected_and_state_only_reassesses_model ... FAILED
+test momentum_conserving_and_zero_charge_controls_keep_com_reduction ... ok
+test charged_mesh_net_force_is_common_translation_energy_derivative ... ok
+
+thread 'charged_mesh_split_continuation_preserves_full_space' (35982346) panicked at crates/modena-core/tests/final_integration.rs:222:9:
+assertion `left == right` failed
+  left: 6
+ right: 9
+test charged_mesh_split_continuation_preserves_full_space ... FAILED
+
+failures:
+
+failures:
+    alloy_invalid_input_and_capacity_return_errors
+    charged_mesh_controllers_initialize_and_keep_full_kinetic_space
+    charged_mesh_csvr_and_nhc_consume_the_full_nine_mode_target
+    charged_mesh_split_continuation_preserves_full_space
+    charged_rigid_water_uses_six_modes_per_molecule_without_com_removal
+    constrained_charged_mesh_has_eight_modes_and_valid_tangent_velocities
+    exact_review_alloy_constructs_and_runs_common_config
+    public_velocity_initializer_respects_declared_com_manifold
+    tiny_alloy_populations_are_bounded_deterministic_and_exact
+    unsupported_mesh_com_checkpoint_is_rejected_and_state_only_reassesses_model
+
+test result: FAILED. 2 passed; 10 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+error: test failed, to rerun pass `-p modena-core --test final_integration`

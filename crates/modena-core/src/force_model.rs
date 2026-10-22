@@ -11,10 +11,9 @@
 //! space own it internally (`&mut self` is not required because scratch can be
 //! thread-local or rebuilt per call).
 //!
-//! M7 contract: a single `PairForceModel` **overwrites** `system.forces` (it
-//! owns all forces). M3 introduces `CompositeForceModel`, at which point each
-//! model switches to **accumulating** (`add_force`) and the integrator zeroes
-//! forces + virial once before the composite pass.
+//! Every provider follows the accumulation contract: the driver zeroes force
+//! and virial once before a full pass, and pair/composite/backend models add
+//! their contributions. Empty systems do not erase previous contributions.
 
 use rayon::prelude::*;
 
@@ -24,7 +23,9 @@ use crate::potential::{LennardJones, PairPotential};
 use crate::system::System;
 use crate::vec3::Vec3;
 
-/// Symmetric pressure virial (scalar for Phase 1). `W = Σ_ij r_ij · F_ij`.
+/// Scalar isotropic strain virial. For real-space pair interactions,
+/// `W = Σ_ij r_ij · F_ij`; reciprocal/background terms include explicit cell
+/// dependence. Constraint impulse stress is not included.
 /// Pressure (reduced) = `(2 KE + W) / (3 V)`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Virial {
@@ -34,10 +35,22 @@ pub struct Virial {
 /// The force/energy provider. Implement this to plug in a new potential —
 /// analytical pair, many-body, bonded, or a learned ML surrogate.
 pub trait ForceModel: Send + Sync {
+    /// Whether this model preserves total momentum for these atoms under a
+    /// common continuous translation. Drivers may remove COM modes only when
+    /// both the model and the controller preserve an initialized zero momentum.
+    /// Providers opt in explicitly; an unknown model receives the full space.
+    fn conserves_total_momentum(&self, _system: &System) -> bool {
+        false
+    }
+    /// Maximum real-space neighbor radius required by this model. Drivers
+    /// must reject an absent radius when they need to construct a list.
+    fn neighbor_cutoff(&self) -> Option<f64> {
+        None
+    }
     /// Compute forces, potential energy, and virial. The implementation reads
     /// `system.positions` and **accumulates** into `system.forces` and `virial`
-    /// (it does *not* zero them). The caller — the integrator, or
-    /// [`crate::composite::CompositeForceModel`] — zeroes forces + virial once
+    /// (it does *not* zero them). The caller — the integrator or driver —
+    /// zeroes forces + virial once
     /// before the force pass. Returns this model's potential-energy contribution.
     fn compute(
         &self,
@@ -74,6 +87,12 @@ impl PairForceModel {
 }
 
 impl ForceModel for PairForceModel {
+    fn conserves_total_momentum(&self, _system: &System) -> bool {
+        true
+    }
+    fn neighbor_cutoff(&self) -> Option<f64> {
+        Some(self.potential.cutoff())
+    }
     fn compute(
         &self,
         system: &mut System,
@@ -81,6 +100,7 @@ impl ForceModel for PairForceModel {
         neighbors: &mut NeighborList,
     ) -> Result<f64> {
         // Skin-aware rebuild: cheap no-op when no atom has crossed the skin.
+        neighbors.validate_pair_scales(system.n())?;
         neighbors.build(system);
 
         let cutoff2 = self.potential.cutoff2();
@@ -89,7 +109,6 @@ impl ForceModel for PairForceModel {
         let pairs = neighbors.pairs();
 
         if n == 0 {
-            virial.w = 0.0;
             return Ok(0.0);
         }
 
@@ -105,6 +124,7 @@ impl ForceModel for PairForceModel {
             pair_pass(
                 lj,
                 pairs,
+                neighbors.scales(),
                 n,
                 &system.positions,
                 &system.species,
@@ -117,6 +137,7 @@ impl ForceModel for PairForceModel {
             pair_pass(
                 &*self.potential,
                 pairs,
+                neighbors.scales(),
                 n,
                 &system.positions,
                 &system.species,
@@ -148,11 +169,11 @@ impl PairForceModel {
         virial: &mut Virial,
         neighbors: &mut NeighborList,
     ) -> Result<f64> {
+        neighbors.validate_pair_scales(system.n())?;
         neighbors.build(system);
         let cutoff2 = self.potential.cutoff2();
         let n = system.n();
         if n == 0 {
-            virial.w = 0.0;
             return Ok(0.0);
         }
         let (pe, w) = if let Some(lj) = self
@@ -163,6 +184,7 @@ impl PairForceModel {
             pair_pass(
                 lj,
                 neighbors.pairs(),
+                neighbors.scales(),
                 n,
                 &system.positions,
                 &system.species,
@@ -175,6 +197,7 @@ impl PairForceModel {
             pair_pass(
                 &*self.potential,
                 neighbors.pairs(),
+                neighbors.scales(),
                 n,
                 &system.positions,
                 &system.species,
@@ -208,6 +231,7 @@ const SERIAL_PAIR_THRESHOLD: usize = 100_000;
 fn pair_pass<P: PairPotential + ?Sized>(
     potential: &P,
     pairs: &[(usize, usize)],
+    scales: &crate::neighbor::PairScaleSet,
     n: usize,
     positions: &[f64],
     species: &[u32],
@@ -231,7 +255,12 @@ fn pair_pass<P: PairPotential + ?Sized>(
             if r2 >= cutoff2 || r2 < 1e-14 {
                 continue;
             }
+            let scale = scales.scale(i, j).0;
+            if scale == 0.0 {
+                continue;
+            }
             let (u, f_over_r) = potential.energy_force(r2, species[i], species[j]);
+            let (u, f_over_r) = (u * scale, f_over_r * scale);
             let fv = d * f_over_r;
             for k in 0..3 {
                 forces_out[3 * i + k] += fv.0[k];
@@ -262,7 +291,12 @@ fn pair_pass<P: PairPotential + ?Sized>(
                     if r2 >= cutoff2 || r2 < 1e-14 {
                         return acc;
                     }
+                    let scale = scales.scale(i, j).0;
+                    if scale == 0.0 {
+                        return acc;
+                    }
                     let (u, f_over_r) = potential.energy_force(r2, species[i], species[j]);
+                    let (u, f_over_r) = (u * scale, f_over_r * scale);
                     let fv = d * f_over_r;
                     for k in 0..3 {
                         acc.0[3 * i + k] += fv.0[k];

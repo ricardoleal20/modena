@@ -1,0 +1,19 @@
+{
+  "label": "numerical",
+  "command": [
+    "rtk",
+    "proxy",
+    "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+    "bench/validate.py",
+    "--output",
+    ".superpowers/sdd/2026-10-03-scientific-hardening/root-verification/scientific"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 0.6840550000779331,
+  "created_utc": "2026-10-04T03:11:24.288109+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "numerical.stdout",
+  "stderr_file": "numerical.stderr"
+}

@@ -1,0 +1,7 @@
+error: no example target named `scientific_validation` in `modena-core` package
+help: available example targets:
+    domain_decomposition
+    gpu_ladder
+    gpu_pair
+    gpu_scaling
+    mpi_scaling

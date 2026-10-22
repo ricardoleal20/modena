@@ -1,0 +1,36 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.38s
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-7ee693a39689dd33)
+
+running 12 tests
+test real_coulomb_energy_and_force_are_reference_invariant ... ok
+
+thread 'legacy_angle_and_dihedral_endpoint_exclusions_remain_compatible' (35671084) panicked at crates/modena-core/tests/chemical_workflows.rs:176:5:
+assertion `left == right` failed
+  left: None
+ right: Some((0.0, 0.0))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test legacy_angle_and_dihedral_endpoint_exclusions_remain_compatible ... FAILED
+test shortest_ring_path_wins_and_exception_conflicts_fail ... ok
+test typed_real_xyz_preserves_heterogeneous_identity_and_converts_once ... ok
+test rust_builder_real_typed_input_uses_shared_normalization ... ok
+
+thread 'explicit_water_exceptions_must_be_compatible_with_mandatory_exclusions' (35671082) panicked at crates/modena-core/tests/chemical_workflows.rs:182:5:
+conflicting explicit water exception was silently discarded
+test explicit_water_exceptions_must_be_compatible_with_mandatory_exclusions ... FAILED
+test typed_import_rejects_global_identity_overrides_and_invalid_declarations ... ok
+test typed_identity_and_graph_policy_participate_in_continuation ... ok
+test legacy_exclude_bonded_uses_graph_even_without_angles ... ok
+test malformed_typed_xyz_and_unknown_type_are_rejected ... ok
+test graph_shortest_distances_and_explicit_precedence_scale_lj_and_coulomb_once ... ok
+test real_runner_electrostatic_pair_energy_and_force_match_physical_bare_pair ... ok
+
+failures:
+
+failures:
+    explicit_water_exceptions_must_be_compatible_with_mandatory_exclusions
+    legacy_angle_and_dihedral_endpoint_exclusions_remain_compatible
+
+test result: FAILED. 10 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+error: test failed, to rerun pass `-p modena-core --test chemical_workflows`

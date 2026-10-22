@@ -1,0 +1,23 @@
+    Blocking waiting for file lock on build directory
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling zerocopy v0.8.57
+   Compiling syn v3.0.5
+   Compiling once_cell v1.21.4
+   Compiling either v1.18.0
+   Compiling tempfile v3.27.0
+   Compiling rayon v1.12.0
+   Compiling rusty-fork v0.3.1
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.20
+   Compiling thiserror v2.0.20
+   Compiling serde_json v1.0.151
+   Compiling toml_datetime v0.6.11
+   Compiling serde_spanned v0.6.9
+   Compiling toml_edit v0.22.27
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.9.0
+   Compiling proptest v1.11.0
+   Compiling toml v0.8.23
+   Compiling modena-core v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-core)
+    Finished `release` profile [optimized] target(s) in 1m 53s

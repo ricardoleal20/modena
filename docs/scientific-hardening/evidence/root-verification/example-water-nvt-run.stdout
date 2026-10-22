@@ -1,0 +1,8 @@
+MODENA: loading examples/chemical/water_nvt.toml
+MODENA: finished 5 steps in 568.416µs
+  final  KE = 4.674224   PE = 0.770539   E_total = 5.444764
+  final  T = 98.006705   P = 434.350256   W = 5.613116
+  thermo units = Real (real: kcal/mol, K, atm; reduced: engine units)
+  pressure diagnostic: omits constraint impulse stress; constrained pressure is not validated
+  energy exchanged  relative change = -1.445e-2
+  perf   113.68 µs/step  (8796 steps/s)

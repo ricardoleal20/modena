@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use MODENA, please cite this software and include the version or commit used."
+type: software
+title: "MODENA: Molecular Dynamics Engine for Numerical Atomistics"
+authors:
+  - name: "MODENA contributors"
+repository-code: "https://github.com/ricardoleal20/modena"
+url: "https://github.com/ricardoleal20/modena"
+license: MIT
+version: 0.1.1
+date-released: 2026-10-22

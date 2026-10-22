@@ -1,9 +1,9 @@
-//! SPME Stage A — Smooth Particle-Mesh Ewald *reciprocal energy* only.
+//! Smooth Particle-Mesh Ewald energy, force and isotropic strain virial.
 //!
 //! The order-4 B-spline charge spread + 3D FFT + influence-function sum that
 //! reproduces the direct reciprocal Ewald energy on a mesh
-//! (`docs/SPME_PLAN.md`). Forces (ik-differentiation of this functional) and
-//! the strain-form virial are Stage B/C. Orthorhombic boxes only (the schema
+//! (`docs/SPME_PLAN.md`). Forces differentiate the same B-spline functional;
+//! model-owned workspaces reuse FFT plans, grids and worker scratch. Orthorhombic boxes only (the schema
 //! is orthorhombic today).
 //!
 //! # Convergence accounting (the α rule)
@@ -61,137 +61,9 @@ pub fn spme_reciprocal_energy(
     charges: &[f64],
     mesh: [usize; 3],
 ) -> Result<f64> {
-    if box_size.is_triclinic() {
-        return Err(ModenaError::Config(
-            "SPME requires an orthorhombic box".into(),
-        ));
-    }
-    let n = charges.len();
-    if n == 0 {
-        return Ok(0.0);
-    }
-    let [n0, n1, n2] = mesh;
-    let l = [box_size.size.0[0], box_size.size.0[1], box_size.size.0[2]];
-    let ntot = n0 * n1 * n2;
-
-    // ---- 1. B-spline charge spread onto the mesh. ----
-    let mut q: Vec<f64> = vec![0.0; ntot];
-    let mut u = [0.0f64; 3];
-    let mut m0 = [0usize; 3];
-    let mut w = [[0.0f64; 4]; 3];
-    for i in 0..n {
-        let xi = Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
-        for a in 0..3 {
-            // Fractional coordinate in [0,1) (mesh-wrapped).
-            let f = (xi.0[a] / l[a]).fract().rem_euclid(1.0);
-            let t = f * mesh[a] as f64;
-            let m = t.floor() as usize % mesh[a];
-            u[a] = t - m as f64;
-            m0[a] = m;
-            w[a] = m4(u[a]);
-        }
-        let qc = charges[i];
-        for k0 in 0..4usize {
-            let a0 = (m0[0] + k0 + n0 - 1) % n0;
-            for k1 in 0..4usize {
-                let a1 = (m0[1] + k1 + n1 - 1) % n1;
-                for k2 in 0..4usize {
-                    let a2 = (m0[2] + k2 + n2 - 1) % n2;
-                    let weight = w[0][k0] * w[1][k1] * w[2][k2];
-                    q[(a0 * n1 + a1) * n2 + a2] += qc * weight;
-                }
-            }
-        }
-    }
-
-    // ---- 2. Forward FFT (real spread → complex). ----
-    let mut grid: Vec<Complex<f64>> = q.iter().map(|&x| Complex::new(x, 0.0)).collect();
-    let mut planner = FftPlanner::<f64>::new();
-    let ffts = [
-        planner.plan_fft_forward(n0),
-        planner.plan_fft_forward(n1),
-        planner.plan_fft_forward(n2),
-    ];
-    let scratch_len = ffts
-        .iter()
-        .map(|f| f.get_inplace_scratch_len())
-        .max()
-        .unwrap_or(0);
-    let mut scratch: Vec<Complex<f64>> = vec![Complex::new(0.0, 0.0); scratch_len.max(1)];
-
-    // Axis 2 (stride 1): contiguous lines.
-    for i0 in 0..n0 {
-        for i1 in 0..n1 {
-            let start = (i0 * n1 + i1) * n2;
-            ffts[2].process_with_scratch(&mut grid[start..start + n2], &mut scratch);
-        }
-    }
-    // Axis 1 (stride n2): strided → transpose copy.
-    for i0 in 0..n0 {
-        for i2 in 0..n2 {
-            let mut line: Vec<Complex<f64>> =
-                (0..n1).map(|i1| grid[(i0 * n1 + i1) * n2 + i2]).collect();
-            ffts[1].process_with_scratch(&mut line, &mut scratch);
-            for (i1, v) in line.into_iter().enumerate() {
-                grid[(i0 * n1 + i1) * n2 + i2] = v;
-            }
-        }
-    }
-    // Axis 0 (stride n1*n2): strided → transpose copy.
-    for i1 in 0..n1 {
-        for i2 in 0..n2 {
-            let mut line: Vec<Complex<f64>> =
-                (0..n0).map(|i0| grid[(i0 * n1 + i1) * n2 + i2]).collect();
-            ffts[0].process_with_scratch(&mut line, &mut scratch);
-            for (i0, v) in line.into_iter().enumerate() {
-                grid[(i0 * n1 + i1) * n2 + i2] = v;
-            }
-        }
-    }
-
-    // ---- 3. Influence-function sum over the full mesh. ----
-    // Physical k = 2π·k̂/L with k̂ ∈ [−N/2, N/2) (centered indexing).
-    let khat = |nn: usize, m: usize| -> i64 {
-        let m = m as i64;
-        if m <= (nn as i64) / 2 {
-            m
-        } else {
-            m - nn as i64
-        }
-    };
-    let b3 = |kh: i64, n: usize| -> f64 {
-        (4.0 + 2.0 * (2.0 * std::f64::consts::PI * kh as f64 / n as f64).cos()) / 6.0
-    };
-    let two_pi = 2.0 * std::f64::consts::PI;
-    let kappa2 = kappa * kappa;
-    let mut e = 0.0f64;
-    for n0i in 0..n0 {
-        let kx = khat(n0, n0i);
-        let phx = two_pi * kx as f64 / l[0];
-        for n1i in 0..n1 {
-            let ky = khat(n1, n1i);
-            let phy = two_pi * ky as f64 / l[1];
-            for n2i in 0..n2 {
-                let kz = khat(n2, n2i);
-                if kx == 0 && ky == 0 && kz == 0 {
-                    continue;
-                }
-                let phz = two_pi * kz as f64 / l[2];
-                let k2 = phx * phx + phy * phy + phz * phz;
-                if k2 <= 0.0 {
-                    continue;
-                }
-                let qhat = grid[(n0i * n1 + n1i) * n2 + n2i];
-                let w = libm::exp(-k2 / (4.0 * kappa2)) / k2;
-                let b = b3(kx, n0) * b3(ky, n1) * b3(kz, n2);
-                e += w * (qhat.norm_sqr()) / (b * b);
-            }
-        }
-    }
-    let _ = kcut;
-    let vol = l[0] * l[1] * l[2];
-    let alpha = two_pi / vol;
-    Ok(alpha * e)
+    let _ = kcut; // mesh dimensions define this finite reciprocal functional
+    let mut workspace = SpmeWorkspace::new(mesh)?;
+    Ok(reciprocal_pass(kappa, box_size, positions, charges, &mut [], &mut workspace)?.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +95,7 @@ fn next_5_smooth(x: usize) -> usize {
     loop {
         let mut m = n;
         for p in [2, 3, 5] {
-            while m % p == 0 {
+            while m.is_multiple_of(p) {
                 m /= p;
             }
         }
@@ -244,18 +116,19 @@ pub struct SpmeForceModel {
     /// Covalently excluded charged pairs (e.g. intramolecular O–H/H–H of
     /// rigid water) — same contract as
     /// [`EwaldForceModel::with_excluded_pairs`](crate::ewald::EwaldForceModel::with_excluded_pairs).
-    pub excluded_pairs: Vec<(usize, usize)>,
+    pair_scales: crate::neighbor::PairScaleSet,
+    workspace: Mutex<Option<SpmeWorkspace>>,
 }
 
 impl SpmeForceModel {
     pub fn new(kappa: f64, real_cutoff: f64, kspace_cutoff: f64) -> Result<Self> {
-        if !(kappa > 0.0) {
+        if !kappa.is_finite() || kappa <= 0.0 {
             return Err(ModenaError::Config("SPME `kappa` must be > 0".into()));
         }
-        if !(real_cutoff > 0.0) {
+        if !real_cutoff.is_finite() || real_cutoff <= 0.0 {
             return Err(ModenaError::Config("SPME `real_cutoff` must be > 0".into()));
         }
-        if !(kspace_cutoff > 0.0) {
+        if !kspace_cutoff.is_finite() || kspace_cutoff <= 0.0 {
             return Err(ModenaError::Config(
                 "SPME `kspace_cutoff` must be > 0".into(),
             ));
@@ -264,7 +137,8 @@ impl SpmeForceModel {
             kappa,
             real_cutoff,
             kspace_cutoff,
-            excluded_pairs: Vec::new(),
+            pair_scales: crate::neighbor::PairScaleSet::default(),
+            workspace: Mutex::new(None),
         })
     }
 
@@ -272,8 +146,25 @@ impl SpmeForceModel {
     /// the mesh's Gaussian (erf) part is cancelled explicitly (shared
     /// correction with the direct Ewald).
     pub fn with_excluded_pairs(mut self, pairs: Vec<(usize, usize)>) -> Self {
-        self.excluded_pairs = pairs;
+        let scales: Vec<_> = pairs
+            .into_iter()
+            .map(|(i, j)| crate::neighbor::PairScale {
+                i,
+                j,
+                lj: 0.0,
+                coulomb: 0.0,
+            })
+            .collect();
+        self.pair_scales =
+            crate::neighbor::PairScaleSet::new(&scales).expect("invalid excluded pairs");
         self
+    }
+
+    /// Validated independently weighted pairs. The Coulomb weight is consumed
+    /// here; LJ weights belong to the shared neighbor list and pair provider.
+    pub fn with_pair_scales(mut self, scales: Vec<crate::neighbor::PairScale>) -> Result<Self> {
+        self.pair_scales = crate::neighbor::PairScaleSet::new(&scales)?;
+        Ok(self)
     }
 
     /// The real-space cutoff — the shared-neighbor-list max, like
@@ -287,7 +178,8 @@ impl SpmeForceModel {
         box_size: SimBox,
         positions: &[f64],
         charges: &[f64],
-        neighbors: &mut crate::neighbor::NeighborList,
+        neighbors: &crate::neighbor::NeighborList,
+        policy: &crate::ewald::CoulombPolicy<'_>,
         forces: &mut [f64],
     ) -> (f64, f64) {
         // erfc-screened short-range sum — same formula as the direct Ewald's
@@ -305,7 +197,7 @@ impl SpmeForceModel {
                 continue;
             }
             let r = r2.sqrt();
-            let qprod = charges[i] * charges[j];
+            let qprod = policy.scale(i, j) * charges[i] * charges[j];
             let erfc_kr = libm::erfc(kappa * r);
             let exp_kr2 = libm::exp(-kappa * kappa * r2);
             u += qprod * erfc_kr / r;
@@ -324,6 +216,14 @@ impl SpmeForceModel {
 const TWO_OVER_SQRT_PI: f64 = std::f64::consts::FRAC_2_SQRT_PI;
 
 impl ForceModel for SpmeForceModel {
+    fn conserves_total_momentum(&self, system: &System) -> bool {
+        // Any nonzero charge, including a single charge's mesh self term,
+        // couples to the fixed mesh. With no charges this provider is a no-op.
+        system.charges.iter().all(|&q| q == 0.0)
+    }
+    fn neighbor_cutoff(&self) -> Option<f64> {
+        Some(self.real_cutoff)
+    }
     fn compute(
         &self,
         system: &mut System,
@@ -335,30 +235,32 @@ impl ForceModel for SpmeForceModel {
                 "SPME supports orthorhombic boxes only (triclinic given)".into(),
             ));
         }
+        neighbors.build(system);
+        let policy =
+            crate::ewald::CoulombPolicy::new(&self.pair_scales, neighbors.scales(), system.n())?;
         let n = system.n();
         if n == 0 {
-            virial.w = 0.0;
             return Ok(0.0);
         }
-        neighbors.build(system);
-
         // Real-space erfc + self/background (identical to Ewald). Split the
-        // force buffer out so positions/charges stay shared borrows.
-        let mut forces = std::mem::take(&mut system.forces);
+        // force buffer separately so positions/charges stay shared borrows.
+        let forces = &mut system.forces;
         let (u_real, w_real) = self.real_space(
             system.box_size,
             &system.positions,
             &system.charges,
             neighbors,
-            &mut forces,
+            &policy,
+            forces,
         );
         let (u_excl, w_excl) = crate::ewald::exclusion_correction(
             self.kappa,
             &system.box_size,
             &system.positions,
             &system.charges,
-            &self.excluded_pairs,
-            &mut forces,
+            self.real_cutoff,
+            policy.entries(),
+            forces,
         );
         let u_real = u_real + u_excl;
         let w_real = w_real + w_excl;
@@ -373,22 +275,29 @@ impl ForceModel for SpmeForceModel {
                 mesh, self.kspace_cutoff
             )));
         }
-        let (u_rec, w_rec) = spme_reciprocal_forces(
-            self.kappa,
-            &system.box_size,
-            &system.positions,
-            &system.charges,
-            mesh,
-            &mut forces,
-        )?;
-        system.forces = forces;
+        // The lock covers key validation through FFT/influence use, so a
+        // shared model cannot mix another simulation's mesh or box state.
+        let (u_rec, w_rec) = {
+            let mut guard = self.workspace.lock().unwrap();
+            if guard.as_ref().is_none_or(|w| w.mesh != mesh) {
+                *guard = Some(SpmeWorkspace::new(mesh)?);
+            }
+            reciprocal_pass(
+                self.kappa,
+                &system.box_size,
+                &system.positions,
+                &system.charges,
+                forces,
+                guard.as_mut().unwrap(),
+            )?
+        };
         let u_self = -(self.kappa / std::f64::consts::PI.sqrt())
             * system.charges.iter().map(|q| q * q).sum::<f64>();
         let v = system.box_size.volume();
         let sum_q: f64 = system.charges.iter().sum();
         let u_bg = -std::f64::consts::PI / (2.0 * v * self.kappa * self.kappa) * sum_q * sum_q;
 
-        virial.w += w_real + w_rec;
+        virial.w += w_real + w_rec + 3.0 * u_bg;
         Ok(u_real + u_rec + u_self + u_bg)
     }
 }
@@ -405,27 +314,8 @@ struct InfluenceFactors {
 }
 
 type InfluenceKey = (u64, [u64; 3]);
-type InfluenceEntry = (InfluenceKey, [usize; 3], Arc<InfluenceFactors>);
 
-static INFLUENCE_CACHE: Mutex<Option<InfluenceEntry>> = Mutex::new(None);
-
-fn influence_factors(kappa: f64, box_size: &SimBox, mesh: [usize; 3]) -> Arc<InfluenceFactors> {
-    let key = (
-        kappa.to_bits(),
-        [
-            box_size.size.0[0].to_bits(),
-            box_size.size.0[1].to_bits(),
-            box_size.size.0[2].to_bits(),
-        ],
-    );
-    {
-        let g = INFLUENCE_CACHE.lock().unwrap();
-        if let Some((k, m, data)) = &*g {
-            if *k == key && *m == mesh {
-                return Arc::clone(data);
-            }
-        }
-    }
+fn influence_factors(kappa: f64, box_size: &SimBox, mesh: [usize; 3]) -> InfluenceFactors {
     let [n0, n1, n2] = mesh;
     let ntot = n0 * n1 * n2;
     let l = [box_size.size.0[0], box_size.size.0[1], box_size.size.0[2]];
@@ -466,62 +356,129 @@ fn influence_factors(kappa: f64, box_size: &SimBox, mesh: [usize; 3]) -> Arc<Inf
             }
         }
     }
-    let data = Arc::new(InfluenceFactors { fac, vfac });
-    *INFLUENCE_CACHE.lock().unwrap() = Some((key, mesh, Arc::clone(&data)));
-    data
+    InfluenceFactors { fac, vfac }
 }
 
-/// Grid points below this run the axis FFTs serially (rayon overhead exceeds
-/// the transform cost on the small test meshes).
-const FFT_SERIAL_POINTS: usize = 1 << 16;
-
-/// In-place FFT over a grid viewed as contiguous rows of length `len` — axis
-/// 2 in the L0 layout, axis 0 in the transposed L1 layout. Rows are disjoint,
-/// so rays split cleanly; each ray owns its scratch.
-fn fft_contiguous(grid: &mut [Complex<f64>], plan: &dyn Fft<f64>, len: usize, parallel: bool) {
-    let scratch_len = plan.get_inplace_scratch_len().max(1);
-    if parallel {
-        grid.par_chunks_exact_mut(len).for_each(|row| {
-            let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
-            plan.process_with_scratch(row, &mut scratch);
-        });
-    } else {
-        let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
-        for row in grid.chunks_exact_mut(len) {
-            plan.process_with_scratch(row, &mut scratch);
+/// Owned plan/grid/scratch storage; the model holds this under one mutex.
+/// Public standalone reciprocal helpers create temporary workspaces instead.
+struct SpmeWorkspace {
+    mesh: [usize; 3],
+    fwd: [Arc<dyn Fft<f64>>; 3],
+    bwd: [Arc<dyn Fft<f64>>; 3],
+    grid: Vec<Complex<f64>>,
+    l1: Vec<Complex<f64>>,
+    workers: Vec<FftScratch>,
+    influence: Option<(InfluenceKey, InfluenceFactors)>,
+}
+struct FftScratch {
+    scratch: Vec<Complex<f64>>,
+    line: Vec<Complex<f64>>,
+}
+impl SpmeWorkspace {
+    fn new(mesh: [usize; 3]) -> Result<Self> {
+        if mesh.iter().any(|&n| n < 4) {
+            return Err(ModenaError::Config(
+                "SPME mesh needs at least four planes on every axis".into(),
+            ));
+        }
+        let ntot = mesh
+            .into_iter()
+            .try_fold(1usize, |a, b| a.checked_mul(b))
+            .ok_or_else(|| ModenaError::Config("SPME mesh size overflow".into()))?;
+        let mut planner = FftPlanner::<f64>::new();
+        let fwd = mesh.map(|n| planner.plan_fft_forward(n));
+        let bwd = mesh.map(|n| planner.plan_fft_inverse(n));
+        let mut workspace = Self {
+            mesh,
+            fwd,
+            bwd,
+            grid: vec![Complex::new(0.0, 0.0); ntot],
+            l1: vec![Complex::new(0.0, 0.0); ntot],
+            workers: Vec::new(),
+            influence: None,
+        };
+        workspace.prepare_workers();
+        Ok(workspace)
+    }
+    fn prepare_workers(&mut self) {
+        let count = if self.grid.len() >= FFT_SERIAL_POINTS {
+            rayon::current_num_threads()
+        } else {
+            1
+        };
+        let scratch_len = self
+            .fwd
+            .iter()
+            .chain(&self.bwd)
+            .map(|f| f.get_inplace_scratch_len())
+            .max()
+            .unwrap_or(0)
+            .max(1);
+        while self.workers.len() < count {
+            self.workers.push(FftScratch {
+                scratch: vec![Complex::new(0.0, 0.0); scratch_len],
+                line: vec![Complex::new(0.0, 0.0); self.mesh[1]],
+            });
         }
     }
 }
 
-/// Axis-1 pass on the L0 layout. Slab i0 = grid[i0*n1*n2 .. (i0+1)*n1*n2]:
-/// every axis-1 line with that i0 lives inside the slab, so slabs are
-/// disjoint &mut and rays split cleanly.
-fn fft_axis1(grid: &mut [Complex<f64>], plan: &dyn Fft<f64>, dims: [usize; 3], parallel: bool) {
-    let [_n0, n1, n2] = dims;
-    let scratch_len = plan.get_inplace_scratch_len().max(1);
+const FFT_SERIAL_POINTS: usize = 1 << 16;
+
+/// Assign contiguous groups of rows to reusable worker scratch. No scratch
+/// allocation per row or slab; the number of tasks is bounded by the pool.
+fn fft_contiguous(
+    grid: &mut [Complex<f64>],
+    plan: &dyn Fft<f64>,
+    len: usize,
+    parallel: bool,
+    workers: &mut [FftScratch],
+) {
+    if parallel {
+        let chunk = (grid.len() / len).div_ceil(workers.len()) * len;
+        grid.par_chunks_mut(chunk)
+            .zip(workers.par_iter_mut())
+            .for_each(|(part, worker)| {
+                for row in part.chunks_exact_mut(len) {
+                    plan.process_with_scratch(row, &mut worker.scratch);
+                }
+            });
+    } else {
+        for row in grid.chunks_exact_mut(len) {
+            plan.process_with_scratch(row, &mut workers[0].scratch);
+        }
+    }
+}
+
+fn fft_axis1(
+    grid: &mut [Complex<f64>],
+    plan: &dyn Fft<f64>,
+    dims: [usize; 3],
+    parallel: bool,
+    workers: &mut [FftScratch],
+) {
+    let [_, n1, n2] = dims;
     let slab = n1 * n2;
-    let slab_pass = |slab_grid: &mut [Complex<f64>], scratch: &mut Vec<Complex<f64>>| {
-        let mut line = vec![Complex::new(0.0, 0.0); n1];
-        for i2 in 0..n2 {
-            for (t, i1) in (0..n1).enumerate() {
-                line[t] = slab_grid[i1 * n2 + i2];
-            }
-            plan.process_with_scratch(&mut line, scratch);
-            for (i1, v) in line.iter().enumerate() {
-                slab_grid[i1 * n2 + i2] = *v;
+    let pass = |part: &mut [Complex<f64>], worker: &mut FftScratch| {
+        for slab_grid in part.chunks_exact_mut(slab) {
+            for i2 in 0..n2 {
+                for i1 in 0..n1 {
+                    worker.line[i1] = slab_grid[i1 * n2 + i2];
+                }
+                plan.process_with_scratch(&mut worker.line, &mut worker.scratch);
+                for i1 in 0..n1 {
+                    slab_grid[i1 * n2 + i2] = worker.line[i1];
+                }
             }
         }
     };
     if parallel {
-        grid.par_chunks_mut(slab).for_each(|slab_grid| {
-            let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
-            slab_pass(slab_grid, &mut scratch);
-        });
+        let chunk = (grid.len() / slab).div_ceil(workers.len()) * slab;
+        grid.par_chunks_mut(chunk)
+            .zip(workers.par_iter_mut())
+            .for_each(|(part, worker)| pass(part, worker));
     } else {
-        let mut scratch = vec![Complex::new(0.0, 0.0); scratch_len];
-        for slab_grid in grid.chunks_mut(slab) {
-            slab_pass(slab_grid, &mut scratch);
-        }
+        pass(grid, &mut workers[0]);
     }
 }
 
@@ -561,13 +518,57 @@ pub fn spme_reciprocal_forces(
     mesh: [usize; 3],
     forces: &mut [f64],
 ) -> Result<(f64, f64)> {
-    let n = charges.len();
-    let [n0, n1, n2] = mesh;
-    let l = [box_size.size.0[0], box_size.size.0[1], box_size.size.0[2]];
-    let ntot = n0 * n1 * n2;
+    let mut workspace = SpmeWorkspace::new(mesh)?;
+    reciprocal_pass(kappa, box_size, positions, charges, forces, &mut workspace)
+}
 
+fn reciprocal_pass(
+    kappa: f64,
+    box_size: &SimBox,
+    positions: &[f64],
+    charges: &[f64],
+    forces: &mut [f64],
+    workspace: &mut SpmeWorkspace,
+) -> Result<(f64, f64)> {
+    if box_size.is_triclinic()
+        || box_size.size.0.iter().any(|x| !x.is_finite() || *x <= 0.0)
+        || !kappa.is_finite()
+        || kappa <= 0.0
+    {
+        return Err(ModenaError::Config(
+            "SPME needs finite positive orthorhombic edges and kappa".into(),
+        ));
+    }
+    let n = charges.len();
+    if positions.len() != 3 * n || (!forces.is_empty() && forces.len() != 3 * n) {
+        return Err(ModenaError::Config(
+            "SPME positions/charges/force lengths differ".into(),
+        ));
+    }
+    workspace.prepare_workers();
+    let mesh = workspace.mesh;
+    let [n0, n1, n2] = mesh;
+    let l = box_size.size.0;
+    let ntot = workspace.grid.len();
+    let key = (kappa.to_bits(), l.map(f64::to_bits));
+    if workspace
+        .influence
+        .as_ref()
+        .is_none_or(|(old, _)| *old != key)
+    {
+        workspace.influence = Some((key, influence_factors(kappa, box_size, mesh)));
+    }
+    let SpmeWorkspace {
+        fwd,
+        bwd,
+        grid,
+        l1,
+        workers,
+        influence,
+        ..
+    } = workspace;
+    grid.fill(Complex::new(0.0, 0.0));
     // --- 1. spread ---
-    let mut q: Vec<f64> = vec![0.0; ntot];
     let mut u = [0.0f64; 3];
     let mut m0 = [0usize; 3];
     let mut w = [[0.0f64; 4]; 3];
@@ -588,7 +589,7 @@ pub fn spme_reciprocal_forces(
                 let a1 = (m0[1] + k1 + n1 - 1) % n1;
                 for k2 in 0..4usize {
                     let a2 = (m0[2] + k2 + n2 - 1) % n2;
-                    q[(a0 * n1 + a1) * n2 + a2] += qc * w[0][k0] * w[1][k1] * w[2][k2];
+                    grid[(a0 * n1 + a1) * n2 + a2].re += qc * w[0][k0] * w[1][k1] * w[2][k2];
                 }
             }
         }
@@ -596,51 +597,53 @@ pub fn spme_reciprocal_forces(
 
     // --- 2. forward FFT: axes 2/1 on the L0 grid, then transpose to L1 ---
     // ([n2][n1][n0]) and transform axis 0 contiguously — no serial axis pass
-    // remains; one extra grid buffer per call.
-    let mut grid: Vec<Complex<f64>> = q.iter().map(|&x| Complex::new(x, 0.0)).collect();
-    let mut planner = FftPlanner::<f64>::new();
-    let fwd = [
-        planner.plan_fft_forward(n0),
-        planner.plan_fft_forward(n1),
-        planner.plan_fft_forward(n2),
-    ];
-    let bwd = [
-        planner.plan_fft_inverse(n0),
-        planner.plan_fft_inverse(n1),
-        planner.plan_fft_inverse(n2),
-    ];
+    // remains; both grid buffers persist in the owned workspace.
     let parallel = ntot >= FFT_SERIAL_POINTS;
-    fft_contiguous(&mut grid, fwd[2].as_ref(), n2, parallel);
-    fft_axis1(&mut grid, fwd[1].as_ref(), mesh, parallel);
-    let mut l1: Vec<Complex<f64>> = vec![Complex::new(0.0, 0.0); ntot];
-    transpose_021(&grid, &mut l1, mesh, parallel);
-    fft_contiguous(&mut l1, fwd[0].as_ref(), n0, parallel);
+    fft_contiguous(grid, fwd[2].as_ref(), n2, parallel, workers);
+    fft_axis1(grid, fwd[1].as_ref(), mesh, parallel, workers);
+    transpose_021(grid, l1, mesh, parallel);
+    fft_contiguous(l1, fwd[0].as_ref(), n0, parallel, workers);
 
     // --- 3. k-pass (in the L1 layout): energy + strain virial + Q̂' in place.
     // (influence factors cached per (κ, box, mesh), in L1 order). ---
-    let infl = influence_factors(kappa, box_size, mesh);
+    let infl = &influence.as_ref().unwrap().1;
     let mut e = 0.0f64;
     let mut wr = 0.0f64;
+    let (mut e_comp, mut w_comp) = (0.0, 0.0);
     for (dst, (f, vf)) in l1.iter_mut().zip(infl.fac.iter().zip(infl.vfac.iter())) {
         let qhat = *dst;
         let u_k = f * qhat.norm_sqr();
-        e += u_k;
-        wr += u_k * vf;
+        // Compensated sums keep finite-strain/force differences stable even
+        // when total reciprocal energy dwarfs displaced-crystal forces.
+        let y = u_k - e_comp;
+        let next = e + y;
+        e_comp = (next - e) - y;
+        e = next;
+        let y = u_k * vf - w_comp;
+        let next = wr + y;
+        w_comp = (next - wr) - y;
+        wr = next;
         *dst = qhat * f;
+    }
+
+    if forces.is_empty() {
+        return Ok((e, wr));
     }
 
     // --- 4. inverse FFT: axis 0 contiguous on L1, transpose back into the
     // spread grid's allocation, axes 1/2 on L0 → Re[Φ]. ---
-    fft_contiguous(&mut l1, bwd[0].as_ref(), n0, parallel);
-    transpose_021(&l1, &mut grid, [n2, n1, n0], parallel);
-    fft_axis1(&mut grid, bwd[1].as_ref(), mesh, parallel);
-    fft_contiguous(&mut grid, bwd[2].as_ref(), n2, parallel);
+    fft_contiguous(l1, bwd[0].as_ref(), n0, parallel, workers);
+    transpose_021(l1, grid, [n2, n1, n0], parallel);
+    fft_axis1(grid, bwd[1].as_ref(), mesh, parallel, workers);
+    fft_contiguous(grid, bwd[2].as_ref(), n2, parallel, workers);
     let phi = grid;
 
     // --- 5. force assembly via the B-spline weight derivatives. ---
     // F_i = −2·q_i·Σ_{m∈stencil} ∂W_i(m)/∂r_i · Re[Φ(m)].
     // ∂W/∂r_a = (N_a/L_a)·w′_{ka}(u_a)·∏_{b≠a} w_{kb}(u_b)
-    // (the 4-tap derivative sums to zero → translation-invariant).
+    // The derivative weights sum to zero (partition of unity), but the finite
+    // mesh energy depends on continuous translation relative to its grid.
+    // These forces differentiate that energy; their sum need not vanish.
     let mut m0c = [0usize; 3];
     let mut wc = [[0.0f64; 4]; 3];
     let mut wd = [[0.0f64; 4]; 3];
@@ -934,26 +937,11 @@ mod tests {
                 );
             }
         }
-        // The virials must NOT agree: the direct model's reciprocal virial is the
-        // naive Σ r·F (the documented +0.00632 pressure defect), while SPME uses
-        // the strain form (gated exactly by the strain-FD test above). The split
-        // must therefore be dominated by the strain-form reciprocal virial.
-        let n = s_spme.n();
-        let mut scratch = vec![0.0; 3 * n];
-        let (_, w_rec_strain) = spme_reciprocal_forces(
-            kappa,
-            &s_spme.box_size,
-            &s_spme.positions,
-            &s_spme.charges,
-            mesh_for(15.0, kcut),
-            &mut scratch,
-        )
-        .expect("spme rec");
-        let w_diff = v1.w - v2.w;
         assert!(
-            (w_diff - w_rec_strain).abs() < 0.2 * w_rec_strain.abs(),
-            "virial split {w_diff} vs strain-form reciprocal {w_rec_strain} \
-         (SPME must carry the strain-form correction, not the naive r·F)"
+            (v1.w - v2.w).abs() < 5e-3 * v2.w.abs().max(1.0),
+            "SPME strain virial {} vs direct {}",
+            v1.w,
+            v2.w
         );
     }
 }

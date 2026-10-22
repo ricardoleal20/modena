@@ -1,0 +1,5 @@
+    Checking modena-core v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-core)
+    Checking modena-mcp v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-mcp)
+    Checking modena-bench v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-bench)
+    Checking modena-cli v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.86s

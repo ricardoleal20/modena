@@ -1,0 +1,12 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.23s
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-7ee693a39689dd33)
+
+running 4 tests
+test typed_real_xyz_preserves_heterogeneous_identity_and_converts_once ... ok
+test legacy_exclude_bonded_uses_graph_even_without_angles ... ok
+test malformed_typed_xyz_and_unknown_type_are_rejected ... ok
+test graph_shortest_distances_and_explicit_precedence_scale_lj_and_coulomb_once ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+

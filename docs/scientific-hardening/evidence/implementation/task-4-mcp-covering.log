@@ -1,0 +1,55 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+   Compiling modena-mcp v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.11s
+     Running unittests src/lib.rs (target/debug/deps/modena_mcp-22dc907f190836b0)
+
+running 16 tests
+test server::tests::notifications_get_no_response ... ok
+test server::tests::unknown_method_returns_rpc_error ... ok
+test server::tests::invalid_tool_args_is_error_result ... ok
+test server::tests::build_system_via_mcp ... ok
+test tests::estimate_run_cost_is_finite_and_positive ... ok
+test tests::density_sweep_rescales_lattice ... ok
+test tests::build_system_reports_counts ... ok
+test tests::rejects_invalid_sweep_combos ... ok
+test tests::run_probe_clamps_steps ... ok
+test tests::run_probe_returns_conservation ... ok
+test tests::async_run_completes_and_reports_status ... ok
+test server::tests::initialize_and_tools_list ... ok
+test tests::cancel_run_stops_early ... ok
+test server::tests::run_probe_via_mcp ... ok
+test tests::sweep_runs_to_completion ... ok
+test tests::detect_anomaly_flags_drift ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running unittests src/main.rs (target/debug/deps/modena_mcp-a603df0709279464)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-257a66f79feaa4cf)
+
+running 5 tests
+test canonical_temperature_sweep_rejects_mc_coupling_explicitly ... ok
+test actual_means_counts_and_real_units_are_exposed ... ok
+test barostat_run_is_not_nve_through_request_path ... ok
+test discovery_and_probe_surface_supported_domain ... ok
+test accumulated_mean_survives_event_fifo_and_transition_uses_it ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/melting_sweep_demo.rs (target/debug/deps/melting_sweep_demo-a1637c6161498f9b)
+
+running 1 test
+test agent_sweep_workflow_is_reproducible ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+   Doc-tests modena_mcp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

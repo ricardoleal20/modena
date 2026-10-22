@@ -1,0 +1,73 @@
+{
+  "source": "benchmark.json",
+  "scope": "whole process: startup, initialization and integration; no trajectory or thermo files; stdout captured",
+  "source_commit": "11d7683841786699e77d02d7c55c2d8af9cdac40",
+  "summary": [
+    {
+      "engine": "modena",
+      "atoms": 864,
+      "threads": 1,
+      "steps": 1000,
+      "repetitions": 3,
+      "median_ms_per_step": 0.6018786248750985,
+      "median_rss_bytes": 3883008,
+      "median_cpu_seconds": 0.59,
+      "relative_drift": 3.171e-05
+    },
+    {
+      "engine": "lammps",
+      "atoms": 864,
+      "threads": 1,
+      "steps": 1000,
+      "repetitions": 3,
+      "median_ms_per_step": 0.3094120000023395,
+      "median_rss_bytes": 12140544,
+      "median_cpu_seconds": 0.28,
+      "relative_drift": 2.8059407255689384e-05
+    },
+    {
+      "engine": "modena",
+      "atoms": 2048,
+      "threads": 1,
+      "steps": 1000,
+      "repetitions": 3,
+      "median_ms_per_step": 1.738659666851163,
+      "median_rss_bytes": 5111808,
+      "median_cpu_seconds": 1.73,
+      "relative_drift": 1.919e-05
+    },
+    {
+      "engine": "lammps",
+      "atoms": 2048,
+      "threads": 1,
+      "steps": 1000,
+      "repetitions": 3,
+      "median_ms_per_step": 0.7363505410030484,
+      "median_rss_bytes": 12500992,
+      "median_cpu_seconds": 0.68,
+      "relative_drift": 1.739385496063506e-05
+    },
+    {
+      "engine": "modena",
+      "atoms": 20000,
+      "threads": 1,
+      "steps": 1000,
+      "repetitions": 3,
+      "median_ms_per_step": 17.326401208061725,
+      "median_rss_bytes": 427212800,
+      "median_cpu_seconds": 17.3,
+      "relative_drift": 1.356e-05
+    },
+    {
+      "engine": "lammps",
+      "atoms": 20000,
+      "threads": 1,
+      "steps": 1000,
+      "repetitions": 3,
+      "median_ms_per_step": 6.525942874839529,
+      "median_rss_bytes": 22003712,
+      "median_cpu_seconds": 6.51,
+      "relative_drift": 1.452314176184717e-05
+    }
+  ]
+}

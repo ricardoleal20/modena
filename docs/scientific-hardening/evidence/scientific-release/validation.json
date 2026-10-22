@@ -1,0 +1,588 @@
+{
+  "campaign": "smoke",
+  "electrostatics": {
+    "box": 9.0,
+    "kappa": 0.8,
+    "kcuts": [
+      4.8,
+      6.4
+    ],
+    "meshes": [
+      [
+        15,
+        15,
+        15
+      ],
+      [
+        20,
+        20,
+        20
+      ]
+    ],
+    "precision": "f64",
+    "real_cutoff": 4.2,
+    "reference": "direct Ewald kcut6.4"
+  },
+  "observations": [
+    {
+      "absolute_tolerance": 0.085,
+      "expected": 6.0,
+      "independent_basis": "K~Gamma(f/2,T); f=12,T=1",
+      "name": "csvr_seed7_mean",
+      "observed": 6.000882106915894,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.25,
+      "expected": 6.0,
+      "independent_basis": "Var K=f*T^2/2; fixed acceptance band, correlated samples",
+      "name": "csvr_seed7_variance",
+      "observed": 5.9902277127325405,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed7_constrainedfalse_axis0_mean",
+      "observed": -0.003519434841855703,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed7_constrainedfalse_axis0_variance",
+      "observed": 0.4934951260254933,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed7_constrainedfalse_axis1_mean",
+      "observed": 0.009124798715160545,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed7_constrainedfalse_axis1_variance",
+      "observed": 0.49846278919362536,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed7_constrainedfalse_axis2_mean",
+      "observed": -0.007114894630518941,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed7_constrainedfalse_axis2_variance",
+      "observed": 0.4994780023683833,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed7_constrainedtrue_axis0_mean",
+      "observed": -0.003519434841855703,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed7_constrainedtrue_axis0_variance",
+      "observed": 0.4934951260254933,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed7_constrainedtrue_axis1_mean",
+      "observed": 0.009124798715160545,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed7_constrainedtrue_axis1_variance",
+      "observed": 0.49846278919362536,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed7_constrainedtrue_axis2_mean",
+      "observed": -0.007114894630518941,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed7_constrainedtrue_axis2_variance",
+      "observed": 0.4994780023683833,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.085,
+      "expected": 6.0,
+      "independent_basis": "K~Gamma(f/2,T); f=12,T=1",
+      "name": "csvr_seed42_mean",
+      "observed": 5.984838386668768,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.25,
+      "expected": 6.0,
+      "independent_basis": "Var K=f*T^2/2; fixed acceptance band, correlated samples",
+      "name": "csvr_seed42_variance",
+      "observed": 6.053033191894308,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed42_constrainedfalse_axis0_mean",
+      "observed": 0.0008353969971615871,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed42_constrainedfalse_axis0_variance",
+      "observed": 0.49488232605764654,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed42_constrainedfalse_axis1_mean",
+      "observed": -0.00011300539916197163,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed42_constrainedfalse_axis1_variance",
+      "observed": 0.5030665598925115,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed42_constrainedfalse_axis2_mean",
+      "observed": -0.0018522162996751617,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed42_constrainedfalse_axis2_variance",
+      "observed": 0.4985103243318798,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed42_constrainedtrue_axis0_mean",
+      "observed": 0.0008353969971615871,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed42_constrainedtrue_axis0_variance",
+      "observed": 0.49488232605764654,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed42_constrainedtrue_axis1_mean",
+      "observed": -0.00011300539916197163,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed42_constrainedtrue_axis1_variance",
+      "observed": 0.5030665598925115,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed42_constrainedtrue_axis2_mean",
+      "observed": -0.0018522162996751617,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed42_constrainedtrue_axis2_variance",
+      "observed": 0.4985103243318798,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.085,
+      "expected": 6.0,
+      "independent_basis": "K~Gamma(f/2,T); f=12,T=1",
+      "name": "csvr_seed91_mean",
+      "observed": 5.98738329608352,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.25,
+      "expected": 6.0,
+      "independent_basis": "Var K=f*T^2/2; fixed acceptance band, correlated samples",
+      "name": "csvr_seed91_variance",
+      "observed": 5.984279450424388,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed91_constrainedfalse_axis0_mean",
+      "observed": -0.006904174156329512,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed91_constrainedfalse_axis0_variance",
+      "observed": 0.5028950032518554,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed91_constrainedfalse_axis1_mean",
+      "observed": -0.005320250952371633,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed91_constrainedfalse_axis1_variance",
+      "observed": 0.501956035988799,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed91_constrainedfalse_axis2_mean",
+      "observed": -0.012137630699631292,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed91_constrainedfalse_axis2_variance",
+      "observed": 0.5017825921006424,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed91_constrainedtrue_axis0_mean",
+      "observed": -0.006904174156329512,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed91_constrainedtrue_axis0_variance",
+      "observed": 0.5028950032518554,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed91_constrainedtrue_axis1_mean",
+      "observed": -0.005320250952371633,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed91_constrainedtrue_axis1_variance",
+      "observed": 0.501956035988799,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.025,
+      "expected": 0.0,
+      "independent_basis": "Independent free atom Maxwell mean=0; constraints on separate dimer",
+      "name": "baoab_seed91_constrainedtrue_axis2_mean",
+      "observed": -0.012137630699631292,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.035,
+      "expected": 0.5,
+      "independent_basis": "Maxwell Var(v)=T/m=1/2; fixed band, correlated samples",
+      "name": "baoab_seed91_constrainedtrue_axis2_variance",
+      "observed": 0.5017825921006424,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.22652078383688629,
+      "expected": 1.5,
+      "independent_basis": "Three quadratic rotational modes: Gamma(3/2,1); conservative OU correlation band",
+      "name": "rigid_rotation_seed7_mean",
+      "observed": 1.533383746661726,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.6595623515106588,
+      "expected": 1.5,
+      "independent_basis": "Gamma variance=3/2; centered-square variance=13.5, conservative OU correlation band",
+      "name": "rigid_rotation_seed7_variance",
+      "observed": 1.533444180905441,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 1e-10,
+      "expected": 0.0,
+      "independent_basis": "Three fixed analytical pair distances sqrt(3)",
+      "name": "rigid_rotation_seed7_constraint_residual",
+      "observed": 9.99902383114204e-11,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.22652078383688629,
+      "expected": 1.5,
+      "independent_basis": "Three quadratic rotational modes: Gamma(3/2,1); conservative OU correlation band",
+      "name": "rigid_rotation_seed42_mean",
+      "observed": 1.5030933874730659,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.6595623515106588,
+      "expected": 1.5,
+      "independent_basis": "Gamma variance=3/2; centered-square variance=13.5, conservative OU correlation band",
+      "name": "rigid_rotation_seed42_variance",
+      "observed": 1.4856942757291187,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 1e-10,
+      "expected": 0.0,
+      "independent_basis": "Three fixed analytical pair distances sqrt(3)",
+      "name": "rigid_rotation_seed42_constraint_residual",
+      "observed": 9.99609284235703e-11,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.22652078383688629,
+      "expected": 1.5,
+      "independent_basis": "Three quadratic rotational modes: Gamma(3/2,1); conservative OU correlation band",
+      "name": "rigid_rotation_seed91_mean",
+      "observed": 1.5155316280472064,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.6595623515106588,
+      "expected": 1.5,
+      "independent_basis": "Gamma variance=3/2; centered-square variance=13.5, conservative OU correlation band",
+      "name": "rigid_rotation_seed91_variance",
+      "observed": 1.506765725676598,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 1e-10,
+      "expected": 0.0,
+      "independent_basis": "Three fixed analytical pair distances sqrt(3)",
+      "name": "rigid_rotation_seed91_constraint_residual",
+      "observed": 9.989875593419129e-11,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 1e-07,
+      "expected": 1.5891360476416594,
+      "independent_basis": "Independent central energy derivative; h=1e-6",
+      "name": "lj_force_r1.1",
+      "observed": 1.5891360476133503,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 1e-07,
+      "expected": -1.670956241761612,
+      "independent_basis": "Independent central energy derivative; h=1e-6",
+      "name": "lj_force_r1.4",
+      "observed": -1.6709562417506771,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 1e-07,
+      "expected": -0.1291047399508416,
+      "independent_basis": "Independent central energy derivative; h=1e-6",
+      "name": "lj_force_r2.1",
+      "observed": -0.12910473994616636,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.001,
+      "expected": 0.0,
+      "independent_basis": "Two-body smooth LJ Hamiltonian; bounded energy error",
+      "name": "nve_energy_band_dt0.004",
+      "observed": 4.53571794478691e-05,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.001,
+      "expected": 0.0,
+      "independent_basis": "Two-body smooth LJ Hamiltonian; bounded energy error",
+      "name": "nve_energy_band_dt0.002",
+      "observed": 1.1338612830091854e-05,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.001,
+      "expected": 0.0,
+      "independent_basis": "Two-body smooth LJ Hamiltonian; bounded energy error",
+      "name": "nve_energy_band_dt0.001",
+      "observed": 2.8347420262253564e-06,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.3,
+      "expected": 4.0,
+      "independent_basis": "Velocity Verlet global energy error O(dt^2), same physical duration=2",
+      "name": "nve_dt_halving_band_ratio0",
+      "observed": 4.000240605049538,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.3,
+      "expected": 4.0,
+      "independent_basis": "Velocity Verlet global energy error O(dt^2), same physical duration=2",
+      "name": "nve_dt_halving_band_ratio1",
+      "observed": 3.999874671202429,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.005,
+      "expected": -0.3977310199534333,
+      "independent_basis": "Direct reciprocal Ewald sum, same kappa=.8 real rc=4.2; neutral 3-charge fixture",
+      "name": "spme_kcut4.8_energy",
+      "observed": -0.3990848497199641,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.005,
+      "expected": 0.0,
+      "independent_basis": "Direct Ewald independent reciprocal summation",
+      "name": "spme_kcut4.8_force_max_error",
+      "observed": 0.0023387620916457963,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 1e-07,
+      "expected": -0.3916790826952177,
+      "independent_basis": "Central homogeneous strain -dU/dln(lambda), full box+positions scaled; h=1e-6",
+      "name": "spme_kcut4.8_strain_virial",
+      "observed": -0.39167908268273277,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.005,
+      "expected": -0.3977310199534333,
+      "independent_basis": "Direct reciprocal Ewald sum, same kappa=.8 real rc=4.2; neutral 3-charge fixture",
+      "name": "spme_kcut6.4_energy",
+      "observed": -0.39806558940626213,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.005,
+      "expected": 0.0,
+      "independent_basis": "Direct Ewald independent reciprocal summation",
+      "name": "spme_kcut6.4_force_max_error",
+      "observed": 0.0005945376422907128,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 1e-07,
+      "expected": -0.39621539857370713,
+      "independent_basis": "Central homogeneous strain -dU/dln(lambda), full box+positions scaled; h=1e-6",
+      "name": "spme_kcut6.4_strain_virial",
+      "observed": -0.3962153986175857,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 1e-07,
+      "expected": -0.3977306489988397,
+      "independent_basis": "Central full-cell strain derivative",
+      "name": "direct_ewald_strain_virial",
+      "observed": -0.39773064898801824,
+      "passed": true
+    },
+    {
+      "absolute_tolerance": 0.0,
+      "expected": 0.0,
+      "independent_basis": "Unsplit deterministic trajectory with identical stochastic stream; 13+17 steps",
+      "name": "langevin_json_restart_seam_max_error",
+      "observed": 0.0,
+      "passed": true
+    }
+  ],
+  "samples_per_seed": 40000,
+  "sampling_note": "Correlated moments with fixed regression tolerances; no claim of formal uncertainty or converged liquid observables",
+  "schema_version": 1,
+  "seeds": [
+    7,
+    42,
+    91
+  ],
+  "passed": true,
+  "provenance": {
+    "created_utc": "2026-10-04T02:06:22.328296+00:00",
+    "command": [
+      "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/release/examples/scientific_validation"
+    ],
+    "returncode": 0,
+    "binary_sha256": "9154107becda2398d54e5439ccd22cc824f55686da93271fae6207e3ed95ad75",
+    "git_commit": "11d7683841786699e77d02d7c55c2d8af9cdac40",
+    "git_status": "",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "python": "3.12.14 (main, Aug 25 2026, 13:50:33) [Clang 22.1.3 ]",
+    "python_executable": "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "threads": 1
+  }
+}

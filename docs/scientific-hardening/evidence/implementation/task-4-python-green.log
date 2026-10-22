@@ -1,0 +1,11 @@
+test_render_argon_style (test_parity.ParityTests.test_render_argon_style) ... ok
+test_run_nve_and_parse (test_parity.ParityTests.test_run_nve_and_parse) ... ok
+test_nonzero_subprocess_propagates (test_workflows.WorkflowTests.test_nonzero_subprocess_propagates) ... ok
+test_relative_source_paths_and_numeric_rows (test_workflows.WorkflowTests.test_relative_source_paths_and_numeric_rows) ... ok
+test_toml_quotes_and_nested_types (test_workflows.WorkflowTests.test_toml_quotes_and_nested_types) ... ok
+test_typed_surface (test_workflows.WorkflowTests.test_typed_surface) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.037s
+
+OK

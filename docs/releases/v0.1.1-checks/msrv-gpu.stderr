@@ -1,0 +1,49 @@
+   Compiling cfg_aliases v0.2.2
+   Compiling objc2 v0.6.4
+    Checking objc2-encode v4.1.0
+   Compiling bytemuck_derive v1.12.0
+   Compiling parking_lot_core v0.9.12
+    Checking unicode-width v0.2.2
+    Checking bit-vec v0.9.1
+    Checking log v0.4.34
+    Checking half v2.7.1
+    Checking foldhash v0.2.0
+    Checking unicode-ident v1.0.24
+   Compiling naga v29.0.4
+    Checking raw-window-handle v0.6.2
+    Checking hashbrown v0.16.1
+    Checking bit-set v0.9.1
+    Checking scopeguard v1.2.0
+    Checking smallvec v1.16.0
+    Checking hexf-parse v0.2.1
+    Checking codespan-reporting v0.13.1
+    Checking arrayvec v0.7.8
+    Checking rustc-hash v1.1.0
+    Checking lock_api v0.4.14
+   Compiling wgpu-hal v29.0.4
+    Checking profiling v1.0.18
+   Compiling wgpu-core v29.0.4
+   Compiling litrs v1.0.0
+   Compiling wgpu v29.0.4
+    Checking static_assertions v1.1.0
+    Checking pollster v0.4.0
+    Checking parking_lot v0.12.5
+    Checking ciborium-ll v0.2.2
+    Checking ciborium v0.2.2
+   Compiling document-features v0.2.12
+    Checking bytemuck v1.25.2
+    Checking criterion v0.5.1
+    Checking wgpu-types v29.0.4
+    Checking objc2-core-foundation v0.3.2
+    Checking block2 v0.6.2
+    Checking objc2-foundation v0.3.2
+    Checking objc2-metal v0.3.2
+    Checking wgpu-naga-bridge v29.0.4
+    Checking objc2-quartz-core v0.3.2
+    Checking raw-window-metal v1.1.0
+    Checking wgpu-core-deps-apple v29.0.4
+    Checking modena-core v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-core)
+    Checking modena-mcp v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-mcp)
+    Checking modena-bench v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-bench)
+    Checking modena-cli v0.1.1 (/Users/ricardoleal20/Documents/Code/Research/modena-oss-release/crates/modena-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 31.71s

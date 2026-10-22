@@ -1,0 +1,17 @@
+test_failure_retains_evidence_and_fails (test_benchmark.BenchmarkTests.test_failure_retains_evidence_and_fails) ... ok
+test_real_release_cli_uses_valid_no_file_deck_and_reports_drift (test_benchmark.BenchmarkTests.test_real_release_cli_uses_valid_no_file_deck_and_reports_drift) ... FAIL
+test_success_has_actual_steps_numeric_renderer_and_provenance (test_benchmark.BenchmarkTests.test_success_has_actual_steps_numeric_renderer_and_provenance) ... ok
+
+======================================================================
+FAIL: test_real_release_cli_uses_valid_no_file_deck_and_reports_drift (test_benchmark.BenchmarkTests.test_real_release_cli_uses_valid_no_file_deck_and_reports_drift)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_benchmark.py", line 53, in test_real_release_cli_uses_valid_no_file_deck_and_reports_drift
+    self.assertEqual(result.returncode, 0, result.stderr)
+AssertionError: 1 != 0 : FAILED modena: exit 1; retained logs in /private/var/folders/m5/4v1jt6nn2wlcr98s_50cdv9w0000gn/T/tmp_oll_z44
+
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.722s
+
+FAILED (failures=1)

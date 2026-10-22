@@ -1,0 +1,3 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.79s
+     Running tests/gpu_pair.rs (target/debug/deps/gpu_pair-f361f556826f89cf)

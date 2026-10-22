@@ -1,0 +1,30 @@
+{
+  "label": "gpu-adapter",
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "test",
+    "-p",
+    "modena-core",
+    "--features",
+    "gpu",
+    "--test",
+    "gpu_pair",
+    "--",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "returncode": 0,
+  "elapsed_seconds": 6.281557125039399,
+  "created_utc": "2026-10-04T02:30:14.713912+00:00",
+  "rust_test_counts": [
+    [
+      7,
+      0,
+      0
+    ]
+  ],
+  "stdout_file": "gpu-adapter.stdout",
+  "stderr_file": "gpu-adapter.stderr"
+}

@@ -1,0 +1,15 @@
+test_missing_binary_has_failure_provenance (test_validation.ValidationTests.test_missing_binary_has_failure_provenance) ... FAIL
+test_nonfinite_or_outside_tolerance_is_failure_with_raw_evidence (test_validation.ValidationTests.test_nonfinite_or_outside_tolerance_is_failure_with_raw_evidence) ... ok
+
+======================================================================
+FAIL: test_missing_binary_has_failure_provenance (test_validation.ValidationTests.test_missing_binary_has_failure_provenance)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_validation.py", line 18, in test_missing_binary_has_failure_provenance
+    self.assertTrue((out / 'validation.json').exists())
+AssertionError: False is not true
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.683s
+
+FAILED (failures=1)

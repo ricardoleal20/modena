@@ -1,0 +1,2 @@
+InputConfig::from_str accepted valid positive concentrations totaling1
+PANIC instead of Result: capacity overflow

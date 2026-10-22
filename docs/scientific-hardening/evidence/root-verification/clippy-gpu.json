@@ -1,0 +1,24 @@
+{
+  "label": "clippy-gpu",
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--features",
+    "modena-core/gpu",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 3.010884416056797,
+  "created_utc": "2026-10-04T03:06:58.947054+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "clippy-gpu.stdout",
+  "stderr_file": "clippy-gpu.stderr"
+}

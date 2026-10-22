@@ -1,0 +1,98 @@
+{
+  "base": "10bd9ee3077509ee472875f6697fd6d1a849753e",
+  "phase": "final combined fix, verified production before cohesive commit",
+  "source_sha256": {
+    "crates/modena-core/src/bonded.rs": "c9e2ed02f1cbd20bb31519e4286186f0c9f72647a2c4dcb73647a8601d3b3991",
+    "crates/modena-core/src/composite.rs": "1feea0ba5fe478c80a42a2629f6d7806e00a89338d0aed2269e37e64538c47c8",
+    "crates/modena-core/src/ewald.rs": "11d294c94eb5cefa77ad16f586f564cf3f26b14d835b15a6354971028c90bf2b",
+    "crates/modena-core/src/force_model.rs": "1c57bd2654efe7b816c2bf1ee54db7aee1a3ddaf3f2163c58d157928e553696d",
+    "crates/modena-core/src/lattice.rs": "2177832469cf3a6aa58a2f92d22ff0c95f3eff3352410a1a2ca97d5713bc8a8e",
+    "crates/modena-core/src/runner.rs": "83508d1591cf33cd0bf38459e1c7eb873fa4ca242b26c7631c75825462bb4c4d",
+    "crates/modena-core/src/spme.rs": "30c8d67ee637a6c476369211e6cab98ae1b554c6b3c80d6decc40f4793c67027",
+    "crates/modena-mcp/src/lib.rs": "7156a2a30c717240320da1ddd383a58de8d279a66dac61ed6f5e23d88e488e0d",
+    "crates/modena-core/tests/final_integration.rs": "f247a395fa8e3c4b83920a38ba2f3548995c82ab1c13e5dd3efabfc79a93db46",
+    "crates/modena-mcp/tests/final_integration.rs": "59edaba8290d1d153322f75a8ed6af0725808f1d7e0a8086dc1338e0bcf1a59f",
+    "crates/modena-core/tests/fixtures/final_alloy.toml": "19596591b184e2388f7634da0d59c269a5f85e4c628aa657fdda4794700ea349",
+    "README.md": "509f136bf602bddce5d1ee685c0a26c55fde04378d0fe44926880625f524b3c4",
+    "docs/scientific-hardening/RESULTS.md": "b2e8df663dc011941edeec795f63fbdeaa7248143f7c9a0cc993042bc25e07bd"
+  },
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+  "accepted_commands": [
+    {
+      "command": "rtk proxy cargo test -p modena-core --test final_integration --test runner_hardening --test sampling_hardening --test sampling_state --test rigid_sampling --test force_hardening --test chemical_workflows --test io_and_lattice --test restart -- --nocapture",
+      "log": "final-fix-core-covering-confirmed.log",
+      "passed": 101,
+      "failed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "rtk proxy cargo test -p modena-core --lib lattice:: -- --nocapture",
+      "log": "final-fix-lattice-lib.log",
+      "passed": 4,
+      "failed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "rtk proxy cargo test -p modena-core --test force_cache -- --nocapture",
+      "log": "final-fix-force-cache.log",
+      "passed": 1,
+      "failed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "rtk proxy cargo test -p modena-mcp --test final_integration --test chemical_workflows --lib -- --nocapture",
+      "log": "final-fix-mcp-covering.log",
+      "passed": 23,
+      "failed": 0,
+      "exit_code": 0
+    },
+    {
+      "command": "rtk proxy cargo clippy -p modena-core -p modena-mcp --all-targets -- -D warnings",
+      "log": "final-fix-clippy.log",
+      "exit_code": 0
+    },
+    {
+      "command": "rtk proxy cargo fmt --all --check",
+      "log": "final-fix-fmt-check.log",
+      "exit_code": 0
+    }
+  ],
+  "distinct_tests_passed": 129,
+  "new_core_tests": 12,
+  "new_mcp_tests": 2,
+  "red_production_base": "10bd9ee3077509ee472875f6697fd6d1a849753e",
+  "red_core": {
+    "passed": 2,
+    "failed": 10
+  },
+  "red_mcp": {
+    "passed": 0,
+    "failed": 2
+  },
+  "archive_sha256": {
+    "final-fix-clippy.log": "244176c3aa775e21919bae38e96b614e6387c6b5ac1707997e78f7d262b6332a",
+    "final-fix-core-covering-confirmed.log": "fd0aae3a1843ad8895bdc8a05cf52ca764eebff83d4503dd0306cc29b80ed397",
+    "final-fix-core-covering.log": "46ddffdb6a5f88d3e19ae9ee73ffbf360c53c11ba332cc9028cd10e7e8b3d76b",
+    "final-fix-core-expanded-green-confirmed.log": "c0ef9acc77216a58f92c1df974d30942e6eb3332ffa8694390ebf8e3e19f3728",
+    "final-fix-core-expanded-green.log": "0c4c23c9e0ae3aeb7f6400b7dddd054e4c5878b785fa48386d1dbf3fc0ae580d",
+    "final-fix-core-expanded-red.log": "76400990681b3ccf1c57aff7e1d0239fb7dca9b2195027b796791053015d8507",
+    "final-fix-core-green.log": "8a0e3c51010b9759d9b1d622e36219157cbe8306fe249fd28593c9b91feac0ce",
+    "final-fix-core-red.log": "13aee48c7752867572ac442b82db3faa744a0d992598fab2db354160428b982e",
+    "final-fix-expanded-red-provenance.json": "c2f6f13d1ea7d484cbfcc63329bd4b79cefac2d27d25bf305bb3040062b54cdf",
+    "final-fix-fmt-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "final-fix-fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "final-fix-force-cache.log": "789bcf9b16030115b717e389bbdb266645a977ec39cf47b6420011a1d5aa655b",
+    "final-fix-lattice-lib.log": "487ee0cd5fd6bce3516f33cc3973261d7c56b1cf84c53f0c8d681f49e1844ba7",
+    "final-fix-mcp-covering.log": "d055122bd4c37462ecbc8947f3b96a9708726efb76c0c5a9062b4e3b984bff62",
+    "final-fix-mcp-expanded-red.log": "62c9b7fba9ed8a8ec1db277e21b9a23b892a1a2a36beebbe06eb54561ddc3d46",
+    "final-fix-mcp-green-confirmed.log": "44f3c0d16f4f5398e9d7715a4e89cfc27d5deaeff29ab10d0cd06bd0a94b78f1",
+    "final-fix-mcp-green-final.log": "4d808396f2871d41fd6d76059d4b2ec6b716fdfd63b88e795df0b8e59c80d0f6",
+    "final-fix-mcp-green.log": "c4502604476b25bcc0df779ef02720f317cc4c2904f3f986f0f426c3b742926f",
+    "final-fix-mcp-red.log": "667a6ed51fe5924fd4638f50416d399fbd2d2cc6266d8581930e603d59134b2d",
+    "final-fix-preserved-evidence.json": "f40bc1432feda69183dc802ded5d5e7a759b4657fe132ae920434bb2f6d162d6"
+  },
+  "unchanged_preexisting_evidence_files": 218,
+  "reviewer_original_hashes_verified": 12,
+  "broad_final_gates": "owned by coordinator; pending at handoff; no performance measurements by this fix"
+}

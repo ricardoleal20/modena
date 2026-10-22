@@ -244,9 +244,7 @@ use modena_core::{Buckingham, InterpKind, Morse, SoftSphere, Tabulated};
 /// One test instance of each registered potential, with a sample distance range
 /// that stays clear of the r → 0 singularity and inside the cutoff. The trailing
 /// bool is whether the potential satisfies the exact `dU/dr = −F` contract:
-/// analytic potentials do; the tabulated potential interpolates `U` and `F`
-/// independently, so the contract holds only at nodes (it is excluded from the
-/// gradient test but still checked for finiteness and cutoff continuity).
+/// all registered potentials do, including joint Hermite tabulated data.
 #[allow(clippy::type_complexity)]
 fn registered_potentials() -> Vec<(&'static str, Box<dyn PairPotential>, f64, f64, bool)> {
     // (name, potential, r_min, r_max, exact_gradient) — r_max < cutoff.
@@ -295,15 +293,14 @@ fn registered_potentials() -> Vec<(&'static str, Box<dyn PairPotential>, f64, f6
             ),
             0.95,
             2.49,
-            false,
+            true,
         ),
     ]
 }
 
 #[test]
 fn all_potentials_force_is_negative_energy_gradient() {
-    // dU/dr = −F(r) by central finite difference, for every *analytic* registered
-    // potential. (Tabulated is excluded — see `registered_potentials`.)
+    // dU/dr = −F(r) by central finite difference for every registered potential.
     for (name, pot, r_min, r_max, exact) in registered_potentials() {
         if !exact {
             continue;

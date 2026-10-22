@@ -1,0 +1,25 @@
+{
+  "review_head": "10bd9ee3077509ee472875f6697fd6d1a849753e",
+  "library": "target/release/libmodena_core.rlib",
+  "library_sha256": "794cca85de5b6eae1dd3ec9ef80387b4b5f905254991a758f8460765d107b295",
+  "library_provenance": "docs/scientific-hardening/evidence/raw/original-probes-current.json",
+  "compile_template": "rtk proxy rustc --edition=2021 -O -C lto=thin -C codegen-units=1 <source> --extern modena_core=target/release/libmodena_core.rlib -L dependency=target/release/deps -o <binary>",
+  "run_environment": {
+    "RAYON_NUM_THREADS": "1"
+  },
+  "files": {
+    "spme_com.rs": "e408cf0d050c9fe0f117763dc279c7225cbb984da4c449ba17a40d133b0a82ee",
+    "charges.xyz": "f69364f16fc3a62970cc8782efe69ce9fa1eaa3a5c4eb2351d7e4df5351b14a9",
+    "compile.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "compile.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "run.stdout": "db71f0485e71f38847f7b5f6771bdca126f4bb50772fa3d9a5243f8bbec1b1a0",
+    "run.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "alloy.rs": "c560fd5c1f03658530effe5bd89d9793d7eaab27fe2d715a98bff1714859aabe",
+    "alloy.toml": "1f5496cde160e89a6c572d60e79a10e35c235895085ce97385d3afbe95b397a7",
+    "alloy-compile.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "alloy-compile.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "alloy-run.stdout": "696bf979f79e6634bcd570a67928a0c373df2456a393c45b2c724871935e6259",
+    "alloy-run.stderr": "9c41f3f7cc5cff4c264fd242743111792d1beeab5f95dff5abfad3a4735e9f5d"
+  },
+  "purpose": "Focused correctness review probes only; not performance data; no production source modified."
+}

@@ -91,6 +91,9 @@ impl BondedForceModel {
 }
 
 impl ForceModel for BondedForceModel {
+    fn conserves_total_momentum(&self, _system: &System) -> bool {
+        true
+    }
     fn compute(
         &self,
         system: &mut System,

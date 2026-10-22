@@ -1,0 +1,20 @@
+{
+  "label": "clippy-default",
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "returncode": 0,
+  "elapsed_seconds": 1.8727307920344174,
+  "created_utc": "2026-10-04T02:28:46.201415+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "clippy-default.stdout",
+  "stderr_file": "clippy-default.stderr"
+}

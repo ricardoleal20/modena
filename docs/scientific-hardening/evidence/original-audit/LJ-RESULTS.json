@@ -1,0 +1,312 @@
+{
+  "sha": "b68abd112339aa6970261f470a572da6633bc617",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "cpu_count": 11,
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "lammps": "Large-scale Atomic/Molecular Massively Parallel Simulator - 22 Jul 2025 - Update 6",
+  "steps": 1000,
+  "repeats": 3,
+  "density": 0.8441942571548049,
+  "potential": "LJ shifted-force, sigma=epsilon=mass=1, cutoff=2.5",
+  "precision": "CPU f64",
+  "timing": "whole process wall time; includes setup; no trajectory/log files",
+  "caveats": [
+    "shared desktop, no idle guarantee",
+    "three repeats only",
+    "independent RNG initial velocities",
+    "LAMMPS serial; default MODENA uses multiple cores",
+    "not statistical property validation"
+  ],
+  "rows": [
+    {
+      "atoms": 864,
+      "engine": "lammps_serial",
+      "wall_s": [
+        0.25862670806236565,
+        0.27017229213379323,
+        0.25822716602124274
+      ],
+      "median_ms_per_step": 0.25862670806236565,
+      "loadavg_before_repeats": [
+        [
+          3.8212890625,
+          5.810546875,
+          5.6767578125
+        ],
+        [
+          4.07568359375,
+          5.830078125,
+          5.68408203125
+        ],
+        [
+          4.07568359375,
+          5.830078125,
+          5.68408203125
+        ]
+      ],
+      "relative_endpoint_energy_drift": [
+        9.68822973107289e-06,
+        9.68822973107289e-06,
+        9.68822973107289e-06
+      ]
+    },
+    {
+      "atoms": 864,
+      "engine": "modena_1t",
+      "wall_s": [
+        0.38772704103030264,
+        0.37879058299586177,
+        0.38792108302004635
+      ],
+      "median_ms_per_step": 0.38772704103030264,
+      "loadavg_before_repeats": [
+        [
+          3.8212890625,
+          5.810546875,
+          5.6767578125
+        ],
+        [
+          4.07568359375,
+          5.830078125,
+          5.68408203125
+        ],
+        [
+          4.07568359375,
+          5.830078125,
+          5.68408203125
+        ]
+      ],
+      "relative_endpoint_energy_drift": [
+        1.815e-05,
+        1.815e-05,
+        1.815e-05
+      ]
+    },
+    {
+      "atoms": 864,
+      "engine": "modena_default",
+      "wall_s": [
+        0.3759879998397082,
+        0.3848062502220273,
+        0.38170916703529656
+      ],
+      "median_ms_per_step": 0.38170916703529656,
+      "loadavg_before_repeats": [
+        [
+          3.8212890625,
+          5.810546875,
+          5.6767578125
+        ],
+        [
+          4.07568359375,
+          5.830078125,
+          5.68408203125
+        ],
+        [
+          4.07568359375,
+          5.830078125,
+          5.68408203125
+        ]
+      ],
+      "relative_endpoint_energy_drift": [
+        1.815e-05,
+        1.815e-05,
+        1.815e-05
+      ]
+    },
+    {
+      "atoms": 2048,
+      "engine": "lammps_serial",
+      "wall_s": [
+        0.6610902089159936,
+        0.646510416874662,
+        0.6399786660913378
+      ],
+      "median_ms_per_step": 0.646510416874662,
+      "loadavg_before_repeats": [
+        [
+          4.07568359375,
+          5.830078125,
+          5.68408203125
+        ],
+        [
+          4.1494140625,
+          5.81591796875,
+          5.6796875
+        ],
+        [
+          4.05712890625,
+          5.76904296875,
+          5.66357421875
+        ]
+      ],
+      "relative_endpoint_energy_drift": [
+        1.7885962387526092e-05,
+        1.7885962387526092e-05,
+        1.7885962387526092e-05
+      ]
+    },
+    {
+      "atoms": 2048,
+      "engine": "modena_1t",
+      "wall_s": [
+        1.2711486669722944,
+        1.489169292151928,
+        1.2501231250353158
+      ],
+      "median_ms_per_step": 1.2711486669722944,
+      "loadavg_before_repeats": [
+        [
+          4.07568359375,
+          5.830078125,
+          5.68408203125
+        ],
+        [
+          4.1494140625,
+          5.81591796875,
+          5.6796875
+        ],
+        [
+          4.05712890625,
+          5.76904296875,
+          5.66357421875
+        ]
+      ],
+      "relative_endpoint_energy_drift": [
+        9.836e-06,
+        9.836e-06,
+        9.836e-06
+      ]
+    },
+    {
+      "atoms": 2048,
+      "engine": "modena_default",
+      "wall_s": [
+        1.3765229159034789,
+        1.3596043749712408,
+        1.2936072919983417
+      ],
+      "median_ms_per_step": 1.3596043749712408,
+      "loadavg_before_repeats": [
+        [
+          4.07568359375,
+          5.830078125,
+          5.68408203125
+        ],
+        [
+          4.1494140625,
+          5.81591796875,
+          5.6796875
+        ],
+        [
+          4.05712890625,
+          5.76904296875,
+          5.66357421875
+        ]
+      ],
+      "relative_endpoint_energy_drift": [
+        9.836e-06,
+        9.836e-06,
+        9.836e-06
+      ]
+    },
+    {
+      "atoms": 20000,
+      "engine": "lammps_serial",
+      "wall_s": [
+        6.765583749860525,
+        6.848869334207848,
+        7.6288978341035545
+      ],
+      "median_ms_per_step": 6.848869334207848,
+      "loadavg_before_repeats": [
+        [
+          3.97216796875,
+          5.72265625,
+          5.64794921875
+        ],
+        [
+          4.23779296875,
+          5.63330078125,
+          5.61669921875
+        ],
+        [
+          4.177734375,
+          5.501953125,
+          5.568359375
+        ]
+      ],
+      "relative_endpoint_energy_drift": [
+        1.2365162051370416e-05,
+        1.2365162051370416e-05,
+        1.2365162051370416e-05
+      ]
+    },
+    {
+      "atoms": 20000,
+      "engine": "modena_1t",
+      "wall_s": [
+        13.323480082908645,
+        13.351640166016296,
+        13.704638665774837
+      ],
+      "median_ms_per_step": 13.351640166016296,
+      "loadavg_before_repeats": [
+        [
+          3.97216796875,
+          5.72265625,
+          5.64794921875
+        ],
+        [
+          4.23779296875,
+          5.63330078125,
+          5.61669921875
+        ],
+        [
+          4.177734375,
+          5.501953125,
+          5.568359375
+        ]
+      ],
+      "relative_endpoint_energy_drift": [
+        1.726e-05,
+        1.726e-05,
+        1.726e-05
+      ]
+    },
+    {
+      "atoms": 20000,
+      "engine": "modena_default",
+      "wall_s": [
+        3.6826491251122206,
+        3.6389172500930727,
+        3.725362417055294
+      ],
+      "median_ms_per_step": 3.6826491251122206,
+      "loadavg_before_repeats": [
+        [
+          3.97216796875,
+          5.72265625,
+          5.64794921875
+        ],
+        [
+          4.23779296875,
+          5.63330078125,
+          5.61669921875
+        ],
+        [
+          4.177734375,
+          5.501953125,
+          5.568359375
+        ]
+      ],
+      "relative_endpoint_energy_drift": [
+        1.726e-05,
+        1.726e-05,
+        1.726e-05
+      ]
+    }
+  ],
+  "cpu": "Apple M3 Pro",
+  "load_note": "No builds/tests from this audit during measurement; desktop load average about 4, no idle guarantee"
+}

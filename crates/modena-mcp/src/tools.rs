@@ -19,6 +19,7 @@ pub struct Tool {
 /// The full v1 tool set, in a stable order.
 pub fn tool_list() -> Vec<Tool> {
     vec![
+        Tool { name: "get_capabilities", description: "Discover supported scientific domains, parameter conventions, backend presence and production limitations.", input_schema: schema!({"type":"object","properties":{},"additionalProperties":false}) },
         Tool {
             name: "list_potentials",
             description: "List the registered pair potentials and their parameter names.",
@@ -30,7 +31,7 @@ pub fn tool_list() -> Vec<Tool> {
         },
         Tool {
             name: "build_system",
-            description: "Validate and materialize a structure (FCC lattice or XYZ file) without running. Returns atom count, number density, and box size. Use this to confirm a structure before launching a run.",
+            description: "Materialize raw structure fields without running. FCC/XYZ/alloy/rocksalt/water supported; paths relative to MCP work_dir. Returned lengths/density follow supplied structure values; water uses physical constants. Model/type compatibility and full scientific setup require run_probe.",
             input_schema: schema!({
                 "type": "object",
                 "properties": {
@@ -56,7 +57,7 @@ pub fn tool_list() -> Vec<Tool> {
         },
         Tool {
             name: "run_probe",
-            description: "Run a short synchronous simulation (steps clamped to max_steps, default 500) and return the final thermodynamic state plus the energy-conservation report. Use for quick parameter checks.",
+            description: "Run a short synchronous simulation (steps clamped to max_steps, default 500). Returns final thermo in advertised units, ensemble/DOF/pressure metadata and conservation in reduced units. Use for complete setup checks.",
             input_schema: schema!({
                 "type": "object",
                 "properties": {
@@ -83,7 +84,7 @@ pub fn tool_list() -> Vec<Tool> {
         },
         Tool {
             name: "get_run_status",
-            description: "Snapshot a run's state, current step, latest thermo, and conservation report.",
+            description: "Snapshot state, latest thermo, metadata and accumulated finite post-initial sample mean/count/window. Thermo uses advertised units; conservation uses reduced units.",
             input_schema: schema!({
                 "type": "object",
                 "properties": {
@@ -172,6 +173,7 @@ pub fn call_tool(
     mgr: &RunManager,
 ) -> Result<serde_json::Value, McpError> {
     match name {
+        "get_capabilities" => Ok(crate::capabilities()),
         "list_potentials" => Ok(serde_json::to_value(mgr.list_potentials()).unwrap()),
         "build_system" => {
             #[derive(serde::Deserialize)]
@@ -290,113 +292,12 @@ fn parse<T: serde::de::DeserializeOwned>(args: &serde_json::Value) -> Result<T, 
 // precise error.
 
 fn structure_definitions() -> serde_json::Value {
-    json!({
-        "structure": {
-            "oneOf": [
-                {
-                    "type": "object",
-                    "properties": {
-                        "type": { "const": "fcc" },
-                        "lattice_constant": { "type": "number" },
-                        "replicas": { "type": "array", "items": { "type": "integer" }, "minItems": 3, "maxItems": 3 },
-                        "element": { "type": "string" }
-                    },
-                    "required": ["type", "lattice_constant", "replicas"]
-                },
-                {
-                    "type": "object",
-                    "properties": {
-                        "type": { "const": "xyz" },
-                        "file": { "type": "string" },
-                        "box_size": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
-                        "element": { "type": "string" }
-                    },
-                    "required": ["type", "file", "box_size"]
-                },
-                {
-                    "type": "object",
-                    "properties": {
-                        "type": { "const": "rock_salt" },
-                        "lattice_constant": { "type": "number" },
-                        "replicas": { "type": "array", "items": { "type": "integer" }, "minItems": 3, "maxItems": 3 },
-                        "cation": { "type": "string" },
-                        "anion": { "type": "string" },
-                        "cation_charge": { "type": "number" },
-                        "anion_charge": { "type": "number" }
-                    },
-                    "required": ["type", "lattice_constant", "replicas", "cation_charge", "anion_charge"]
-                }
-            ]
-        }
-    })
+    let defs = config_definitions();
+    json!({"structure":defs["structure"]})
 }
 
 fn config_definitions() -> serde_json::Value {
-    json!({
-        "config": {
-            "type": "object",
-            "properties": {
-                "units": { "type": "string", "default": "reduced" },
-                "structure": { "$ref": "#/definitions/structure/oneOf/0" },
-                "model": {
-                    "type": "object",
-                    "properties": {
-                        "type": { "const": "lennard_jones" },
-                        "sigma": { "type": "number" },
-                        "epsilon": { "type": "number" },
-                        "cutoff": { "type": "number" }
-                    },
-                    "required": ["type", "sigma", "epsilon", "cutoff"]
-                },
-                "integrator": {
-                    "type": "object",
-                    "properties": {
-                        "type": {
-                            "enum": ["velocity_verlet", "langevin_baoab", "nose_hoover_chain"]
-                        },
-                        "dt": { "type": "number" },
-                        "gamma": { "type": "number" },
-                        "target_temperature": { "type": "number" },
-                        "seed": { "type": "integer" }
-                    },
-                    "required": ["type", "dt"]
-                },
-                "thermostat": {
-                    "type": "object",
-                    "properties": {
-                        "type": { "enum": ["berendsen", "velocity_rescaling", "none"] },
-                        "target_temperature": { "type": "number" },
-                        "tau": { "type": "number" },
-                        "seed": { "type": "integer" }
-                    }
-                },
-                "electrostatics": {
-                    "type": "object",
-                    "properties": {
-                        "kappa": { "type": "number" },
-                        "real_cutoff": { "type": "number" },
-                        "kspace_cutoff": { "type": "number" }
-                    },
-                    "required": ["kappa", "real_cutoff", "kspace_cutoff"]
-                },
-                "run": {
-                    "type": "object",
-                    "properties": {
-                        "steps": { "type": "integer", "minimum": 1 },
-                        "initial_temperature": { "type": "number" },
-                        "seed": { "type": "integer" },
-                        "trajectory_file": { "type": "string" },
-                        "trajectory_every": { "type": "integer" },
-                        "log_file": { "type": "string" },
-                        "log_every": { "type": "integer" }
-                    },
-                    "required": ["steps"]
-                }
-            },
-            "required": ["structure", "model", "integrator", "run"]
-        },
-        "structure": structure_definitions().get("structure").cloned().unwrap_or(serde_json::Value::Null)
-    })
+    serde_json::from_str(include_str!("config_schema.json")).expect("embedded config schema")
 }
 
 /// `json!` with `additionalProperties: false` baked into a `schema!` macro is

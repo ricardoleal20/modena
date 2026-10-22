@@ -1,0 +1,46 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+   Compiling modena-mcp v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.04s
+     Running unittests src/lib.rs (target/debug/deps/modena_mcp-22dc907f190836b0)
+
+running 16 tests
+test server::tests::notifications_get_no_response ... ok
+test server::tests::unknown_method_returns_rpc_error ... ok
+test server::tests::invalid_tool_args_is_error_result ... ok
+test server::tests::build_system_via_mcp ... ok
+test tests::rejects_invalid_sweep_combos ... ok
+test tests::density_sweep_rescales_lattice ... ok
+test tests::estimate_run_cost_is_finite_and_positive ... ok
+test tests::build_system_reports_counts ... ok
+test server::tests::run_probe_via_mcp ... ok
+test tests::run_probe_clamps_steps ... ok
+test server::tests::initialize_and_tools_list ... ok
+test tests::run_probe_returns_conservation ... ok
+test tests::async_run_completes_and_reports_status ... ok
+test tests::cancel_run_stops_early ... ok
+test tests::sweep_runs_to_completion ... ok
+test tests::detect_anomaly_flags_drift ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-257a66f79feaa4cf)
+
+running 5 tests
+test canonical_temperature_sweep_rejects_mc_coupling_explicitly ... ok
+test barostat_run_is_not_nve_through_request_path ... ok
+actual real event mean: expected=60.958701026164, reported=60.95870102616357, samples=8, window={"first_step":1,"includes_equilibration":true,"includes_initial":false,"last_step":8,"policy":"all finite emitted post-initial samples in this invocation; no burn-in removal; mean is independent of 4096-event FIFO"}
+test actual_means_counts_and_real_units_are_exposed ... ok
+test discovery_and_probe_surface_supported_domain ... ok
+accumulated sweep rows: [{"run_id":1,"status":{"conservation":{"e0":2.4731524765487407,"e_final":2.4558078417567195,"relative_drift":-0.007013168398021888,"verdict":"drifting"},"conservation_units":"reduced","error":null,"is_nve":true,"latest_thermo":{"kinetic":6.235557698157533,"potential":-3.779749856400813,"pressure":0.7464219202108361,"temperature":1.3856794884794517,"total":2.4558078417567195,"virial":18.484494478668726},"mean_potential_energy":-2.9332380452019446,"metadata":{"conserved_com_dof":3,"constraint_count":0,"ensemble":"nve","kinetic_dof":9,"output_units":"reduced","pressure_status":"unconstrained_pair_virial"},"run_id":1,"sample_count":4200,"sample_window":{"first_step":1,"includes_equilibration":true,"includes_initial":false,"last_step":4200,"policy":"all finite emitted post-initial samples in this invocation; no burn-in removal; mean is independent of 4096-event FIFO"},"state":"completed","step":4200,"thermo_units":"reduced","total_steps":4200},"value":0.7},{"run_id":2,"status":{"conservation":{"e0":4.273152476548742,"e_final":4.264398256165547,"relative_drift":-0.0020486562160462376,"verdict":"drifting"},"conservation_units":"reduced","error":null,"is_nve":true,"latest_thermo":{"kinetic":8.549581918208387,"potential":-4.28518366204284,"pressure":0.11243586576301043,"temperature":1.899907092935197,"total":4.264398256165547,"virial":-12.436223611493206},"mean_potential_energy":-3.079379048255322,"metadata":{"conserved_com_dof":3,"constraint_count":0,"ensemble":"nve","kinetic_dof":9,"output_units":"reduced","pressure_status":"unconstrained_pair_virial"},"run_id":2,"sample_count":4200,"sample_window":{"first_step":1,"includes_equilibration":true,"includes_initial":false,"last_step":4200,"policy":"all finite emitted post-initial samples in this invocation; no burn-in removal; mean is independent of 4096-event FIFO"},"state":"completed","step":4200,"thermo_units":"reduced","total_steps":4200},"value":1.1}]
+test accumulated_mean_survives_event_fifo_and_transition_uses_it ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/final_integration.rs (target/debug/deps/final_integration-5c7b886115dc084c)
+
+running 2 tests
+test discovery_request_lists_every_production_pair_family_with_schema_parameters ... ok
+test exact_tiny_alloy_completes_real_mcp_probe_and_async_lifecycle ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

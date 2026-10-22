@@ -1,0 +1,13 @@
+   Compiling modena-mcp v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.52s
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-257a66f79feaa4cf)
+
+running 5 tests
+test canonical_temperature_sweep_rejects_mc_coupling_explicitly ... ok
+test barostat_run_is_not_nve_through_request_path ... ok
+test actual_means_counts_and_real_units_are_exposed ... ok
+test discovery_and_probe_surface_supported_domain ... ok
+test accumulated_mean_survives_event_fifo_and_transition_uses_it ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

@@ -1,0 +1,5 @@
+# Preserve captured command output and historical evidence byte for byte.
+*.stdout -whitespace
+*.stderr -whitespace
+*.log -whitespace
+docs/scientific-hardening/evidence/** -whitespace

@@ -77,7 +77,7 @@ fn settle_restores_distorted_water() {
     sys.set_pos(2, sys.pos(2) + Vec3::new(-0.12, 0.09, 0.11));
     let com_before = mass_weighted_com(&sys);
     let cons = rigid_water();
-    cons.settle(&mut sys, 1e-12);
+    cons.settle(&mut sys, 1e-12).unwrap();
     for (i, j) in [(0, 1), (0, 2)] {
         let r = sys.box_size.min_image(sys.pos(j) - sys.pos(i)).norm();
         assert!((r - D_OH).abs() < 1e-10, "O–H bond ({i},{j}): {r}");

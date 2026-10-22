@@ -1,0 +1,19 @@
+time: /Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/absent-gpu-fixture: No such file or directory
+        0.00 real         0.00 user         0.00 sys
+              966656  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                  77  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                   1  involuntary context switches
+             1089786  instructions retired
+              603265  cycles elapsed
+              802984  peak memory footprint

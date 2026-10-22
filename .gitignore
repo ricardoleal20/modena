@@ -1,5 +1,10 @@
 /target
 **/*.rs.bk
+.DS_Store
+__pycache__/
+.venv/
+.claude/
+/research/
 
 # generated simulation outputs
 *.csv
@@ -8,6 +13,10 @@
 *.xtc
 *.trr
 *.chk
+*.dump
+*.lammpstrj
+*.restart
+log.lammps
 
 # proptest persisted regression cases (test scratch)
 *.proptest-regressions

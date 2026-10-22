@@ -1,0 +1,18 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.70s
+     Running tests/final_integration.rs (target/debug/deps/final_integration-20f1df006aa846f7)
+
+running 10 tests
+test alloy_invalid_input_and_capacity_return_errors ... ok
+test public_velocity_initializer_respects_declared_com_manifold ... ok
+test tiny_alloy_populations_are_bounded_deterministic_and_exact ... ok
+test exact_review_alloy_constructs_and_runs_common_config ... ok
+test unsupported_mesh_com_checkpoint_is_rejected_and_state_only_reassesses_model ... ok
+test charged_mesh_net_force_is_common_translation_energy_derivative ... ok
+test momentum_conserving_and_zero_charge_controls_keep_com_reduction ... ok
+test constrained_charged_mesh_has_eight_modes_and_valid_tangent_velocities ... ok
+test charged_mesh_controllers_initialize_and_keep_full_kinetic_space ... ok
+test charged_mesh_split_continuation_preserves_full_space ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+

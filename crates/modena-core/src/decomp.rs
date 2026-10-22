@@ -442,15 +442,25 @@ impl DomainForceModel {
 }
 
 impl ForceModel for DomainForceModel {
+    fn neighbor_cutoff(&self) -> Option<f64> {
+        Some(self.potential.cutoff())
+    }
     fn compute(
         &self,
         system: &mut System,
         virial: &mut Virial,
-        _neighbors: &mut NeighborList,
+        neighbors: &mut NeighborList,
     ) -> Result<f64> {
-        // Zero once; the per-rank kernel accumulates.
-        system.forces.fill(0.0);
-        virial.w = 0.0;
+        if !neighbors.pair_scales().is_empty() {
+            return Err(ModenaError::Config(
+                "domain force backend does not support special pair scales or exclusions".into(),
+            ));
+        }
+        if system.box_size != self.decomp.box_size {
+            return Err(ModenaError::Config(
+                "domain force backend requires its original box".into(),
+            ));
+        }
         let mut pe = 0.0f64;
         for rank in 0..self.comm.size() {
             // The in-process kernel writes directly to the shared system; each

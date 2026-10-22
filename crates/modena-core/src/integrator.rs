@@ -11,7 +11,7 @@
 //!
 //! M7: the kick/drift loops operate on the flat `3N` SoA buffers directly.
 
-use rand::rngs::StdRng;
+use chacha20::ChaCha12Rng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, StandardNormal};
 
@@ -21,7 +21,6 @@ use crate::force_model::{ForceModel, Virial};
 use crate::neighbor::NeighborList;
 use crate::system::System;
 use crate::thermo::Energies;
-use crate::vec3::Vec3;
 
 /// SHAKE/RATTLE convergence: residual tolerance (length² for SHAKE, velocity·
 /// length for RATTLE) and the iteration cap. Tight defaults — the constrained
@@ -32,6 +31,13 @@ const SHAKE_MAX_ITER: usize = 100;
 /// Time-stepping scheme. `step` advances the system by `dt` and returns the
 /// post-step thermodynamic observables.
 pub trait Integrator: Send {
+    /// Stateless integrators encode null; stateful implementations override.
+    fn checkpoint_state(&self) -> Result<serde_json::Value> {
+        Ok(serde_json::Value::Null)
+    }
+    fn restore_state(&mut self, state: &serde_json::Value) -> Result<()> {
+        crate::thermostat::restore_stateless(state)
+    }
     fn step(
         &mut self,
         system: &mut System,
@@ -76,36 +82,14 @@ impl Integrator for VelocityVerlet {
         neighbors: &mut NeighborList,
         dt: f64,
     ) -> Result<Energies> {
+        prepare_constraints(system, self.constraints.as_ref())?;
         let n = system.n();
         let half = 0.5 * dt;
 
         // First half-kick: v(t+dt/2) = v(t) + (dt/2) a(t), using cached F(t).
         kick(system, n, half);
 
-        // Reference positions for SHAKE (bond vectors at the start of the step).
-        let x_ref = if self.constraints.is_some() {
-            Some(system.positions.clone())
-        } else {
-            None
-        };
-
-        // Drift: x(t+dt) = x(t) + dt v(t+dt/2), then wrap.
-        drift(system, n, dt);
-        system.wrap_positions();
-
-        // SHAKE: project the predicted positions onto the constraint manifold.
-        // The half-step velocity is then made consistent with the actual
-        // (constrained) displacement: v(t+dt/2) = (x(t+dt) − x(t)) / dt.
-        if let (Some(cons), Some(x_ref)) = (&self.constraints, x_ref.as_ref()) {
-            cons.shake(system, x_ref, SHAKE_TOL, SHAKE_MAX_ITER);
-            let box_size = system.box_size;
-            for i in 0..n {
-                let dx = box_size.min_image(
-                    system.pos(i) - Vec3::new(x_ref[3 * i], x_ref[3 * i + 1], x_ref[3 * i + 2]),
-                );
-                system.set_vel(i, dx * (1.0 / dt));
-            }
-        }
+        project_drift(system, self.constraints.as_ref(), dt, false)?;
 
         // New forces F(t+dt), potential energy, virial. The model accumulates
         // (M3 contract), so zero forces first; `virial` is freshly zeroed.
@@ -118,7 +102,7 @@ impl Integrator for VelocityVerlet {
 
         // RATTLE: project the velocities onto the constraint tangent.
         if let Some(cons) = &self.constraints {
-            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER);
+            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER)?;
         }
 
         Ok(Energies::from(system, pe, &virial))
@@ -134,7 +118,8 @@ impl Integrator for VelocityVerlet {
 pub struct LangevinBAOAB {
     pub gamma: f64,
     pub target_temperature: f64,
-    rng: StdRng,
+    rng: ChaCha12Rng,
+    seed: u64,
     pub constraints: Option<Constraints>,
 }
 
@@ -143,7 +128,8 @@ impl LangevinBAOAB {
         Self {
             gamma,
             target_temperature,
-            rng: StdRng::seed_from_u64(seed),
+            rng: ChaCha12Rng::seed_from_u64(seed),
+            seed,
             constraints: None,
         }
     }
@@ -157,13 +143,45 @@ impl LangevinBAOAB {
         Self {
             gamma,
             target_temperature,
-            rng: StdRng::seed_from_u64(seed),
+            rng: ChaCha12Rng::seed_from_u64(seed),
+            seed,
             constraints: Some(constraints),
         }
     }
 }
 
 impl Integrator for LangevinBAOAB {
+    fn checkpoint_state(&self) -> Result<serde_json::Value> {
+        if let Some(cons) = &self.constraints {
+            cons.validate_parameters()?;
+        }
+        if !self.gamma.is_finite() || !self.target_temperature.is_finite() {
+            return Err(crate::thermostat::state_error(
+                "nonfinite Langevin parameters",
+            ));
+        }
+        Ok(
+            serde_json::json!({"kind":"langevin_baoab","version":1,"gamma":self.gamma,
+            "target_temperature":self.target_temperature,"seed":self.seed,"constraints":self.constraints,
+            "rng":crate::thermostat::checkpoint_rng(&self.rng)?}),
+        )
+    }
+    fn restore_state(&mut self, state: &serde_json::Value) -> Result<()> {
+        crate::thermostat::validate_state_parameters(
+            state,
+            &self.checkpoint_state()?,
+            &[
+                "kind",
+                "version",
+                "gamma",
+                "target_temperature",
+                "seed",
+                "constraints",
+            ],
+        )?;
+        self.rng = crate::thermostat::restore_rng(&state["rng"], self.rng.get_seed())?;
+        Ok(())
+    }
     fn step(
         &mut self,
         system: &mut System,
@@ -171,6 +189,8 @@ impl Integrator for LangevinBAOAB {
         neighbors: &mut NeighborList,
         dt: f64,
     ) -> Result<Energies> {
+        system.set_conserved_com_dof(0)?;
+        prepare_constraints(system, self.constraints.as_ref())?;
         let n = system.n();
         let half = 0.5 * dt;
         let c1 = (-self.gamma * dt).exp();
@@ -180,15 +200,12 @@ impl Integrator for LangevinBAOAB {
         // B½: v += (dt/2) F/m   (using cached F(t))
         kick(system, n, half);
 
-        // Reference positions for SHAKE (start of step).
-        let x_ref = if self.constraints.is_some() {
-            Some(system.positions.clone())
-        } else {
-            None
-        };
-
-        // A½: x += (dt/2) v
-        drift(system, n, half);
+        if let Some(cons) = &self.constraints {
+            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER)?;
+        }
+        // A half-step on the constraint manifold, with only its projection
+        // displacement applied as a velocity correction.
+        project_drift(system, self.constraints.as_ref(), half, true)?;
         // O: exact OU velocity update.
         {
             let v = &mut system.velocities;
@@ -202,22 +219,12 @@ impl Integrator for LangevinBAOAB {
                 }
             }
         }
-        // A½: x += (dt/2) v
-        drift(system, n, half);
-        system.wrap_positions();
-
-        // SHAKE on the post-drift positions; make the half-step velocity
-        // consistent with the constrained displacement.
-        if let (Some(cons), Some(x_ref)) = (&self.constraints, x_ref.as_ref()) {
-            cons.shake(system, x_ref, SHAKE_TOL, SHAKE_MAX_ITER);
-            let box_size = system.box_size;
-            for i in 0..n {
-                let dx = box_size.min_image(
-                    system.pos(i) - Vec3::new(x_ref[3 * i], x_ref[3 * i + 1], x_ref[3 * i + 2]),
-                );
-                system.set_vel(i, dx * (1.0 / dt));
-            }
+        // OU noise must be tangent, preserving the mass-weighted Gaussian
+        // law of every unconstrained mode (including molecular COM).
+        if let Some(cons) = &self.constraints {
+            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER)?;
         }
+        project_drift(system, self.constraints.as_ref(), half, true)?;
 
         // Recompute F(t+dt). Zero forces first (M3 accumulate contract).
         system.forces.fill(0.0);
@@ -229,11 +236,49 @@ impl Integrator for LangevinBAOAB {
 
         // RATTLE: project velocities onto the constraint tangent.
         if let Some(cons) = &self.constraints {
-            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER);
+            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER)?;
         }
 
         Ok(Energies::from(system, pe, &virial))
     }
+}
+
+/// Record the constraint manifold before kinetic observables are used.
+pub(crate) fn prepare_constraints(system: &mut System, cons: Option<&Constraints>) -> Result<()> {
+    if let Some(cons) = cons {
+        cons.validate(system)?;
+    }
+    system.set_constraint_count(cons.map_or(0, Constraints::count))
+}
+
+/// Drift and add only the position projection's velocity impulse. Measuring
+/// the unwrapped correction avoids replacing the preceding OU update, and
+/// leaves atoms absent from the constraint set exactly unchanged.
+pub(crate) fn project_drift(
+    system: &mut System,
+    cons: Option<&Constraints>,
+    interval: f64,
+    tangent: bool,
+) -> Result<()> {
+    let reference = cons.map(|_| system.positions.clone());
+    drift(system, system.n(), interval);
+    if let (Some(cons), Some(reference)) = (cons, reference) {
+        let predicted = system.positions.clone();
+        cons.shake(system, &reference, SHAKE_TOL, SHAKE_MAX_ITER)?;
+        for ((v, x), predicted) in system
+            .velocities
+            .iter_mut()
+            .zip(&system.positions)
+            .zip(predicted)
+        {
+            *v += (*x - predicted) / interval;
+        }
+        if tangent {
+            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER)?;
+        }
+    }
+    system.wrap_positions();
+    Ok(())
 }
 
 /// Half-kick: `v += factor * F / m` over all atoms (flat SoA).

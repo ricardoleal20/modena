@@ -1,0 +1,56 @@
+{
+  "provenance": {
+    "binary": "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/absent-gpu-fixture",
+    "binary_sha256": null,
+    "binary_hash_error": "[Errno 2] No such file or directory: '/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/absent-gpu-fixture'",
+    "git_commit": "de8529a370e31c968202403b6b5c3b0b02576a50",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "python": "3.12.14 (main, Aug 25 2026, 13:50:33) [Clang 22.1.3 ]",
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "logical_cpus": 11,
+    "hardware": "Apple M3 Pro"
+  },
+  "scope": "experimental host-offload; row integration wall excludes init and initial force; outer process resources include them",
+  "warmup": "one fresh trajectory in the same process, discarded; not continued sampling",
+  "potential": "shifted-force LJ sigma=epsilon=mass=1 rc=2.5 (gather rc=.01 is a different Hamiltonian)",
+  "seed": 87287,
+  "dt": 0.005,
+  "skin": 0.3,
+  "runs": [
+    {
+      "engine": "cpu",
+      "atoms": 864,
+      "steps": 7,
+      "repetitions": 1,
+      "threads": 1,
+      "dof": 2589,
+      "conserved_com_dof": 3,
+      "precision": "f64",
+      "command": [
+        "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/absent-gpu-fixture",
+        "cpu",
+        "864",
+        "7",
+        "1"
+      ],
+      "launch_command": [
+        "/usr/bin/time",
+        "-l",
+        "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/target/absent-gpu-fixture",
+        "cpu",
+        "864",
+        "7",
+        "1"
+      ],
+      "resource_timer": "/usr/bin/time",
+      "returncode": 127,
+      "outer_wall_seconds": 0.002498375019058585,
+      "user_cpu_seconds": 0.0,
+      "system_cpu_seconds": 0.0,
+      "rss_bytes": 966656,
+      "stdout": "cpu-864.stdout",
+      "stderr": "cpu-864.stderr",
+      "integration_rows": []
+    }
+  ]
+}

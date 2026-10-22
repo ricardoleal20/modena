@@ -1,23 +1,13 @@
 //! MODENA — Molecular Dynamics Engine for Numerical Atomistics.
 //!
-//! A fast, extensible molecular-dynamics framework written in Rust. Phase 1
-//! (this release) provides:
+//! An early development classical molecular dynamics engine in Rust. The library
+//! includes pair and bonded force models, constraints, electrostatics, integrators,
+//! ensemble controls, and a TOML-driven runner with XYZ and CSV output.
 //!
-//! - Lennard-Jones pair potential (energy-shifted, cutoff).
-//! - Cell-list neighbor search for orthorhombic periodic boxes.
-//! - Velocity-Verlet (NVE) and BAOAB-Langevin (NVT) integrators.
-//! - Berendsen and stochastic velocity-rescaling thermostats.
-//! - Rayon-parallel force evaluation.
-//! - XYZ trajectory output + CSV energy logging.
-//! - TOML-driven input config.
-//! - A `ForceModel` trait seam for future ML surrogate potentials.
-//!
-//! Units are reduced (LJ) in Phase 1. See `ROADMAP.md` for the staged plan
-//! (bonds/angles, Coulomb+Ewald, NPT, real units, Python bindings, ML, GPU).
-//!
-//! **Naming note:** the working name is MODENA. The alternate brand **RHEA**
-//! (Rust High-performance Engine for Atomistics) is held in reserve; the crate
-//! is structured so a rename is mechanical (crate name + this doc header).
+//! Numerical regression coverage applies to selected models and workflows.
+//! Constrained pressure remains diagnostic; constrained NPT and full anisotropic
+//! coupling are unsupported. See `docs/VALIDATED_SCOPE.md` in the repository for
+//! method coverage, units, continuation compatibility, and backend restrictions.
 
 #![allow(clippy::needless_doctest_main)]
 // The potential validators use `!(x > 0.0)` rather than `x <= 0.0` deliberately:
@@ -74,12 +64,12 @@ pub use gpu_comm::{GpuGather, GpuPairForceModel};
 pub use integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 pub use io::input::{
     BondedTopologySpec, ConstraintSpec, ConstraintsSpec, EwaldMethod, EwaldSpec, InputConfig,
-    IntegratorSpec, ModelSpec, RunSpec, StructureSpec, ThermostatSpec,
+    IntegratorSpec, ModelSpec, RestartMode, RunSpec, StructureSpec, ThermostatSpec,
 };
 pub use io::log::LogWriter;
 pub use io::xyz::{read_xyz, TrajectoryWriter};
 pub use lattice::{random_alloy, rocksalt, AlloySpecies};
-pub use neighbor::NeighborList;
+pub use neighbor::{NeighborList, PairScale};
 pub use nose_hoover::NoseHooverChain;
 pub use potential::mixing::{MixingRule, PairParamTable};
 pub use potential::{
@@ -88,7 +78,9 @@ pub use potential::{
     SoftSphereOverride, SoftSphereTypeParams, Tabulated,
 };
 pub use replica_exchange::{ReplicaExchange, ReplicaExchangeStats};
-pub use runner::{run_from_file, RunEvent, RunSummary, Simulation};
+pub use runner::{
+    run_from_file, Ensemble, PressureStatus, RunEvent, RunMetadata, RunSummary, Simulation,
+};
 pub use spme::SpmeForceModel;
 pub use system::{SimBox, System};
 pub use thermo::Energies;

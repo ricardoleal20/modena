@@ -1,0 +1,10 @@
+   Compiling modena-mcp v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s
+     Running tests/final_integration.rs (target/debug/deps/final_integration-5c7b886115dc084c)
+
+running 2 tests
+test discovery_request_lists_every_production_pair_family_with_schema_parameters ... ok
+test exact_tiny_alloy_completes_real_mcp_probe_and_async_lifecycle ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

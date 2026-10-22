@@ -1,0 +1,7 @@
+engine        threads atoms  n   median_ms/step
+lammps              1   864  3          0.309412
+lammps              1  2048  3          0.736351
+lammps              1 20000  3          6.525943
+modena              1   864  3          0.601879
+modena              1  2048  3          1.738660
+modena              1 20000  3         17.326401

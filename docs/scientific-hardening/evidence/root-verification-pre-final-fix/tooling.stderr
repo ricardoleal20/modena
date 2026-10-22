@@ -1,0 +1,15 @@
+test_failure_retains_evidence_and_fails (test_benchmark.BenchmarkTests.test_failure_retains_evidence_and_fails) ... ok
+test_real_release_cli_uses_valid_no_file_deck_and_reports_drift (test_benchmark.BenchmarkTests.test_real_release_cli_uses_valid_no_file_deck_and_reports_drift) ... ok
+test_success_has_actual_steps_numeric_renderer_and_provenance (test_benchmark.BenchmarkTests.test_success_has_actual_steps_numeric_renderer_and_provenance) ... ok
+test_failed_process_without_timer_retains_raw_output_and_null_resources (test_gpu_ladder.GpuLadderTests.test_failed_process_without_timer_retains_raw_output_and_null_resources) ... ok
+test_missing_executable_retains_nullable_hash_and_failure (test_gpu_ladder.GpuLadderTests.test_missing_executable_retains_nullable_hash_and_failure) ... ok
+test_os_executable_launch_error_is_retained (test_gpu_ladder.GpuLadderTests.test_os_executable_launch_error_is_retained) ... ok
+test_os_timer_launch_error_is_retained (test_gpu_ladder.GpuLadderTests.test_os_timer_launch_error_is_retained) ... ok
+test_success_without_timer_retains_csv_rows (test_gpu_ladder.GpuLadderTests.test_success_without_timer_retains_csv_rows) ... ok
+test_missing_binary_has_failure_provenance (test_validation.ValidationTests.test_missing_binary_has_failure_provenance) ... ok
+test_nonfinite_or_outside_tolerance_is_failure_with_raw_evidence (test_validation.ValidationTests.test_nonfinite_or_outside_tolerance_is_failure_with_raw_evidence) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 2.084s
+
+OK

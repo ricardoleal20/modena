@@ -1,0 +1,25 @@
+{
+  "label": "mpi-build",
+  "command": [
+    "rtk",
+    "proxy",
+    "cargo",
+    "test",
+    "-p",
+    "modena-core",
+    "--features",
+    "mpi",
+    "--test",
+    "mpi_decomp",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "returncode": 0,
+  "source_commit": "e51ff1f47bc72a08296f984604add1f2649df46e",
+  "source_status": "",
+  "elapsed_seconds": 9.02117562503554,
+  "created_utc": "2026-10-04T03:14:08.365622+00:00",
+  "rust_test_counts": [],
+  "stdout_file": "mpi-build.stdout",
+  "stderr_file": "mpi-build.stderr"
+}

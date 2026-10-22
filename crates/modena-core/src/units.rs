@@ -48,7 +48,7 @@ pub struct UnitFactors {
     /// `P_factor = ε/σ³` converted to atm.
     pub pressure: f64,
     /// Charge factor: `q_reduced = q_e · charge` where
-    /// `charge = √(COULOMB_KCAL_ANGSTROM · σ / ε)` so that, in reduced units,
+    /// `charge = √(COULOMB_KCAL_ANGSTROM / (σ · ε))` so that, in reduced units,
     /// `U = q_reduced_i · q_reduced_j / r_reduced`. Charges are input in units
     /// of the elementary charge `e`.
     pub charge: f64,
@@ -75,9 +75,9 @@ impl UnitFactors {
         let pressure = epsilon / (sigma * sigma * sigma) * KCAL_PER_A3_TO_ATM; // atm per reduced unit
                                                                                // Reduced-charge factor: with real Coulomb U = COULOMB · q_i q_j / r
                                                                                // (kcal/mol, r in Å, q in e), writing U/ε = (q·charge)² / (r/σ) requires
-                                                                               // q_reduced² = q² · COULOMB · σ / ε, i.e. charge = √(COULOMB · σ / ε).
+                                                                               // q_reduced² = q² · COULOMB / (σ · ε), i.e. charge = √(COULOMB / (σ · ε)).
         const COULOMB_KCAL_ANGSTROM: f64 = 332.06371;
-        let charge = (COULOMB_KCAL_ANGSTROM * sigma / epsilon).sqrt();
+        let charge = (COULOMB_KCAL_ANGSTROM / (sigma * epsilon)).sqrt();
         Self {
             sigma,
             epsilon,

@@ -1,0 +1,14 @@
+    Checking serde v1.0.229
+    Checking thiserror v2.0.20
+    Checking clap_builder v4.6.6
+    Checking serde_spanned v0.6.9
+    Checking toml_datetime v0.6.11
+    Checking ciborium v0.2.2
+    Checking tinytemplate v1.2.1
+    Checking toml_edit v0.22.27
+    Checking clap v4.6.6
+    Checking criterion v0.5.1
+    Checking toml v0.8.23
+    Checking modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Checking modena-bench v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-bench)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.65s

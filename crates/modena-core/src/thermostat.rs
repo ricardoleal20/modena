@@ -7,15 +7,83 @@
 //! current KE; a Langevin *integrator* interleaves noise/friction with the
 //! force evaluations, so it cannot be expressed as a velocity rescale.
 
-use rand::rngs::StdRng;
+use chacha20::ChaCha12Rng;
 use rand::{RngExt, SeedableRng};
 use rand_distr::{Distribution, StandardNormal};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
+use crate::error::{ModenaError, Result};
 use crate::system::System;
 
 /// Velocity rescaling thermostat, applied once per step.
 pub trait Thermostat: Send {
     fn apply(&mut self, system: &mut System, dt: f64);
+    /// Stateless thermostats encode null; stateful implementations override.
+    fn checkpoint_state(&self) -> Result<Value> {
+        Ok(Value::Null)
+    }
+    fn restore_state(&mut self, state: &Value) -> Result<()> {
+        restore_stateless(state)
+    }
+}
+
+pub(crate) fn state_error(message: &str) -> ModenaError {
+    ModenaError::Input(format!("checkpoint state: {message}"))
+}
+pub(crate) fn restore_stateless(state: &Value) -> Result<()> {
+    if state.is_null() {
+        Ok(())
+    } else {
+        Err(state_error("stateless component requires null"))
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RngState {
+    algorithm: String,
+    seed: [u8; 32],
+    stream: u64,
+    // A ChaCha word offset is 68 bits; a decimal string avoids JSON's u64
+    // limit and prevents conversion through an imprecise floating number.
+    word_pos: String,
+}
+
+pub(crate) fn checkpoint_rng(rng: &ChaCha12Rng) -> Result<Value> {
+    serde_json::to_value(RngState {
+        algorithm: "chacha12-v1".into(),
+        seed: rng.get_seed(),
+        stream: rng.get_stream(),
+        word_pos: rng.get_word_pos().to_string(),
+    })
+    .map_err(|err| state_error(&err.to_string()))
+}
+pub(crate) fn restore_rng(value: &Value, expected_seed: [u8; 32]) -> Result<ChaCha12Rng> {
+    let state: RngState =
+        serde_json::from_value(value.clone()).map_err(|err| state_error(&err.to_string()))?;
+    let pos = state
+        .word_pos
+        .parse::<u128>()
+        .map_err(|_| state_error("invalid RNG word position"))?;
+    if state.algorithm != "chacha12-v1" || pos >= (1_u128 << 68) || state.seed != expected_seed {
+        return Err(state_error("RNG kind, seed or word position is invalid"));
+    }
+    let mut rng = ChaCha12Rng::from_seed(state.seed);
+    rng.set_stream(state.stream);
+    rng.set_word_pos(pos);
+    Ok(rng)
+}
+pub(crate) fn validate_state_parameters(
+    state: &Value,
+    expected: &Value,
+    keys: &[&str],
+) -> Result<()> {
+    if !state.is_object() || keys.iter().any(|key| state.get(*key) != expected.get(*key)) {
+        Err(state_error("component kind/parameters differ"))
+    } else {
+        Ok(())
+    }
 }
 
 /// No thermostat — pure NVE.
@@ -44,6 +112,21 @@ impl Berendsen {
 }
 
 impl Thermostat for Berendsen {
+    fn checkpoint_state(&self) -> Result<Value> {
+        if !self.target_temperature.is_finite() || !self.tau.is_finite() {
+            return Err(state_error("nonfinite Berendsen parameters"));
+        }
+        Ok(
+            json!({"kind":"berendsen","version":1,"target_temperature":self.target_temperature,"tau":self.tau}),
+        )
+    }
+    fn restore_state(&mut self, state: &Value) -> Result<()> {
+        if state == &self.checkpoint_state()? {
+            Ok(())
+        } else {
+            Err(state_error("Berendsen kind/parameters differ"))
+        }
+    }
     fn apply(&mut self, system: &mut System, dt: f64) {
         let t = system.temperature();
         if t <= 0.0 || self.tau <= 0.0 {
@@ -61,7 +144,8 @@ impl Thermostat for Berendsen {
 pub struct VelocityRescaling {
     pub target_temperature: f64,
     pub tau: f64,
-    rng: StdRng,
+    rng: ChaCha12Rng,
+    seed: u64,
 }
 
 impl VelocityRescaling {
@@ -69,15 +153,34 @@ impl VelocityRescaling {
         Self {
             target_temperature,
             tau,
-            rng: StdRng::seed_from_u64(seed),
+            rng: ChaCha12Rng::seed_from_u64(seed),
+            seed,
         }
     }
 }
 
 impl Thermostat for VelocityRescaling {
+    fn checkpoint_state(&self) -> Result<Value> {
+        if !self.target_temperature.is_finite() || !self.tau.is_finite() {
+            return Err(state_error("nonfinite CSVR parameters"));
+        }
+        Ok(
+            json!({"kind":"csvr","version":1,"target_temperature":self.target_temperature,
+            "tau":self.tau,"seed":self.seed,"rng":checkpoint_rng(&self.rng)?}),
+        )
+    }
+    fn restore_state(&mut self, state: &Value) -> Result<()> {
+        validate_state_parameters(
+            state,
+            &self.checkpoint_state()?,
+            &["kind", "version", "target_temperature", "tau", "seed"],
+        )?;
+        self.rng = restore_rng(&state["rng"], self.rng.get_seed())?;
+        Ok(())
+    }
     fn apply(&mut self, system: &mut System, dt: f64) {
         let dof = system.dof() as f64;
-        if dof < 3.0 || self.tau <= 0.0 {
+        if dof < 1.0 || self.tau <= 0.0 || dt <= 0.0 {
             return;
         }
         let ke = system.kinetic_energy();
@@ -108,29 +211,34 @@ impl Thermostat for VelocityRescaling {
 /// K' = a·K + (1−a)·(K*/Nf)·(R1 + R2²) + 2·R2·√(a·(1−a)·K·K*/Nf)
 /// ```
 ///
-/// with `R1 ~ Gamma((Nf−1)/2)` and `R2 ~ N(0,1)`, which converges to the
-/// exact canonical χ²ᵣᵦ distribution of the kinetic energy. The factor is
-/// `√(K'/K)`. (Previous versions used `R1 ~ Gamma((Nf−2)/2)`, `R2 ~ U(0,1)`
-/// and a linear blend of scales — a biased, non-canonical stationary state;
-/// the doc claim of "exact" sampling was then false.)
+/// with `R1 ~ χ²(Nf−1) = 2 Gamma((Nf−1)/2,1)` and `R2 ~ N(0,1)`.
+/// The sign follows the Gaussian component of the transition, as required
+/// for a reversible rescaling (including Nf=1). At K=0 no direction is
+/// defined; callers must initialize a nonzero velocity before using CSVR.
 fn rescaling_factor(
     ke: f64,
     target_ke: f64,
     ndof: f64,
     dt: f64,
     tau: f64,
-    rng: &mut StdRng,
+    rng: &mut ChaCha12Rng,
 ) -> f64 {
     let a = (-dt / tau).exp();
-    let r1 = sample_gamma(rng, (ndof - 1.0) / 2.0);
+    let r1 = if ndof > 1.0 {
+        2.0 * sample_gamma(rng, (ndof - 1.0) / 2.0)
+    } else {
+        0.0
+    };
     let r2: f64 = StandardNormal.sample(rng);
-    let cross = 2.0 * r2 * (a * (1.0 - a) * ke * target_ke / ndof).sqrt();
-    let new_ke = (a * ke + (1.0 - a) * target_ke * (r1 + r2 * r2) / ndof + cross).max(1e-300);
-    (new_ke / ke).sqrt()
+    // Sum of squares avoids cancellation at small Nf and near-zero K'.
+    let noise = ((1.0 - a) * target_ke / ndof).sqrt();
+    let radial = (a * ke).sqrt() + noise * r2;
+    let new_ke = radial * radial + noise * noise * r1;
+    (new_ke / ke).sqrt().copysign(radial)
 }
 
 /// Marsaglia–Tsang gamma sampler (shape > 0). Used for the KE distribution.
-fn sample_gamma(rng: &mut StdRng, shape: f64) -> f64 {
+fn sample_gamma(rng: &mut ChaCha12Rng, shape: f64) -> f64 {
     if shape < 1.0 {
         let u: f64 = rng.random_range(0.0..1.0);
         return sample_gamma(rng, shape + 1.0) * u.powf(1.0 / shape);
@@ -157,16 +265,7 @@ mod tests {
 
     #[test]
     fn bussi_rescaling_reproduces_theoretic_moments() {
-        // One-step moments of the exact update, derived directly from the
-        // formula (not from memory): K' = aK + c1·G + c2·R2 with G = R1 + R2²,
-        // c1 = (1−a)K*/Nf, c2 = 2√(a(1−a)KK*/Nf). With R1 ~ Gamma((Nf−1)/2)
-        // and R2 ~ N(0,1):
-        //   E[G]  = (Nf−1)/2 + 1 = (Nf+1)/2        (NOT Nf)
-        //   var(G) = (Nf−1)/2 + 2                  (Gamma var = shape; R2² var = 2)
-        //   E[R2] = 0  →  <cross term> = 0
-        //   var(K') = c1²·var(G) + c2²
-        // The OLD implementation (Uniform R2 + linear blend) fails the mean by
-        // ~10% for these parameters; it also can't reproduce the variance.
+        // Canonical transition: G is chi-square(Nf), E[G]=Nf, Var[G]=2Nf.
         let k = 2.0_f64;
         let kstar = 1.0_f64;
         let ndof = 6.0_f64;
@@ -175,12 +274,12 @@ mod tests {
         let a = (-dt / tau).exp();
         let c1 = (1.0 - a) * kstar / ndof;
         let c2 = 2.0 * (a * (1.0 - a) * k * kstar / ndof).sqrt();
-        let e_mean = a * k + c1 * (ndof + 1.0) / 2.0;
-        let e_g_var = (ndof - 1.0) / 2.0 + 2.0;
+        let e_mean = a * k + c1 * ndof;
+        let e_g_var = 2.0 * ndof;
         let e_mean2 = e_mean * e_mean + c1 * c1 * e_g_var + c2 * c2;
 
         const N: usize = 400_000;
-        let mut rng = StdRng::seed_from_u64(7);
+        let mut rng = ChaCha12Rng::seed_from_u64(7);
         let mut sum = 0.0_f64;
         let mut sum2 = 0.0_f64;
         for _ in 0..N {

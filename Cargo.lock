@@ -878,7 +878,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "modena-bench"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "criterion",
  "modena-core",
@@ -886,7 +886,7 @@ dependencies = [
 
 [[package]]
 name = "modena-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -897,9 +897,10 @@ dependencies = [
 
 [[package]]
 name = "modena-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytemuck",
+ "chacha20",
  "libm",
  "mpi",
  "num-complex",
@@ -910,6 +911,7 @@ dependencies = [
  "rayon",
  "rustfft",
  "serde",
+ "serde_json",
  "thiserror",
  "toml",
  "wgpu",
@@ -917,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "modena-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "modena-core",
  "serde",

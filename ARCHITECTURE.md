@@ -1,3 +1,10 @@
+> Current supported domain (2026-10-03): pairs, ions, fixed-volume molecules;
+> orthorhombic SPME; triclinic pair/direct Ewald. Constrained pressure is diagnostic
+> without validated impulse stress. Canonical NPT uses unconstrained isotropic MC;
+> anisotropic/constrained coupling is rejected. MPI/GPU are experimental pair
+> backends with restricted policies/boxes, not full production acceleration.
+> [Current evidence](docs/scientific-hardening/RESULTS.md).
+
 # MODENA — Architecture & Methods
 
 This document describes MODENA's algorithms at the precision needed for the
@@ -62,15 +69,13 @@ force-shifted form is what gives velocity-Verlet its good NVE conservation under
 a truncated potential: the force is continuous at `rc`, so there is no impulse
 as a pair crosses the cutoff.
 
-**LAMMPS correspondence.** MODENA's shifted-force LJ corresponds to LAMMPS
-`pair_style lj/smooth/linear` (also force-shifted, `F(r) − F(rc)`). On the
-matched FCC reference configuration the two engines agree on potential energy to
-~8×10⁻⁶ (`bench/BENCHMARKS.md` §2), confirming the potential forms are
-numerically equivalent for the LJ benchmark. Note the energy zero convention
-differs: MODENA's `U_sf` is the integral of the shifted force, so its NVE
-Hamiltonian is exactly conserved; LAMMPS's `lj/smooth/linear` uses a shifted
-energy that is not the exact integral of its shifted force. This is the root
-cause of MODENA's tighter energy conservation in the LJ benchmark.
+**LAMMPS correspondence.** `lj/smooth/linear` uses the same shifted-force LJ
+Hamiltonian. Both report an energy whose radial derivative matches the force;
+there is no basis for the earlier claim that LAMMPS's energy was inconsistent.
+Velocity-Verlet has bounded discretization error, not exact energy conservation.
+The current comparison matches lattice constant, cutoff, skin, timestep and
+3N-3 kinetic DOF. RNG algorithms differ, so drift differences between independent
+microstates do not demonstrate engine superiority.
 
 ### 2.2 Multi-species parameters
 
@@ -203,7 +208,9 @@ stochastic, config-space-isotropic integrator with favorable sampling properties
 at large `dt`.
 
 **Thermostats / barostats (M5).** Velocity rescaling, Berendsen, and a Nosé–Hoover
-chain for NVT; Berendsen and Parrinello–Rahman barostats for NPT. Replica
+chain for NVT; unconstrained isotropic Monte Carlo for canonical NPT. Berendsen
+is equilibration only and the legacy piston is experimental. Full anisotropic
+and constrained NPT are rejected. Replica
 exchange (parallel tempering) is implemented as an outer driver over
 independent replicas.
 

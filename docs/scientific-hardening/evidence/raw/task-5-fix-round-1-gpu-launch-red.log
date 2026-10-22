@@ -1,0 +1,142 @@
+test_failed_process_without_timer_retains_raw_output_and_null_resources (test_gpu_ladder.GpuLadderTests.test_failed_process_without_timer_retains_raw_output_and_null_resources) ... FAIL
+test_missing_executable_retains_nullable_hash_and_failure (test_gpu_ladder.GpuLadderTests.test_missing_executable_retains_nullable_hash_and_failure) ... FAIL
+test_os_executable_launch_error_is_retained (test_gpu_ladder.GpuLadderTests.test_os_executable_launch_error_is_retained) ... FAIL
+test_os_timer_launch_error_is_retained (test_gpu_ladder.GpuLadderTests.test_os_timer_launch_error_is_retained) ... FAIL
+test_success_without_timer_retains_csv_rows (test_gpu_ladder.GpuLadderTests.test_success_without_timer_retains_csv_rows) ... FAIL
+
+======================================================================
+FAIL: test_failed_process_without_timer_retains_raw_output_and_null_resources (test_gpu_ladder.GpuLadderTests.test_failed_process_without_timer_retains_raw_output_and_null_resources)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_gpu_ladder.py", line 46, in test_failed_process_without_timer_retains_raw_output_and_null_resources
+    result, artifact, row = self.execute(executable, base / 'out', base / 'missing_timer')
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_gpu_ladder.py", line 20, in execute
+    self.assertTrue((out / 'gpu.json').is_file(), result.stderr)
+AssertionError: False is not true : Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/gpu_ladder.py", line 65, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/gpu_ladder.py", line 45, in main
+    result=subprocess.run(timed,env={**os.environ,'RAYON_NUM_THREADS':str(args.threads)},text=True,capture_output=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 1955, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/m5/4v1jt6nn2wlcr98s_50cdv9w0000gn/T/tmpmdc4wql3/missing_timer'
+
+
+======================================================================
+FAIL: test_missing_executable_retains_nullable_hash_and_failure (test_gpu_ladder.GpuLadderTests.test_missing_executable_retains_nullable_hash_and_failure)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_gpu_ladder.py", line 34, in test_missing_executable_retains_nullable_hash_and_failure
+    result, artifact, row = self.execute(base / 'missing', base / 'out')
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_gpu_ladder.py", line 20, in execute
+    self.assertTrue((out / 'gpu.json').is_file(), result.stderr)
+AssertionError: False is not true : Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/gpu_ladder.py", line 65, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/gpu_ladder.py", line 33, in main
+    artifact = dict(provenance=dict(binary_sha256=sha(binary), git_commit=capture(['git','-C',str(ROOT),'rev-parse','HEAD']),
+                                                  ^^^^^^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/benchmark.py", line 32, in sha
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                          ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/pathlib.py", line 1019, in read_bytes
+    with self.open(mode='rb') as f:
+         ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/pathlib.py", line 1013, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/m5/4v1jt6nn2wlcr98s_50cdv9w0000gn/T/tmpp1f1q_44/missing'
+
+
+======================================================================
+FAIL: test_os_executable_launch_error_is_retained (test_gpu_ladder.GpuLadderTests.test_os_executable_launch_error_is_retained)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_gpu_ladder.py", line 63, in test_os_executable_launch_error_is_retained
+    result, artifact, row = self.execute(executable, base / 'out', base / 'missing_timer')
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_gpu_ladder.py", line 20, in execute
+    self.assertTrue((out / 'gpu.json').is_file(), result.stderr)
+AssertionError: False is not true : Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/gpu_ladder.py", line 65, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/gpu_ladder.py", line 45, in main
+    result=subprocess.run(timed,env={**os.environ,'RAYON_NUM_THREADS':str(args.threads)},text=True,capture_output=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 1955, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/m5/4v1jt6nn2wlcr98s_50cdv9w0000gn/T/tmph8sv2lvw/missing_timer'
+
+
+======================================================================
+FAIL: test_os_timer_launch_error_is_retained (test_gpu_ladder.GpuLadderTests.test_os_timer_launch_error_is_retained)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_gpu_ladder.py", line 78, in test_os_timer_launch_error_is_retained
+    result, _, row = self.execute(executable, base / 'out', timer)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_gpu_ladder.py", line 20, in execute
+    self.assertTrue((out / 'gpu.json').is_file(), result.stderr)
+AssertionError: False is not true : Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/gpu_ladder.py", line 65, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/gpu_ladder.py", line 45, in main
+    result=subprocess.run(timed,env={**os.environ,'RAYON_NUM_THREADS':str(args.threads)},text=True,capture_output=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 1955, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+PermissionError: [Errno 13] Permission denied: '/var/folders/m5/4v1jt6nn2wlcr98s_50cdv9w0000gn/T/tmpjxefwrit/not_executable_timer'
+
+
+======================================================================
+FAIL: test_success_without_timer_retains_csv_rows (test_gpu_ladder.GpuLadderTests.test_success_without_timer_retains_csv_rows)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_gpu_ladder.py", line 91, in test_success_without_timer_retains_csv_rows
+    result, _, row = self.execute(executable, base / 'out', base / 'missing_timer')
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/tests/test_gpu_ladder.py", line 20, in execute
+    self.assertTrue((out / 'gpu.json').is_file(), result.stderr)
+AssertionError: False is not true : Traceback (most recent call last):
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/gpu_ladder.py", line 65, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/bench/gpu_ladder.py", line 45, in main
+    result=subprocess.run(timed,env={**os.environ,'RAYON_NUM_THREADS':str(args.threads)},text=True,capture_output=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/Users/ricardoleal20/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py", line 1955, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: '/var/folders/m5/4v1jt6nn2wlcr98s_50cdv9w0000gn/T/tmp1jiomacc/missing_timer'
+
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.389s
+
+FAILED (failures=5)

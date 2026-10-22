@@ -1,0 +1,11 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+   Compiling modena-cli v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.47s
+     Running tests/check.rs (target/debug/deps/check-317bac8600f03ae2)
+
+running 2 tests
+test constrained_run_labels_pressure_as_diagnostic_and_nvt_energy_as_exchange ... ok
+test check_preserves_configured_output_sentinels ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+

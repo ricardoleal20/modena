@@ -1,0 +1,19 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.00s
+     Running tests/chemical_workflows.rs (target/debug/deps/chemical_workflows-7ee693a39689dd33)
+
+running 1 test
+
+thread 'real_coulomb_energy_and_force_are_reference_invariant' (35640782) panicked at crates/modena-core/tests/chemical_workflows.rs:113:9:
+sigma=2: incorrect physical Coulomb energy
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test real_coulomb_energy_and_force_are_reference_invariant ... FAILED
+
+failures:
+
+failures:
+    real_coulomb_energy_and_force_are_reference_invariant
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p modena-core --test chemical_workflows`

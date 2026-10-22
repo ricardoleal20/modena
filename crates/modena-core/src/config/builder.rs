@@ -32,7 +32,7 @@ pub struct SimulationBuilder {
     barostat: Option<BarostatSpec>,
     electrostatics: Option<EwaldSpec>,
     run: RunSpec,
-    unit_factors: Option<crate::units::UnitFactors>,
+    units: UnitSystem,
 }
 
 impl SimulationBuilder {
@@ -48,11 +48,30 @@ impl SimulationBuilder {
                 log_file: None,
                 log_every: 10,
                 restore_file: None,
+                restart_mode: crate::io::input::RestartMode::Continue,
                 restart_file: None,
                 restart_every: 500,
             },
             ..Default::default()
         }
+    }
+
+    /// Select raw input units; normalization remains at the common boundary.
+    pub fn units(mut self, units: UnitSystem) -> Self {
+        self.units = units;
+        self
+    }
+
+    /// XYZ path resolves against build_with_base; explicit Properties records
+    /// provide model indices, masses and charges. Plain XYZ remains legacy.
+    pub fn xyz(self, file: impl Into<String>, box_size: [f64; 3]) -> Self {
+        self.structure(StructureSpec::Xyz {
+            file: file.into(),
+            box_size,
+            element: "X".into(),
+            mass: None,
+            charge: None,
+        })
     }
 
     // ---- structure ----
@@ -168,6 +187,12 @@ impl SimulationBuilder {
         self.run.restore_file = Some(file.into());
         self
     }
+    /// Explicitly select identity-checked continuation or a new state-only protocol.
+    pub fn restart_mode(mut self, mode: crate::io::input::RestartMode) -> Self {
+        self.run.restart_mode = mode;
+        self
+    }
+
     /// Render the validated [`InputConfig`] (allows custom `base_dir`).
     pub fn to_config(self) -> Result<InputConfig> {
         let structure = self
@@ -180,7 +205,7 @@ impl SimulationBuilder {
             .integrator
             .ok_or_else(|| ModenaError::Config("builder: missing integrator".into()))?;
         let config = InputConfig {
-            units: UnitSystem::Reduced,
+            units: self.units,
             structure,
             model,
             integrator,
@@ -190,10 +215,9 @@ impl SimulationBuilder {
             barostat: self.barostat,
             electrostatics: self.electrostatics,
             run: self.run,
-            unit_factors: self.unit_factors,
+            unit_factors: None,
         };
-        config.validate()?;
-        Ok(config)
+        config.normalized()
     }
     /// Validate + build a [`Simulation`] (base dir `"."`).
     pub fn build(self) -> Result<crate::runner::Simulation> {

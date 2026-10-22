@@ -1,0 +1,7 @@
+    Checking zerocopy v0.8.57
+    Checking modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Checking ppv-lite86 v0.2.21
+    Checking modena-mcp v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-mcp)
+    Checking rand_chacha v0.9.0
+    Checking proptest v1.11.0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.11s

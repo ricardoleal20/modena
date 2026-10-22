@@ -1,0 +1,11 @@
+   Compiling modena-core v0.1.0 (/Users/ricardoleal20/.codex/worktrees/modena-scientific-hardening/modena/crates/modena-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.34s
+     Running tests/force_cache.rs (target/debug/deps/force_cache-b1fb8db767fa48d9)
+
+running 1 test
+SPME warm compute allocations=0
+SPME warm parallel compute allocations=0
+test spme_reuses_owned_work_buffers_and_shared_models_keep_box_states_separate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+

@@ -1,0 +1,61 @@
+{
+  "base": "10bd9ee3077509ee472875f6697fd6d1a849753e",
+  "phase": "Expanded regressions against unchanged BASE production, then byte-restored final production",
+  "baseline_source": {
+    "crates/modena-core/src/bonded.rs": "b093501f969c91b7bc76299683d596019867e883ad87142ec8ea14cb3142a216",
+    "crates/modena-core/src/composite.rs": "884016cebf42a4e9b3bbdc43eeda8885bdc9b0afc39d19660ab519cf20b528cf",
+    "crates/modena-core/src/ewald.rs": "189fa05a0eb9ec7c6bcf217d095aa153cf4d8539fb48ffb6d16a2c918ff43cf2",
+    "crates/modena-core/src/force_model.rs": "088c17acf900033b7fae8e61905f0739afad122db134f3787add93ae8c3eb099",
+    "crates/modena-core/src/lattice.rs": "c4ddff497542c97222696dc19b2a6c46b1f431c0905b31c4444e92cc201e0459",
+    "crates/modena-core/src/runner.rs": "fcfe41aaaa0f74b62c2f7c4721c66517bdd08c46e4844c551b7e083bd370c501",
+    "crates/modena-core/src/spme.rs": "ab46039922a9f4000fd552ffef92c09cb722d768c862720b5f050ec3c0952b91",
+    "crates/modena-mcp/src/lib.rs": "091f66b29c43f89fff839952e44bcb659d42dd4fb5e8d252a0b88fe842d5a8ae"
+  },
+  "restored_source": {
+    "crates/modena-core/src/bonded.rs": "c9e2ed02f1cbd20bb31519e4286186f0c9f72647a2c4dcb73647a8601d3b3991",
+    "crates/modena-core/src/composite.rs": "1feea0ba5fe478c80a42a2629f6d7806e00a89338d0aed2269e37e64538c47c8",
+    "crates/modena-core/src/ewald.rs": "11d294c94eb5cefa77ad16f586f564cf3f26b14d835b15a6354971028c90bf2b",
+    "crates/modena-core/src/force_model.rs": "1c57bd2654efe7b816c2bf1ee54db7aee1a3ddaf3f2163c58d157928e553696d",
+    "crates/modena-core/src/lattice.rs": "2177832469cf3a6aa58a2f92d22ff0c95f3eff3352410a1a2ca97d5713bc8a8e",
+    "crates/modena-core/src/runner.rs": "83508d1591cf33cd0bf38459e1c7eb873fa4ca242b26c7631c75825462bb4c4d",
+    "crates/modena-core/src/spme.rs": "30c8d67ee637a6c476369211e6cab98ae1b554c6b3c80d6decc40f4793c67027",
+    "crates/modena-mcp/src/lib.rs": "7156a2a30c717240320da1ddd383a58de8d279a66dac61ed6f5e23d88e488e0d"
+  },
+  "tests": {
+    "crates/modena-core/tests/final_integration.rs": "a8862ff81541a1accf28ce9ac2af75912f5d1a4f8d982c3fa3500989d0a26036",
+    "crates/modena-mcp/tests/final_integration.rs": "59edaba8290d1d153322f75a8ed6af0725808f1d7e0a8086dc1338e0bcf1a59f",
+    "crates/modena-core/tests/fixtures/final_alloy.toml": "19596591b184e2388f7634da0d59c269a5f85e4c628aa657fdda4794700ea349"
+  },
+  "commands": [
+    {
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "test",
+        "-p",
+        "modena-core",
+        "--test",
+        "final_integration",
+        "--",
+        "--nocapture"
+      ],
+      "exit_code": 101
+    },
+    {
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "test",
+        "-p",
+        "modena-mcp",
+        "--test",
+        "final_integration",
+        "--",
+        "--nocapture"
+      ],
+      "exit_code": 101
+    }
+  ]
+}

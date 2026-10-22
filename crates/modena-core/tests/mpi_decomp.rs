@@ -109,7 +109,7 @@ fn mpi_decomposition_matches_serial_and_conserves_nve() {
         }
         for r in 1..size {
             let (recv, _): (Vec<f64>, _) = world.process_at_rank(r as mpi::Rank).receive_vec();
-            for chunk in recv.chunks_exact(4) {
+            for chunk in recv.as_chunks::<4>().0 {
                 let gid = chunk[0] as usize;
                 assembled[3 * gid] += chunk[1];
                 assembled[3 * gid + 1] += chunk[2];

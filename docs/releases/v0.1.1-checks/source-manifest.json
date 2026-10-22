@@ -101,7 +101,7 @@
     "crates/modena-core/tests/force_hardening.rs": "98fe1eb7576bc47f1b716ade90f08624b5b1f312960168830fdb450a50c33bcd",
     "crates/modena-core/tests/gpu_pair.rs": "eb86b93764e4def6575ba45a987cfd7aafca5f42616c58a57a9a3d48df936c88",
     "crates/modena-core/tests/io_and_lattice.rs": "796cf2e2c35557055397d4ddf859ff993d688f99f59108ab451e4cedd01356d8",
-    "crates/modena-core/tests/mpi_decomp.rs": "6e33d824d50db5630db6803df72513829195d1566c9735e3beb276be53142982",
+    "crates/modena-core/tests/mpi_decomp.rs": "6989ef54e01b1ab30a8c3508e06286d8d93d06fa741b389608af8bb6c72e75f6",
     "crates/modena-core/tests/pair_scales.rs": "9e4185035a346ae0a504b3e7e02bb33684cd5b62b97869840635efafd2b6c4ef",
     "crates/modena-core/tests/property_consistency.rs": "45c839eef4f5886dec5e8840d27792ca2338bc83939b98939551d8c11478b33a",
     "crates/modena-core/tests/restart.rs": "3caa00032eb42d310a506d0dc72880fb52b3d2424ab3951441fa26f87e94c1af",

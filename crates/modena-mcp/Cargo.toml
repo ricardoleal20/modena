@@ -7,6 +7,9 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "MCP interface for the MODENA molecular dynamics engine."
+readme = "README.md"
+keywords = ["molecular-dynamics", "simulation", "mcp"]
+categories = ["science"]
 
 [lib]
 name = "modena_mcp"

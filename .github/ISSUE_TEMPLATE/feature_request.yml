@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose an improvement with a concrete use case.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues and describe the need before investing in a substantial implementation. Proposals are welcome; the maintainer decides scope based on scientific evidence, usability, and maintenance cost.
+  - type: textarea
+    id: need
+    attributes:
+      label: Use case and problem
+      description: What are you trying to do, and what limitation do you encounter?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the expected interface or workflow and a small example, if useful.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Describe current workarounds or other approaches considered.
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and limitations
+      description: How could this be checked? For numerical methods, include references or independent checks, assumptions, and expected limits. For tooling changes, describe an observable acceptance case.
+    validations:
+      required: true
+  - type: textarea
+    id: contribution
+    attributes:
+      label: Additional context or contribution interest
+      description: Related work, resources, or whether you would like to help implement or test it.

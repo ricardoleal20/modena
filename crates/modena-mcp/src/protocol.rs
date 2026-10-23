@@ -86,6 +86,7 @@ impl Response {
 
 /// Result of `tools/list`: a tool descriptor with a JSON-Schema input shape.
 #[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolDescriptor {
     pub name: &'static str,
     pub description: &'static str,
@@ -94,6 +95,7 @@ pub struct ToolDescriptor {
 
 /// `initialize` result payload.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InitializeResult {
     pub protocol_version: &'static str,
     pub capabilities: Capabilities,
@@ -116,6 +118,7 @@ pub struct ServerInfo {
 
 /// `tools/call` result payload, shaped per the MCP spec.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CallToolResult {
     pub content: Vec<Content>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]

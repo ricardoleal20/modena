@@ -190,7 +190,7 @@ pub fn call_tool(
                 config: InputConfig,
             }
             let input: In = parse(args)?;
-            let res = mgr.estimate_run_cost(&input.config);
+            let res = mgr.estimate_run_cost(&input.config)?;
             Ok(serde_json::to_value(res).unwrap())
         }
         "run_probe" => {

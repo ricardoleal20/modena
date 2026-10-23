@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Complete contribution and commit guidance, issue and pull request templates,
+  conduct, security, and maintainer policies.
+- Document a proposed design system and scientific interface guidance.
+- Include MIT notices and discovery metadata in distributable packages.
+- Correct MCP response field names to the protocol's camelCase wire format.
+- Reject overflowing structure counts and invalid cost estimates with recoverable
+  MCP errors; reserve queued and running capacity atomically and validate entire
+  sweeps before launching jobs.
+- Rust callers of `RunManager::estimate_run_cost` now handle a `Result` so invalid
+  input is reported explicitly.
+
 ## 0.1.1 — 2026-10-22 (prerelease)
 
 ### Numerical methods and workflows

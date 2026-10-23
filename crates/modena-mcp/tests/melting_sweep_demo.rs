@@ -51,7 +51,7 @@ fn agent_sweep_workflow_is_reproducible() {
     assert!((built.density - 0.8442).abs() < 1e-3);
 
     // 2. It budgets the run before launching.
-    let cost = mgr.estimate_run_cost(&base_config());
+    let cost = mgr.estimate_run_cost(&base_config()).unwrap();
     assert!(cost.est_wall_s > 0.0);
     assert!(cost.est_rss_mb > 0.0);
 

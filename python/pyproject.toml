@@ -29,7 +29,7 @@ Issues = "https://github.com/ricardoleal20/modena/issues"
 Changelog = "https://github.com/ricardoleal20/modena/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.0"]  # Optional MCP client tooling; check()/run() use the CLI.
+mcp = ["mcp>=2.3.0"]  # Optional MCP client tooling; check()/run() use the CLI.
 
 [tool.hatch.build.targets.wheel]
 packages = ["modena"]

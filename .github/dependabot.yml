@@ -4,6 +4,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      cargo-compatible:
+        patterns: ["*"]
+        update-types: [minor, patch]
     commit-message:
       prefix: build
       include: scope
@@ -11,6 +16,11 @@ updates:
     directory: /bench/validation/harness
     schedule:
       interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      harness-compatible:
+        patterns: ["*"]
+        update-types: [minor, patch]
     commit-message:
       prefix: build
       include: scope
@@ -18,6 +28,12 @@ updates:
     directory: /python
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
+    versioning-strategy: increase-if-necessary
+    groups:
+      python-compatible:
+        patterns: ["*"]
+        update-types: [minor, patch]
     commit-message:
       prefix: build
       include: scope
@@ -25,6 +41,14 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 1
+    # This numeric ref selects the declared compiler floor, not an action runtime.
+    # Change it deliberately together with workspace.package.rust-version.
+    ignore:
+      - dependency-name: dtolnay/rust-toolchain
+    groups:
+      github-actions:
+        patterns: ["*"]
     commit-message:
       prefix: ci
       include: scope

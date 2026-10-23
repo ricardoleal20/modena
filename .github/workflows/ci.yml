@@ -23,20 +23,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.90.0
       - uses: Swatinem/rust-cache@v2
       - name: Check default features
         run: cargo +1.90.0 check --locked --workspace --all-targets
       - name: Check GPU feature
         run: cargo +1.90.0 check --locked --workspace --all-targets --features modena-core/gpu
+      - name: Check standalone validation harness
+        run: cargo +1.90.0 check --locked --manifest-path bench/validation/harness/Cargo.toml --all-targets
 
   fmt:
     name: Format check
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -48,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -69,7 +71,7 @@ jobs:
       OMPI_ALLOW_RUN_AS_ROOT: 1
       OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -118,7 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test (gpu feature; skips without adapter)
@@ -136,10 +138,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Build
@@ -156,7 +158,7 @@ jobs:
         run: |
           cargo build --locked --release -p modena-core --example scientific_validation
           python bench/validate.py --output target/scientific-smoke
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: scientific-smoke-${{ matrix.os }}
@@ -167,14 +169,18 @@ jobs:
         run: cargo run --locked --release -p modena-cli --bin modena -- run -i examples/argon_nve.toml
 
   python-dist:
-    name: Python distribution and license
+    name: Python distribution and license (${{ matrix.python }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - name: Build wheel and source distribution
         run: |
           python -m pip install build
@@ -232,13 +238,17 @@ jobs:
           assert 'type = "lennard_jones"' in config.to_toml()
           print(f'Installed modena {modena.__version__} imports and renders configuration')
           PY
+      - name: Install and import optional MCP tooling
+        run: |
+          python -m pip install './python[mcp]'
+          python -I -c 'from importlib.metadata import version; import modena, mcp; print("Optional MCP SDK:", version("mcp"))'
 
   bench-compile:
     name: Benchmarks compile
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Compile benchmarks (no-run)

@@ -22,7 +22,7 @@ modena-core = { path = "crates/modena-core", version = "0.1.1" }
 
 # External
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml = "1.1.8"
 thiserror = "2"
 rayon = "1"
 rustfft = "6.1"
@@ -38,10 +38,10 @@ libm = "0.2"
 # Optional parallel/GPU backends (M9). Behind feature flags so the default build
 # stays free of native MPI/GPU dependencies; CI exercises them in dedicated jobs.
 mpi = { version = "0.8", package = "mpi" }
-wgpu = "29"
+wgpu = "30.0.1"
 # GPU backend helpers (M9, `gpu` feature only).
 bytemuck = { version = "1", features = ["derive"] }
-pollster = "0.4"
+pollster = "1.0.1"
 
 [profile.release]
 opt-level = 3

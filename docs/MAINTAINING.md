@@ -36,7 +36,18 @@ The following security settings were enabled and checked on 2026-10-23:
 [Dependabot configuration](../.github/dependabot.yml) adds weekly version-update
 checks for the root Cargo workspace, the standalone validation harness, Python,
 and GitHub Actions after it reaches `main`. Review dependency updates with the
-same numerical and compatibility checks as other changes.
+same numerical and compatibility checks as other changes. Compatible Cargo
+updates are grouped per workspace, and Actions updates share one weekly PR.
+Major Cargo updates remain separate. The Python policy avoids raising a minimum
+that already admits the new version unless a compatibility or security reason
+requires it. The numeric `dtolnay/rust-toolchain` ref is excluded from automatic
+version bumps because it selects the declared Rust compiler floor; change that
+floor deliberately in both Cargo metadata and CI.
+
+Keep both Cargo lockfiles coherent when changing shared workspace dependencies.
+The compiler-floor CI job builds the standalone validation harness as well as
+the root workspace. Python distribution jobs verify Python 3.11 and 3.12,
+including installation and import of the optional MCP tooling.
 
 Branch protection was also enabled for `main`: pull requests, an up-to-date
 branch, resolved conversations, and the eight existing CI checks are required;

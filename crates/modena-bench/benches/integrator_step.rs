@@ -1,8 +1,9 @@
 //! One steady velocity-Verlet step; setup clones system+cached neighbors untimed.
 //! Includes kicks, force clearing and neighbor displacement checks; no forced rebuild.
 mod common;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use modena_core::{Integrator, NeighborList, Vec3, VelocityVerlet, Virial};
+use std::hint::black_box;
 fn bench_step(c: &mut Criterion) {
     let mut group = c.benchmark_group("integrator_cached_neighbors");
     for (name, mut system, model, cutoff) in common::workloads() {

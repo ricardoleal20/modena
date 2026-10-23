@@ -3,8 +3,9 @@
 //! Measures `NeighborList::build` for FCC LJ systems at three sizes. The build
 //! is O(N) in atoms; this isolates it from the force kernel.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use modena_core::{lattice, NeighborList};
+use std::hint::black_box;
 
 fn build_system(n_per_side: u32) -> modena_core::System {
     // a = 1.5444 → ρ ≈ 1.085 (dense LJ solid). Larger replicas → larger N.

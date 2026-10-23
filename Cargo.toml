@@ -41,7 +41,7 @@ mpi = { version = "0.8", package = "mpi" }
 wgpu = "29"
 # GPU backend helpers (M9, `gpu` feature only).
 bytemuck = { version = "1", features = ["derive"] }
-pollster = "0.4"
+pollster = "1.0"
 
 [profile.release]
 opt-level = 3

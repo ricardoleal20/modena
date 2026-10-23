@@ -1,6 +1,6 @@
 {
   "executable": "/private/tmp/modena-oss-mpi/debug/deps/mpi_decomp-c1bc01bd5991892c",
-  "sha256": "73a4c1ac7d19722b0ba1a65244bc50fc6b796a0f85ed7908d7fd0619e13749f9",
+  "sha256": "fa1dcb6f46eefe49a31213c232dd3d88c4e3ac926221ed646a537cc1ee3c0306",
   "features": [
     "default",
     "mpi"

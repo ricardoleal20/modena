@@ -7,6 +7,9 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Core library for the MODENA molecular dynamics engine."
+readme = "README.md"
+keywords = ["molecular-dynamics", "simulation", "atomistics"]
+categories = ["science"]
 
 [dependencies]
 serde = { workspace = true }

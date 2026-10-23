@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a crash, incorrect behavior, or tooling problem.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. Use the numerical discrepancy form for disagreements about simulation results. Follow [SECURITY.md](https://github.com/ricardoleal20/modena/blob/main/SECURITY.md) for sensitive vulnerabilities; do not post secrets or exploit details here.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include the exact command, smallest input or script, and steps needed. Remove private data and credentials.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Error or relevant output
+      description: Paste the exact error and short relevant logs, or state that no error appeared.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and environment
+      description: MODENA version or commit, OS, rustc --version, Python version if relevant, build command/features, and backend or thread count.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Related issues, suspected cause, or a workaround, if known.

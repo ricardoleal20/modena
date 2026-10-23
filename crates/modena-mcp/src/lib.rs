@@ -184,6 +184,14 @@ struct RunEntry {
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
+/// An admitted run holds its slot while its worker is starting and building.
+struct PendingRun {
+    run_id: RunId,
+    config: InputConfig,
+    stop: Arc<AtomicBool>,
+    status: Arc<Mutex<RunStatusInner>>,
+}
+
 /// Which scalar parameter a sweep varies across its runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -349,16 +357,6 @@ impl RunManager {
         }
     }
 
-    /// Count of runs currently in the `Running` state.
-    fn count_running(&self) -> usize {
-        self.runs
-            .lock()
-            .unwrap()
-            .values()
-            .filter(|e| e.status.lock().unwrap().state == RunState::Running)
-            .count()
-    }
-
     // ---- discovery ----
 
     /// `list_potentials`: the registered pair potentials.
@@ -421,39 +419,51 @@ impl RunManager {
 
     /// `estimate_run_cost`: a rough wall-time and RAM estimate from an internal
     /// cost model (≈ 50 ns/atom/step, ≈ 96 B/atom + 5 MB baseline). Helps the
-    /// agent budget before launching large runs.
-    pub fn estimate_run_cost(&self, config: &InputConfig) -> EstimateRunCostResult {
-        let atoms = match &config.structure {
-            StructureSpec::Fcc {
-                lattice_constant: _,
-                replicas,
-                ..
-            } => 4 * (replicas[0] as usize) * (replicas[1] as usize) * (replicas[2] as usize),
-            StructureSpec::RandomAlloy { replicas, .. } => {
-                4 * (replicas[0] as usize) * (replicas[1] as usize) * (replicas[2] as usize)
-            }
-            StructureSpec::Water { n_waters, .. } => 3 * *n_waters as usize,
-            StructureSpec::RockSalt { replicas, .. } => {
-                8 * (replicas[0] as usize) * (replicas[1] as usize) * (replicas[2] as usize)
-            }
-            StructureSpec::Xyz { .. } => {
-                // Without reading the file, fall back to a nominal count.
-                build_structure(&config.structure, &self.work_dir)
-                    .map(|s| s.n())
-                    .unwrap_or(0)
-            }
+    /// agent budget before launching large runs. Invalid structure/counts or
+    /// unreadable XYZ input return an error instead of a misleading budget.
+    pub fn estimate_run_cost(
+        &self,
+        config: &InputConfig,
+    ) -> Result<EstimateRunCostResult, McpError> {
+        let config = config
+            .normalized()
+            .map_err(|e| McpError::InvalidInput(e.to_string()))?;
+        validate_structure_spec(&config.structure)?;
+        let checked_count = |per_cell: usize, replicas: [u32; 3]| {
+            replicas
+                .into_iter()
+                .try_fold(per_cell, |n, r| n.checked_mul(r as usize))
+                .ok_or_else(|| McpError::InvalidInput("structure atom count overflow".into()))
         };
+        let atoms = match &config.structure {
+            StructureSpec::Fcc { replicas, .. } | StructureSpec::RandomAlloy { replicas, .. } => {
+                checked_count(4, *replicas)?
+            }
+            StructureSpec::Water { n_waters, .. } => checked_count(3, [*n_waters, 1, 1])?,
+            StructureSpec::RockSalt { replicas, .. } => checked_count(8, *replicas)?,
+            StructureSpec::Xyz { .. } => build_structure(&config.structure, &self.work_dir)?.n(),
+        };
+        if atoms == 0 {
+            return Err(McpError::InvalidInput(
+                "structure must contain atoms".into(),
+            ));
+        }
         let atoms_f = atoms as f64;
         let steps = config.run.steps;
         // Calibrated rough model (see BENCHMARKS.md for measured throughput).
         let est_wall_s = steps as f64 * atoms_f * 5e-8;
         let est_rss_mb = 5.0 + atoms_f * 1.2e-4;
-        EstimateRunCostResult {
+        if !est_wall_s.is_finite() || !est_rss_mb.is_finite() {
+            return Err(McpError::InvalidInput(
+                "run cost estimate must be finite".into(),
+            ));
+        }
+        Ok(EstimateRunCostResult {
             atoms,
             steps,
             est_wall_s,
             est_rss_mb,
-        }
+        })
     }
 
     // ---- synchronous probe ----
@@ -494,29 +504,82 @@ impl RunManager {
     /// `run_async`: launch a streaming run on its own thread. Returns the run
     /// id immediately; poll with [`get_run_status`](Self::get_run_status).
     pub fn run_async(&self, config: InputConfig) -> Result<RunId, McpError> {
-        let total_steps = config.run.steps;
-        if self.count_running() >= self.max_concurrent {
-            return Err(McpError::PoolFull(self.max_concurrent));
-        }
-        let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed);
-        let is_nve = is_nve_config(&config);
+        Ok(self.launch_runs(vec![config])?[0])
+    }
 
-        let stop = Arc::new(AtomicBool::new(false));
-        let status = Arc::new(Mutex::new(RunStatusInner::new(total_steps, is_nve)));
-        let entry = RunEntry {
-            stop: stop.clone(),
-            status: status.clone(),
-            handle: Mutex::new(None),
+    /// Check and reserve the entire batch under one registry lock. Queued runs
+    /// count toward the cap before any worker performs scientific setup.
+    fn launch_runs(&self, configs: Vec<InputConfig>) -> Result<Vec<RunId>, McpError> {
+        let pending: Vec<_> = {
+            let mut runs = self.runs.lock().unwrap();
+            let active = runs
+                .values()
+                .filter(|entry| {
+                    matches!(
+                        entry.status.lock().unwrap().state,
+                        RunState::Queued | RunState::Running
+                    )
+                })
+                .count();
+            if configs.len() > self.max_concurrent.saturating_sub(active) {
+                return Err(McpError::PoolFull(self.max_concurrent));
+            }
+            configs
+                .into_iter()
+                .map(|config| {
+                    let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed);
+                    let stop = Arc::new(AtomicBool::new(false));
+                    let status = Arc::new(Mutex::new(RunStatusInner::new(
+                        config.run.steps,
+                        is_nve_config(&config),
+                    )));
+                    runs.insert(
+                        run_id,
+                        RunEntry {
+                            stop: Arc::clone(&stop),
+                            status: Arc::clone(&status),
+                            handle: Mutex::new(None),
+                        },
+                    );
+                    PendingRun {
+                        run_id,
+                        config,
+                        stop,
+                        status,
+                    }
+                })
+                .collect()
         };
-        self.runs.lock().unwrap().insert(run_id, entry);
 
-        let work_dir = self.work_dir.clone();
-        let join = thread::spawn(move || run_loop(config, work_dir, stop, status));
-        // Store the handle for potential blocking joins (tests).
-        if let Some(e) = self.runs.lock().unwrap().get_mut(&run_id) {
-            *e.handle.lock().unwrap() = Some(join);
+        let mut run_ids = Vec::with_capacity(pending.len());
+        for run in pending {
+            let PendingRun {
+                run_id,
+                config,
+                stop,
+                status,
+            } = run;
+            let work_dir = self.work_dir.clone();
+            let worker_status = Arc::clone(&status);
+            match thread::Builder::new()
+                .spawn(move || run_loop(config, work_dir, stop, worker_status))
+            {
+                Ok(join) => {
+                    if let Some(entry) = self.runs.lock().unwrap().get_mut(&run_id) {
+                        *entry.handle.lock().unwrap() = Some(join);
+                    }
+                }
+                Err(error) => {
+                    // Like a setup failure, a spawn failure remains queryable
+                    // by its admitted id rather than orphaning an earlier run.
+                    let mut state = status.lock().unwrap();
+                    state.state = RunState::Failed;
+                    state.error = Some(format!("failed to start run worker: {error}"));
+                }
+            }
+            run_ids.push(run_id);
         }
-        Ok(run_id)
+        Ok(run_ids)
     }
 
     /// `get_run_status`: snapshot a run's current state.
@@ -571,11 +634,12 @@ impl RunManager {
 
     // ---- sweeps ----
 
-    /// `launch_sweep`: launch one async run per value of `field`, all from
-    /// `base_config`. Returns the sweep id and the per-value run ids.
+    /// `launch_sweep`: validate every swept config and reserve the full batch
+    /// before launching. Returns the sweep id and the per-value run ids;
+    /// subsequent worker setup failures are reported through their run status.
     pub fn launch_sweep(
         &self,
-        mut base_config: InputConfig,
+        base_config: InputConfig,
         field: SweepField,
         values: Vec<f64>,
     ) -> Result<LaunchSweepResult, McpError> {
@@ -585,18 +649,22 @@ impl RunManager {
         if values.len() > self.max_concurrent {
             return Err(McpError::PoolFull(self.max_concurrent));
         }
-        let sweep_id = self.next_sweep_id.fetch_add(1, Ordering::Relaxed);
-        let mut run_ids = Vec::with_capacity(values.len());
-
+        let mut configs = Vec::with_capacity(values.len());
         for v in &values {
-            apply_sweep_field(&mut base_config, field, *v)?;
+            let mut config = base_config.clone();
+            apply_sweep_field(&mut config, field, *v)?;
             // Hermetic sweeps: no per-run file output (avoid clutter / races).
-            base_config.run.trajectory_file = None;
-            base_config.run.log_file = None;
-            base_config.run.restart_file = None;
-            let run_id = self.run_async(base_config.clone())?;
-            run_ids.push(run_id);
+            config.run.trajectory_file = None;
+            config.run.log_file = None;
+            config.run.restart_file = None;
+            configs.push(
+                config
+                    .normalized()
+                    .map_err(|e| McpError::InvalidInput(e.to_string()))?,
+            );
         }
+        let run_ids = self.launch_runs(configs)?;
+        let sweep_id = self.next_sweep_id.fetch_add(1, Ordering::Relaxed);
 
         let runs = run_ids
             .iter()
@@ -793,30 +861,70 @@ fn run_loop(
     }
 }
 
+/// Check raw structure geometry and indexed capacity without allocating atoms.
+fn validate_structure_spec(spec: &StructureSpec) -> Result<(), McpError> {
+    // Reuse the core's allocation/count and scalar checks without constructing
+    // a simulation. The placeholder model/integrator only complete the config;
+    // raw structure discovery never evaluates them or converts its input.
+    Simulation::builder()
+        .structure(spec.clone())
+        .units(if matches!(spec, StructureSpec::Water { .. }) {
+            modena_core::UnitSystem::Real
+        } else {
+            modena_core::UnitSystem::Reduced
+        })
+        .lj(1.0, 1.0, 1.0)
+        .velocity_verlet(0.001)
+        .to_config()
+        .map_err(|e| McpError::InvalidInput(e.to_string()))?;
+    let edges = match spec {
+        StructureSpec::Fcc {
+            lattice_constant,
+            replicas,
+            ..
+        }
+        | StructureSpec::RandomAlloy {
+            lattice_constant,
+            replicas,
+            ..
+        }
+        | StructureSpec::RockSalt {
+            lattice_constant,
+            replicas,
+            ..
+        } => Some(replicas.map(|r| lattice_constant * r as f64)),
+        StructureSpec::Xyz { box_size, .. } => Some(*box_size),
+        StructureSpec::Water { .. } => None,
+    };
+    if let Some(edges) = edges {
+        let volume = edges.into_iter().product::<f64>();
+        if edges
+            .iter()
+            .any(|edge| !edge.is_finite() || *edge <= 0.0 || !edge.recip().is_finite())
+            || !volume.is_finite()
+            || volume <= 0.0
+        {
+            return Err(McpError::InvalidInput(
+                "structure box must have finite positive edges and volume".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Materialize a `System` from a structure spec using public core API.
 fn build_structure(
     spec: &StructureSpec,
     base_dir: &std::path::Path,
 ) -> Result<modena_core::System, McpError> {
+    validate_structure_spec(spec)?;
     match spec {
         StructureSpec::Fcc {
             lattice_constant,
             replicas,
             element,
             ..
-        } => {
-            // NaN-safe: reject non-finite and non-positive (NaN is not `> 0` and
-            // not finite, so both clauses catch it).
-            if !lattice_constant.is_finite() || *lattice_constant <= 0.0 {
-                return Err(McpError::InvalidInput(
-                    "lattice_constant must be > 0".into(),
-                ));
-            }
-            if replicas.contains(&0) {
-                return Err(McpError::InvalidInput("replicas must be >= 1".into()));
-            }
-            Ok(lattice::fcc(*lattice_constant, *replicas, element))
-        }
+        } => Ok(lattice::fcc(*lattice_constant, *replicas, element)),
         StructureSpec::Xyz {
             file,
             box_size,
@@ -839,14 +947,6 @@ fn build_structure(
             species,
             seed,
         } => {
-            if !lattice_constant.is_finite() || *lattice_constant <= 0.0 {
-                return Err(McpError::InvalidInput(
-                    "lattice_constant must be > 0".into(),
-                ));
-            }
-            if replicas.contains(&0) {
-                return Err(McpError::InvalidInput("replicas must be >= 1".into()));
-            }
             let alloy: Vec<modena_core::AlloySpecies> = species
                 .iter()
                 .map(|s| modena_core::AlloySpecies {
@@ -868,26 +968,16 @@ fn build_structure(
             anion_mass,
             cation_charge,
             anion_charge,
-        } => {
-            if !lattice_constant.is_finite() || *lattice_constant <= 0.0 {
-                return Err(McpError::InvalidInput(
-                    "lattice_constant must be > 0".into(),
-                ));
-            }
-            if replicas.contains(&0) {
-                return Err(McpError::InvalidInput("replicas must be >= 1".into()));
-            }
-            Ok(lattice::rocksalt(
-                *lattice_constant,
-                *replicas,
-                cation,
-                anion,
-                cation_mass.unwrap_or(1.0),
-                anion_mass.unwrap_or(1.0),
-                *cation_charge,
-                *anion_charge,
-            ))
-        }
+        } => Ok(lattice::rocksalt(
+            *lattice_constant,
+            *replicas,
+            cation,
+            anion,
+            cation_mass.unwrap_or(1.0),
+            anion_mass.unwrap_or(1.0),
+            *cation_charge,
+            *anion_charge,
+        )),
         StructureSpec::Water {
             n_waters,
             density,
@@ -1181,7 +1271,7 @@ seed = 42
     #[test]
     fn estimate_run_cost_is_finite_and_positive() {
         let mgr = RunManager::default();
-        let res = mgr.estimate_run_cost(&sample_config(1000));
+        let res = mgr.estimate_run_cost(&sample_config(1000)).unwrap();
         assert_eq!(res.atoms, 32);
         assert_eq!(res.steps, 1000);
         assert!(res.est_wall_s > 0.0);
@@ -1367,5 +1457,24 @@ seed = 1
         assert!(err.is_err());
         let err = apply_sweep_field(&mut cfg, SweepField::Density, -1.0);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn queued_run_holds_a_concurrency_slot_during_setup() {
+        let mgr = RunManager::new(1, PathBuf::from("."));
+        mgr.runs.lock().unwrap().insert(
+            99,
+            RunEntry {
+                stop: Arc::new(AtomicBool::new(false)),
+                status: Arc::new(Mutex::new(RunStatusInner::new(100, true))),
+                handle: Mutex::new(None),
+            },
+        );
+        let result = mgr.run_async(sample_config(100_000_000));
+        if let Ok(id) = result {
+            mgr.cancel_run(id).unwrap();
+            mgr.join_run(id).unwrap();
+        }
+        assert!(matches!(result, Err(McpError::PoolFull(1))));
     }
 }

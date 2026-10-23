@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -14,6 +21,7 @@ jobs:
   msrv:
     name: Rust 1.90 build check (default + gpu)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.90.0
@@ -26,6 +34,7 @@ jobs:
   fmt:
     name: Format check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -37,6 +46,7 @@ jobs:
   clippy:
     name: Clippy (default + gpu)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -47,13 +57,14 @@ jobs:
       # system MPI and is exercised in its own job below. Check both default
       # and gpu feature here.
       - name: cargo clippy (default)
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: cargo clippy (gpu feature)
-        run: cargo clippy --all-targets --features gpu -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --features modena-core/gpu -- -D warnings
 
   mpi:
     name: MPI backend (mpiexec -n 2)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       OMPI_ALLOW_RUN_AS_ROOT: 1
       OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: 1
@@ -66,9 +77,9 @@ jobs:
       - name: Install OpenMPI
         run: sudo apt-get update && sudo apt-get install -y libopenmpi-dev openmpi-bin
       - name: Clippy (mpi feature)
-        run: cargo clippy --all-targets --features mpi -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --features modena-core/mpi -- -D warnings
       - name: Build MPI test
-        run: cargo test --locked --features mpi --test mpi_decomp --no-run --message-format=json > "$RUNNER_TEMP/modena-mpi-artifacts.jsonl"
+        run: cargo test --locked -p modena-core --features mpi --test mpi_decomp --no-run --message-format=json > "$RUNNER_TEMP/modena-mpi-artifacts.jsonl"
       - name: Run MPI test (mpiexec -n 2)
         # The decomposed force/energy/virial must match the serial reference
         # across two real MPI ranks. Single-process `cargo test` skips (see
@@ -105,6 +116,7 @@ jobs:
   gpu:
     name: GPU backend (compile + skip-test)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -113,7 +125,7 @@ jobs:
         # The wgpu backend compiles everywhere; on a headless CI runner there is
         # no GPU adapter, so the test self-skips. Run it to confirm the build +
         # graceful skip path.
-        run: cargo test --features gpu --test gpu_pair
+        run: cargo test --locked -p modena-core --features gpu --test gpu_pair -- --nocapture
 
   test:
     name: Build & test (${{ matrix.os }})
@@ -122,6 +134,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -130,9 +143,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Build
-        run: cargo build --verbose --release
+        run: cargo build --locked --workspace --verbose --release
       - name: Test
-        run: cargo test --verbose
+        run: cargo test --locked --workspace --verbose
       - name: Python and benchmark-tool regression tests
         env:
           MODENA_BINARY: ${{ github.workspace }}/target/release/modena
@@ -141,7 +154,7 @@ jobs:
           python -m unittest discover -s bench/tests -v
       - name: Bounded numerical scientific smoke
         run: |
-          cargo build --release -p modena-core --example scientific_validation
+          cargo build --locked --release -p modena-core --example scientific_validation
           python bench/validate.py --output target/scientific-smoke
       - uses: actions/upload-artifact@v4
         if: always()
@@ -151,14 +164,82 @@ jobs:
       - name: Run NVE smoke example
         # The workspace ships two binaries (`modena`, `modena-mcp`); pin the CLI
         # binary explicitly so `cargo run` never has to disambiguate.
-        run: cargo run --release --bin modena -- run -i examples/argon_nve.toml
+        run: cargo run --locked --release -p modena-cli --bin modena -- run -i examples/argon_nve.toml
+
+  python-dist:
+    name: Python distribution and license
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel and source distribution
+        run: |
+          python -m pip install build
+          python -m build --outdir dist python
+      - name: Inspect distribution metadata and MIT notices
+        run: |
+          python - <<'PY'
+          from email.parser import BytesParser
+          from pathlib import Path
+          import tarfile
+          import zipfile
+
+          notice = Path('LICENSE').read_bytes()
+          assert Path('python/LICENSE').read_bytes() == notice, 'Python MIT notice differs from the root license'
+          wheels = list(Path('dist').glob('*.whl'))
+          sources = list(Path('dist').glob('*.tar.gz'))
+          assert len(wheels) == len(sources) == 1, 'Expected one wheel and one source distribution'
+
+          def check_metadata(raw):
+              metadata = BytesParser().parsebytes(raw)
+              assert metadata['Name'] == 'modena'
+              assert metadata['License-Expression'] == 'MIT'
+              assert metadata.get_all('License-File') == ['LICENSE']
+              assert metadata['Description-Content-Type'] == 'text/markdown'
+
+          with zipfile.ZipFile(wheels[0]) as wheel:
+              metadata_paths = [name for name in wheel.namelist() if name.endswith('.dist-info/METADATA')]
+              assert len(metadata_paths) == 1
+              metadata_path = metadata_paths[0]
+              check_metadata(wheel.read(metadata_path))
+              license_path = metadata_path.removesuffix('METADATA') + 'licenses/LICENSE'
+              assert wheel.read(license_path) == notice, 'Wheel MIT notice differs from the root license'
+
+          with tarfile.open(sources[0], 'r:gz') as source:
+              prefix = sources[0].name.removesuffix('.tar.gz')
+              def read_member(name):
+                  member = source.extractfile(f'{prefix}/{name}')
+                  assert member is not None, f'Missing {name} in source distribution'
+                  return member.read()
+              check_metadata(read_member('PKG-INFO'))
+              assert read_member('LICENSE') == notice, 'Source distribution MIT notice differs from the root license'
+              assert read_member('README.md') == Path('python/README.md').read_bytes()
+          print('Wheel and source distribution contain the exact MIT notice and expected metadata')
+          PY
+      - name: Install wheel and smoke test outside the source tree
+        run: |
+          python -m pip install --no-deps dist/*.whl
+          python -I - <<'PY'
+          from importlib.metadata import version
+          import modena
+          from modena import Config, Fcc, LennardJones, VelocityVerlet
+
+          assert modena.__version__ == version('modena')
+          config = Config(Fcc(1.6796, [2, 2, 2]), LennardJones(2.5, 1.0, 1.0), VelocityVerlet(0.002))
+          assert 'type = "lennard_jones"' in config.to_toml()
+          print(f'Installed modena {modena.__version__} imports and renders configuration')
+          PY
 
   bench-compile:
     name: Benchmarks compile
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Compile benchmarks (no-run)
-        run: cargo bench --no-run
+        run: cargo bench --locked --workspace --no-run

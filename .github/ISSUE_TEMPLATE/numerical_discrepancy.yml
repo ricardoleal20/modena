@@ -1,0 +1,53 @@
+name: Numerical discrepancy
+description: Report unexpected forces, energies, observables, or sampling behavior.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Review [validated scope and limitations](https://github.com/ricardoleal20/modena/blob/main/docs/VALIDATED_SCOPE.md). A minimal reproducible case and an independent comparison help distinguish implementation errors, model differences, and finite sampling.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Discrepancy
+      description: Which observable or behavior differs, and why is the difference unexpected?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction and initial state
+      description: Include the exact command, minimal TOML or script, initial coordinates/velocities or reproducible construction, seed, and restart details if applicable.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: model
+    attributes:
+      label: Physical and numerical settings
+      description: State units, parameters, particle count, box/boundary conditions, timestep, cutoff/shift, long-range settings, ensemble/controllers, constraints, and degrees of freedom relevant to the comparison.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Observed result and independent reference
+      description: Give numerical values with units, expected values and their derivation or source, comparison tolerance, and short logs. For another engine, include its version and matching input/settings.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: sampling
+    attributes:
+      label: Convergence and sampling
+      description: For trajectory/statistical results, include equilibration, run length, samples, correlation/uncertainty assumptions, and timestep or size checks. For a deterministic snapshot, state that sampling is not applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and environment
+      description: MODENA version or commit, OS, rustc --version, build features, backend, thread/rank count, and GPU model if used. Identify paths that skipped.
+      render: text
+    validations:
+      required: true

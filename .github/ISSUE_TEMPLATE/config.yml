@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Usage questions and support
+    url: https://github.com/ricardoleal20/modena/blob/main/SUPPORT.md
+    about: Read the support guide, then open a blank issue for a usage question.
+  - name: Sensitive security reports
+    url: https://github.com/ricardoleal20/modena/blob/main/SECURITY.md
+    about: Read the reporting policy before sharing vulnerability information.

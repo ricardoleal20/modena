@@ -161,17 +161,50 @@ mod tests {
             .to_string()
     }
 
+    fn object_keys(value: &serde_json::Value) -> Vec<&str> {
+        let mut keys: Vec<_> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        keys
+    }
+
     #[test]
-    fn initialize_and_tools_list() {
-        let responses = run_session(vec![
-            rpc("initialize", 1, serde_json::json!({})),
-            rpc("tools/list", 2, serde_json::json!({})),
-        ]);
-        assert_eq!(responses.len(), 2);
+    fn initialize_uses_mcp_wire_keys() {
+        let responses = run_session(vec![rpc("initialize", 1, serde_json::json!({}))]);
+        assert_eq!(responses.len(), 1);
         let init: serde_json::Value = serde_json::from_str(&responses[0]).unwrap();
-        assert_eq!(init["result"]["protocol_version"], PROTOCOL_VERSION);
-        assert_eq!(init["result"]["server_info"]["name"], "modena-mcp");
-        let list: serde_json::Value = serde_json::from_str(&responses[1]).unwrap();
+        assert_eq!(
+            init,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": { "tools": {} },
+                    "serverInfo": {
+                        "name": "modena-mcp",
+                        "version": env!("CARGO_PKG_VERSION")
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn tool_descriptors_use_mcp_wire_keys() {
+        let responses = run_session(vec![rpc("tools/list", 2, serde_json::json!({}))]);
+        assert_eq!(responses.len(), 1);
+        let list: serde_json::Value = serde_json::from_str(&responses[0]).unwrap();
+        assert_eq!(object_keys(&list), ["id", "jsonrpc", "result"]);
+        assert_eq!(object_keys(&list["result"]), ["tools"]);
+        for tool in list["result"]["tools"].as_array().unwrap() {
+            assert_eq!(object_keys(tool), ["description", "inputSchema", "name"]);
+            assert_eq!(tool["inputSchema"]["type"], "object");
+        }
         let names: Vec<&str> = list["result"]["tools"]
             .as_array()
             .unwrap()
@@ -195,6 +228,11 @@ mod tests {
         )]);
         assert_eq!(responses.len(), 1);
         let resp: serde_json::Value = serde_json::from_str(&responses[0]).unwrap();
+        assert_eq!(object_keys(&resp), ["id", "jsonrpc", "result"]);
+        // The optional `isError` flag is omitted on success.
+        assert_eq!(object_keys(&resp["result"]), ["content"]);
+        assert_eq!(object_keys(&resp["result"]["content"][0]), ["text", "type"]);
+        assert_eq!(resp["result"]["content"][0]["type"], "text");
         let text = &resp["result"]["content"][0]["text"];
         let payload: serde_json::Value = serde_json::from_str(text.as_str().unwrap()).unwrap();
         assert_eq!(payload["atoms"], 32);
@@ -213,9 +251,9 @@ mod tests {
         )]);
         assert_eq!(responses.len(), 1);
         let resp: serde_json::Value = serde_json::from_str(&responses[0]).unwrap();
-        // Success omits `is_error` (it is only present when true).
+        // Success omits `isError` (it is only present when true).
         assert!(
-            resp["result"]["is_error"].is_null(),
+            resp["result"].get("isError").is_none(),
             "unexpected error result: {resp}"
         );
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
@@ -252,7 +290,15 @@ mod tests {
             serde_json::json!({ "name": "build_system", "arguments": {} }),
         )]);
         let resp: serde_json::Value = serde_json::from_str(&responses[0]).unwrap();
-        // Missing required field → reported as an error tool result (is_error true).
-        assert_eq!(resp["result"]["is_error"], true);
+        assert_eq!(object_keys(&resp), ["id", "jsonrpc", "result"]);
+        // Missing required field → reported as an MCP tool error result.
+        assert_eq!(object_keys(&resp["result"]), ["content", "isError"]);
+        assert_eq!(resp["result"]["isError"], true);
+        assert_eq!(object_keys(&resp["result"]["content"][0]), ["text", "type"]);
+        assert_eq!(resp["result"]["content"][0]["type"], "text");
+        assert!(!resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .is_empty());
     }
 }

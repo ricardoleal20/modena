@@ -1,7 +1,8 @@
 //! Force clearing + model compute + neighbor displacement check. Rebuild isolated.
 mod common;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use modena_core::{NeighborList, Virial};
+use std::hint::black_box;
 fn bench_force(c: &mut Criterion) {
     for (name, mut system, model, cutoff) in common::workloads() {
         let mut nl = NeighborList::with_skin(cutoff, 0.3);

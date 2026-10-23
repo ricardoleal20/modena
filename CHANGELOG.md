@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Refresh Cargo dependencies, workflow actions, and the optional MCP SDK;
+  adapt benchmark and GPU APIs while retaining the Rust 1.90 compiler floor.
+- Group compatible Dependabot updates and check both Cargo workspaces and the
+  optional Python tooling in CI.
 - Complete contribution and commit guidance, issue and pull request templates,
   conduct, security, and maintainer policies.
 - Document a proposed design system and scientific interface guidance.

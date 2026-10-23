@@ -370,6 +370,7 @@ impl GpuPairForceModel {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     force_fallback_adapter: false,
                     compatible_surface: None,
+                    apply_limit_buckets: false,
                 })
                 .await
                 .ok()?;
@@ -836,7 +837,11 @@ impl ForceModel for GpuPairForceModel {
             .map_err(|e| ModenaError::Config(format!("wgpu map channel closed: {e}")))?
             .map_err(|e| ModenaError::Config(format!("wgpu buffer map failed: {e}")))?;
 
-        let bytes = buffers.staging.slice(..).get_mapped_range();
+        let bytes = buffers.staging.slice(..).get_mapped_range().map_err(|e| {
+            // The map succeeded, so release it even when acquiring its view fails.
+            buffers.staging.unmap();
+            ModenaError::Config(format!("wgpu mapped buffer range failed: {e}"))
+        })?;
         let all: &[f32] = bytemuck::cast_slice(&bytes[..]);
         let forces_f32 = &all[..3 * n];
         let aux_f32 = &all[3 * n..5 * n];

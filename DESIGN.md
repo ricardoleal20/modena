@@ -1,6 +1,6 @@
 # MODENA design system
 
-Identity and interface guidance · 2026-10-23
+Identity and interface guidance · 2026-10-24
 
 MODENA means **Molecular Dynamics Engine for Numerical Atomistics**. Its visual
 identity should feel like a reliable scientific instrument: precise geometry,
@@ -9,17 +9,17 @@ Rust library and CLI with Python and MCP interfaces. The workbench in
 [`docs/ui-prototype/index.html`](docs/ui-prototype/index.html) is a standalone
 static prototype, not a shipped simulation frontend.
 
-This document introduces a **proposed visual system**. Logo development remains
-local and deferred; no logo artwork is included in this change. It records the
-prototype's existing choices separately. It does not claim that
+The selected **Flow identity** is delivered in [brand assets](assets/brand/README.md).
+This document also introduces a **proposed interface visual system** and records
+the prototype's existing choices separately. It does not claim that
 the proposed tokens, accessibility behaviors, or interface states are already
 implemented. Product and validation statements remain governed by
 [`README.md`](README.md) and [`docs/VALIDATED_SCOPE.md`](docs/VALIDATED_SCOPE.md).
 
 ## 1. Visual direction
 
-- **Precise, open geometry.** The angular M and periodic-cell corners express
-  numerical structure. The central particle supplies a single controlled accent.
+- **Measured motion.** Three flowing bands suggest numerical trajectories and
+  evolution through time. A mint outer band supplies one controlled accent.
 - **Data before decoration.** Give configuration, units, diagnostics, provenance,
   and errors the strongest hierarchy. Keep brand illustration outside plots.
 - **Restrained color.** Deep ink and paper form the structure; teal identifies
@@ -27,25 +27,26 @@ implemented. Product and validation statements remain governed by
 - **Scientific restraint.** A completed run, low energy drift, or attractive plot
   is not proof of physical validity. Show the scope and method behind a result.
 
-The symbol is an abstract identity, not a chemical structure, trajectory,
-periodic-boundary algorithm diagram, or promise that all box geometries are
-supported. Do not present its connecting strokes as simulated molecular bonds.
+The symbol is an abstract identity, not a chemical structure, measured
+trajectory, algorithm diagram, or promise that all box geometries are supported.
+Do not present its curves as simulation evidence.
 
-## 2. Logo development: deferred
+## 2. Selected logo: Flow
 
-An angular M, open periodic-cell corners, and a single particle are an explored
-identity concept. The artwork and its local previews are outside this change.
-Use ordinary system-font text reading “MODENA” until reviewed artwork is added
-in a separate contribution. Geometry, file inventory, clear space, minimum
-reproduction sizes, and final usage rules remain to be established there.
+The owner selected option 2, **Flow**, on 2026-10-24: three broad, gently tapered
+bands sweeping through a shared turn. Use the approved PNG icon and its
+size exports, the matching README banner, and the ICO favicon from
+[`assets/brand/`](assets/brand/README.md). Keep the square icon's original
+padding. The earlier M-and-particle concept is superseded.
 
-A future logo contribution should include light, inverse, monochrome, and small
-variants with a reproducible preview. Verify each at its intended display size,
-retain accessible titles and descriptions, and document authorship and license.
-Avoid font dependencies, embedded raster images, scripts, and external resources
-in SVG artwork. Inverse artwork needs an explicit dark host surface.
+The current production artwork is raster, on a dark ink surface. Light,
+monochrome, transparent, and editable vector variants are not delivered.
+The [local preview](assets/brand/preview.html) shows the exported sizes;
+[generation provenance](assets/brand/GENERATION.md) records the prompts.
+Future SVG artwork should avoid font dependencies, embedded raster images,
+scripts, and external resources, and retain accessible titles and descriptions.
 
-For future HTML logo images, use `alt="MODENA"`; when adjacent text already names
+For HTML logo images, use `alt="MODENA"`; when adjacent text already names
 MODENA, use `alt=""` to avoid duplicate speech. Give inline SVG title/description
 IDs unique prefixes when embedding multiple copies. Decorative copies should
 use `aria-hidden="true"` and omit an announced image role.
@@ -85,8 +86,8 @@ theme.
 | Proposed token | Hex | Role |
 |---|---|---|
 | `--color-ink` | `#10262B` | Primary text, strong icons, brand structure |
-| `--color-accent` | `#087F78` | Primary action, link, selection indicator, logo particle on light |
-| `--color-accent-inverse` | `#5ED8C1` | Logo particle and restrained accents on ink only |
+| `--color-accent` | `#087F78` | Primary action, link, selection indicator |
+| `--color-accent-inverse` | `#5ED8C1` | Outer logo band and restrained accents on ink only |
 | `--color-canvas` | `#F7FAF8` | Page background |
 | `--color-surface` | `#FFFFFF` | Data and configuration surfaces |
 | `--color-text-secondary` | `#4D666B` | Secondary readable text |
@@ -252,14 +253,16 @@ Honor `prefers-reduced-motion: reduce` by removing decorative transitions and
 autoplay. A trajectory viewer starts paused unless playback is explicitly chosen,
 always offers pause and frame stepping, and keeps reduced-motion mode usable
 with still frames. Polling or data refresh must not animate every new value.
-Any future logo should remain static.
+The logo remains static.
 
 ## 9. Delivery and license
 
-This contribution delivers design guidance only. Logo artwork, previews,
-favicons, and app icons remain deferred. A future artwork contribution must
-provide its own inventory, source files, usage rules, and reproduction checks.
+The [brand package](assets/brand/README.md) delivers the selected icon, PNG
+exports, favicon, matching README banner, local preview, and prompt provenance.
+The interface tokens and behaviors in this document remain guidance for future
+implementation.
 
 This design document is contributed under the repository's
 [MIT license](LICENSE), copyright © 2026 MODENA contributors. It does not bundle
-third-party images, font files, or icon packages.
+third-party font files or icon packages. ImageGen was used for the brand artwork;
+the approved icon is preserved in the production exports.

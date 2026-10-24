@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="modena-favicon.ico">
+  <title>MODENA · Flow identity</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f7faf8; color: #10262b; font: 16px/1.6 system-ui, sans-serif; }
+    main { max-width: 1100px; margin: auto; padding: 48px 32px 64px; }
+    h1 { font-size: 24px; margin: 0 0 8px; }
+    h2 { font-size: 18px; margin: 0 0 20px; }
+    p { max-width: 700px; margin: 0; color: #4d666b; }
+    section { margin-top: 40px; }
+    img { max-width: 100%; height: auto; display: block; }
+    .banner { width: 100%; }
+    .icons { display: flex; gap: 32px; flex-wrap: wrap; align-items: center; }
+    figure { margin: 0; }
+    figcaption { margin-top: 12px; font: 12px/1.5 ui-monospace, monospace; color: #4d666b; }
+    a { color: #087f78; text-underline-offset: 3px; }
+    a:focus-visible { outline: 2px solid #087f78; outline-offset: 4px; }
+    footer { margin-top: 40px; border-top: 1px solid #d8e3df; padding-top: 20px; font-size: 13px; }
+    @media (max-width: 600px) { main { padding: 24px 20px 40px; } .icons { gap: 24px; } }
+    @media (prefers-color-scheme: dark) {
+      body { background: #10262b; color: #f7faf8; }
+      p, figcaption { color: #baccc7; } a { color: #5ed8c1; }
+      a:focus-visible { outline-color: #5ed8c1; }
+      footer { border-color: #4d666b; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>MODENA · Flow</h1>
+      <p>Approved identity · 2026-10-24. Three flowing bands suggest numerical motion. The production icon preserves the selected artwork.</p>
+    </header>
+    <section aria-labelledby="banner-title">
+      <h2 id="banner-title">README banner</h2>
+      <img class="banner" src="modena-banner.png" alt="MODENA — Molecular dynamics. Built in Rust. Rust core, CLI, Python, MCP.">
+    </section>
+    <section aria-labelledby="icon-title">
+      <h2 id="icon-title">Icon and reproduction sizes</h2>
+      <div class="icons">
+        <figure><img src="modena-icon-256.png" width="256" height="256" alt="MODENA flow icon at 256 pixels"><figcaption>256 px</figcaption></figure>
+        <figure><img src="modena-icon-256.png" width="64" height="64" alt="MODENA flow icon at 64 pixels"><figcaption>64 px</figcaption></figure>
+        <figure><img src="modena-favicon.ico" width="32" height="32" alt="MODENA favicon at 32 pixels"><figcaption>32 px</figcaption></figure>
+        <figure><img src="modena-favicon.ico" width="16" height="16" alt="MODENA favicon at 16 pixels"><figcaption>16 px</figcaption></figure>
+      </div>
+    </section>
+    <footer><a href="README.md">Asset inventory and usage</a> · <a href="GENERATION.md">Prompts and provenance</a> · Repository MIT license</footer>
+  </main>
+</body>
+</html>

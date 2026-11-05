@@ -27,11 +27,11 @@ and MCP schema; affected interface tests and external-provider documentation.
 Consumes `AseEmtSpec`/`AseEmtForceModel` and B01 transactional evaluation.
 Produces opt-in `transport="persistent"` with the same physical identity.
 
-- [ ] Write regressions that repeated evaluations use one process, return changed E/F, and reject stale IDs/identity while preserving accumulators; run to observe missing support.
-- [ ] Implement bounded request/response session ownership, deadline, cleanup and terminal state; preserve B01 one-shot default. Extend worker with a session loop that constructs EMT once and validates/refreshes snapshots.
-- [ ] Cover EOF/provider failure, oversized/malformed output, timeout, drop/reaping, restart/physical signatures and safe cancellation; compare actual installed ASE for changed snapshots/cells.
-- [ ] Run focused core/CLI/MCP/Python tests and format/lint/compiler-floor checks. Record exact commands/results/source in a task report and commit.
-- [ ] Read-only spec/quality review; correct findings with covering tests and scoped rereview.
+- [x] Write regressions that repeated evaluations use one process, return changed E/F, and reject stale IDs/identity while preserving accumulators; run to observe missing support.
+- [x] Implement bounded request/response session ownership, deadline, cleanup and terminal state; preserve B01 one-shot default. Extend worker with a session loop that constructs EMT once and validates/refreshes snapshots.
+- [x] Cover EOF/provider failure, oversized/malformed output, timeout, drop/reaping, restart/physical signatures and safe cancellation; compare actual installed ASE for changed snapshots/cells.
+- [x] Run focused core/CLI/MCP/Python tests and format/lint/compiler-floor checks. Record exact commands/results/source in a task report and commit.
+- [x] Read-only spec/quality review; correct findings with covering tests and scoped rereview.
 
 ## Task 2: MODENA native LJ calculator for ASE
 

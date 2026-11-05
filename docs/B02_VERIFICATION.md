@@ -177,4 +177,5 @@ the earlier documentation-corrected file matches measured `0cea614` source.
 The preserved and shared release CLI bytes still have SHA-256
 `1b39924b2ab9141748c49a1936df9a57cda8a70d3b879c5008da33996e0113f8`.
 No rebuild, kernel change, timing campaign or broad-validation rerun was
-needed. Final scoped rereview and publication state belong to the controller.
+needed. [Review closure](B02_REVIEW.md) records the approved scoped rereview,
+PR publication and the actual remote CI limitations separately.

@@ -62,8 +62,12 @@ as required, existing tooling/smoke outputs retained under ignored target.
 Consumes Task1 accepted source and before/after artifacts; introduces no
 unmeasured force-kernel changes.
 
-- [ ] Run fresh actual-ASE full workspace, Python/worker/tooling tests once at stabilized source; preserve failures and correct concrete issues with scoped tests.
-- [ ] Run formatting, default/GPU all-target Clippy with `-D warnings`, Rust1.90 default/GPU workspace checks and the locked standalone harness check; compilation only for GPU.
-- [ ] Build scientific release example and run existing67-observation smoke. Retain versions, code/binary hashes, raw series and exact results; no tolerance relaxation or new ensemble/engine certification.
-- [ ] Record reproducible commands and accurate source epochs in verification/guide, preserving raw profile/timing rows and B09 evidence. Run diff checks and obtain read-only task review.
-- [ ] Controller: whole-branch review, grouped fixes/scoped rereview if needed, then assigned/labeled PR against B09 with Summary, Changes, Test plan, Refs. No merge; report B09/B02 results together.
+- [x] Run fresh actual-ASE full workspace, Python/worker/tooling tests once at stabilized source; preserve failures and correct concrete issues with scoped tests.
+- [x] Run formatting, default/GPU all-target Clippy with `-D warnings`, Rust1.90 default/GPU workspace checks and the locked standalone harness check; compilation only for GPU.
+- [x] Build scientific release example and run existing67-observation smoke. Retain versions, code/binary hashes, raw series and exact results; no tolerance relaxation or new ensemble/engine certification.
+- [x] Record reproducible commands and accurate source epochs in verification/guide, preserving raw profile/timing rows and B09 evidence. Run diff checks and obtain read-only task review.
+- [x] Controller: whole-branch review, grouped fixes/scoped rereview if needed, then assigned/labeled PR against B09 with Summary, Changes, Test plan, Refs. No merge; report B09/B02 results together.
+
+Delivery: [PR #56](https://github.com/ricardoleal20/modena/pull/56), open
+against B09. [Review closure](../../B02_REVIEW.md) records final approval,
+decisions, local evidence and the actual remote CI limitations.

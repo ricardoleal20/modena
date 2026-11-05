@@ -63,6 +63,7 @@ model_sha256={hash}
 atomic_numbers=[29,29,29,29]
 composition="total"
 timeout_ms=120000
+transport="persistent"
 [integrator]
 type="velocity_verlet"
 dt=0.0001

@@ -77,6 +77,7 @@ composition = "total"
 pbc = [true, true, true]
 asap_cutoff = false
 timeout_ms = 30000
+transport = "one_shot" # default; use "persistent" for one process/calculator
 [integrator]
 type = "velocity_verlet"
 dt = 0.0001
@@ -141,17 +142,38 @@ updates; failed results leave existing forces/virial intact. Construction
 checks the requested ASE version and model hash, and evaluations require the
 complete discovered identity, including NumPy, to remain equal.
 
-Transport executes the selected interpreter without a shell. Temporary regular
-files avoid pipe deadlocks; stdout is bounded at 16 MiB, stderr at 64 KiB and
-diagnostics at 4096 UTF-8 bytes plus short error prefixes. The child is killed
-and reaped on timeout or transport failure. Bounds are polled, so transient
-overshoot is possible; this is not an operating-system sandbox. Defaults are
-`python="python3"` and `timeout_ms=30000`. There is no retry, stale result cache
-or fallback. MCP cancellation is observed before setup, between provider calls,
+Transport executes the selected interpreter without a shell. Defaults are
+`python="python3"`, `timeout_ms=30000` and `transport="one_shot"`. One-shot
+calls use temporary regular files to avoid pipe deadlocks. Output bounds are
+polled at 16 MiB stdout and 64 KiB stderr, so transient overshoot is possible.
+Diagnostics are limited to 4096 UTF-8 bytes plus short error prefixes.
+
+B09 adds explicit `transport="persistent"` in TOML, Python `AseEmt`, and MCP
+configuration. A provider owns one process and one EMT calculator, including
+the identity handshake; repeated evaluations reuse both. Changed positions,
+cell and numbers invalidate ASE's cache exactly, including changes smaller
+than its normal cache tolerance. The Rust provider still requires the pinned
+per-atom numbers in every snapshot. Persistent messages have a four-byte
+big-endian length followed by strict JSON, with a separate
+`modena-ase-emt-session-v1` envelope and increasing request IDs. The unchanged
+`modena-ase-emt-v1` physical identity remains inside each response. Frames are
+limited to 16 MiB, lifetime stderr to 64 KiB (only 4096 bytes retained), and IO
+queues are bounded. Dedicated IO threads allow the request deadline to cover
+both pipe writes and reads even when the worker stops consuming input.
+
+Drop kills and reaps the direct worker child. Timeout, EOF, malformed or stale
+replies, changed identity and invalid/missing properties terminate and reap
+the persistent process; that provider instance rejects later calls without
+respawning. Failed accumulation also terminates it, preserving all existing
+force/virial accumulators. Invalid snapshots are rejected before transmission.
+There is no retry, stale result fallback or general calculator selection.
+These bounds are not an operating-system sandbox.
+
+MCP cancellation is observed before setup, between provider calls,
 and before each integration step. One in-flight call may finish under its
 configured deadline plus ordinary bookkeeping; this is not a hard global
-wall-time guarantee or an OS sandbox. One-shot startup latency is expected; persistent
-workers/general calculator selection belong to B09. No throughput claim follows.
+wall-time guarantee. One-shot startup latency is expected; no throughput claim
+follows from transport support alone.
 
 ## Checkpoints and public API migration
 
@@ -163,7 +185,8 @@ External continuation requires exact Z and validates the runtime provider
 before accepting cached mechanics. External signatures include runtime
 identity, PBC, task, composition and cutoff convention. Changed Z, version,
 hash, NumPy identity or convention is rejected. Interpreter location and
-timeout are transport settings and do not change physical identity. Native
+timeout and process transport are settings that do not change physical identity;
+compatible checkpoints can continue across one-shot and persistent runs. Native
 `modena-physical-v2` identity is preserved except for the corrected real-pressure
 factor. A fixed-cell real checkpoint may migrate only when its entire signature
 matches after replacing precisely the old pressure factor at index 5 of the
@@ -178,6 +201,9 @@ Reduced-unit continuation is unchanged.
 Rust consumers must update struct literals for the new System/continuation
 fields and `RunMetadata.provider: Option<ProviderIdentity>`. `RunMetadata` and
 `RunSummary` are `Clone`, no longer `Copy`; clone or borrow when needed.
+`AseEmtSpec` literals also require `transport`, using
+`modena_core::external::AseEmtTransport::OneShot` (or `Default::default()`)
+for the compatibility default and `Persistent` for a session.
 Exhaustive matches must handle `ModelSpec::AseEmt` and
 `PressureStatus::UnconstrainedProviderStress`. The existing by-value
 `RunEvent::Finished { summary }` contract is retained. Exhaustive error matches

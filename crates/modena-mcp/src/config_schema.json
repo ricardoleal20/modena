@@ -419,6 +419,11 @@
                 "type": "integer",
                 "minimum": 1,
                 "default": 30000
+              },
+              "transport": {
+                "type": "string",
+                "enum": ["one_shot", "persistent"],
+                "default": "one_shot"
               }
             },
             "required": [
@@ -429,7 +434,7 @@
               "composition"
             ],
             "additionalProperties": false,
-            "description": "Optional local ASE EMT total provider. Real units only; fully periodic fixed cell, unconstrained NVE/NVT, standard metals only. Explicit per-atom Z and mechanical masses; no inference from labels/types. Reject charges, topology/electrostatics, constraints and barostats. Provider manages neighbors; one-shot Python latency per snapshot. Not material validation. Cancellation bounded by evaluation timeout plus normal step completion. No pair-kernel cost estimate."
+            "description": "Optional local ASE EMT total provider. Real units only; fully periodic fixed cell, unconstrained NVE/NVT, standard metals only. Explicit per-atom Z and mechanical masses; no inference from labels/types. Reject charges, topology/electrostatics, constraints and barostats. Provider manages neighbors; default one_shot or opt-in persistent process/calculator per provider lifetime, terminal on failure. Not material validation. Cancellation bounded by evaluation timeout plus normal step completion. No pair-kernel cost estimate."
           }
         ]
       },

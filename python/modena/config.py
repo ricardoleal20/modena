@@ -91,6 +91,7 @@ class AseEmt:
     asap_cutoff: bool = False
     timeout_ms: int = 30000
     type: str = "ase_emt"
+    transport: str = "one_shot"
 
 
 @dataclass

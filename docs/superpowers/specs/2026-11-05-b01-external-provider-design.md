@@ -1,6 +1,8 @@
 # B01: first external force provider
 
-The user authorized continuing with B01 after requesting the B06 PR and integration. This implements the previously proposed minimal provider, with ASE EMT and periodic copper as the initial reproducible reference unless the pending optional model preference changes. B06 is PR #53; GitHub Actions cannot start because of an account billing lock. Its administrator merge exception is awaiting explicit user approval. B01 remains on a separate branch based on the B06 head until that is resolved.
+B01 uses ASE EMT and periodic copper as the first reproducible external-provider
+reference. It connects a fixed, pinned total model to the ordinary runner,
+checkpoints and interfaces within the bounded scope below.
 
 ## Scope and decision
 

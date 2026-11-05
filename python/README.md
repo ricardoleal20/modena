@@ -144,6 +144,10 @@ MODENA_BINARY="$PWD/target/release/modena" python3 -m unittest discover -s pytho
 
 Set `MODENA_ASE_PYTHON=/absolute/path/to/venv/bin/python` to execute the optional
 actual ASE transport tests; absent this variable they explicitly report skips.
+Use a Python 3.11+ interpreter for both default and optional suites. Complete
+core/CLI/MCP/direct-worker commands and parity tolerances are in the repository's
+[B01 guide](https://github.com/ricardoleal20/modena/blob/main/docs/B01_EXTERNAL_PROVIDER.md#optional-reference-tests)
+and [verification record](https://github.com/ricardoleal20/modena/blob/main/docs/B01_VERIFICATION.md).
 `MODENA_BINARY` selects the executable for this test suite. For application
 code, use `binary=` or put the CLI on `PATH`. Use the
 [issue tracker](https://github.com/ricardoleal20/modena/issues) for reports and

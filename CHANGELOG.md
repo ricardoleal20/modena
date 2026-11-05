@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Add B01's optional pinned ASE EMT total provider through the real-unit runner,
+  explicit atomic numbers, provider-stress virial, restart identity, CLI
+  discovery, Python configuration and MCP transport. Direct snapshot/derivative
+  parity is covered; material validation and throughput are not established.
+- **Breaking Rust API additions:** add System/continuation atomic numbers,
+  `ModelSpec::AseEmt`, `RunMetadata.provider` and
+  `PressureStatus::UnconstrainedProviderStress`; RunMetadata/RunSummary are
+  Clone rather than Copy. Native checkpoint signatures remain compatible;
+  external continuation requires matching runtime identity/Z. See
+  [B01 migration](docs/B01_EXTERNAL_PROVIDER.md#checkpoints-and-public-api-migration).
+- `--diagnostics-json` additionally emits a separate runtime metadata line;
+  Python's appended optional `RunResult.metadata` supports older CLIs with None.
 - Implement B06: full-rate, energy-offset-invariant integration diagnostics,
   ensemble-aware advisories with optional caller-selected tolerances, CLI/Python/
   MCP reports, failure-step telemetry and observable sampling analysis with

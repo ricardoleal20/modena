@@ -146,7 +146,7 @@ fn actual_ase_tool_json_probe_and_async_status_preserve_discovered_identity() {
     );
     let run = call_tool("run_async", &json!({"config":cfg}), &mgr).unwrap();
     let id = run["run_id"].as_u64().unwrap();
-    // Observe populated live metadata before the final state; provider startup can be slow.
+    // Observe identity through async lifecycle status; the run may already be completed.
     let start = std::time::Instant::now();
     loop {
         let status = call_tool("get_run_status", &json!({"run_id":id}), &mgr).unwrap();

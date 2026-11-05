@@ -1,9 +1,11 @@
-> Current supported domain (2026-10-03): pairs, ions, fixed-volume molecules;
+> Current supported domain (2026-11-05): pairs, ions, fixed-volume molecules;
 > orthorhombic SPME; triclinic pair/direct Ewald. Constrained pressure is diagnostic
 > without validated impulse stress. Canonical NPT uses unconstrained isotropic MC;
 > anisotropic/constrained coupling is rejected. MPI/GPU are experimental pair
 > backends with restricted policies/boxes, not full production acceleration.
 > [Current evidence](docs/scientific-hardening/RESULTS.md).
+> Optional pinned ASE EMT additionally supports fully periodic, unconstrained
+> fixed-cell real-unit NVE/NVT. [B01 scope and evidence](docs/B01_EXTERNAL_PROVIDER.md).
 
 # MODENA — Architecture & Methods
 
@@ -34,6 +36,27 @@ the system one step, calling a `ForceModel`). A new potential — analytical,
 many-body, or a learned ML surrogate — implements `ForceModel` and drops into
 the engine without touching the integrator, thermostat, or I/O. This is the
 extension point a NequIP/MACE-style model will use.
+
+### 1.1 First external total provider (B01)
+
+`ModelSpec::AseEmt` selects a separate total-model construction path. A bundled
+core-package Python resource invokes installed `ase.calculators.emt.EMT` in a
+fresh no-shell process per snapshot. Explicit atomic numbers, positions and
+cell rows cross protocol `modena-ase-emt-v1`; required energy/forces/stress and
+the complete pinned runtime identity are validated before accumulation. Wire
+units are Å/eV; the core remains reduced. Tensile-positive provider stress gives
+`W=-V trace(stress)` and `UnconstrainedProviderStress` pressure metadata.
+
+This model declares provider-managed neighbors and has no native neighbor
+cutoff. Native pair/composite construction remains in its existing branch;
+the total provider receives no automatic native terms. The runner permits only
+real-unit fully periodic unconstrained fixed-cell NVE/NVT with supported Z,
+explicit mechanical masses and `asap_cutoff=false`. Checkpoints preserve Z
+and physical runtime identity; native signatures remain unchanged. Owned
+provider metadata makes `RunMetadata`/`RunSummary` Clone rather than Copy.
+See [B01](docs/B01_EXTERNAL_PROVIDER.md) for public API migration, transport
+bounds and limitations. This one-shot reference is separate from B09 worker
+persistence and does not validate a material or provide a generic ML adapter.
 
 ## 2. Force / energy convention (the conservation contract)
 

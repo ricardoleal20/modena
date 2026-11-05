@@ -165,7 +165,10 @@ returns the unmodified core JSON from `modena provider-info`; exact version and
 source-hash pins, explicit per-atom Z and `composition="total"` are required.
 The hash identifies installed EMT source/model data, not learned weights.
 `AseEmt` defaults to `python="python3"`, `pbc=[True,True,True]`,
-`asap_cutoff=False` and `timeout_ms=30000`. The engine enforces seven standard
+`asap_cutoff=False`, `timeout_ms=30000` and `transport="one_shot"`. Select
+`AseEmt(..., transport="persistent")` to reuse one Python process and EMT
+calculator per provider. Transport does not change physical identity or
+compatible checkpoint signatures. The engine enforces seven standard
 metals (Al, Ni, Cu, Pd, Ag, Pt, Au), real units, full PBC, unconstrained fixed-cell
 NVE/NVT and total composition. Charges, topology/electrostatics additions,
 constraints and all barostats are rejected. Masses remain explicit mechanical
@@ -174,10 +177,13 @@ inputs; labels and force-field types never infer Z or mass.
 `check()` and `run()` resolve a `model.python` path containing a separator
 against `base_dir=` (default cwd), preserving virtual-environment symlinks.
 Bare executable names remain PATH lookups. Other input/output path behavior is
-unchanged. Each snapshot launches a fresh Python process; the provider manages
-its own neighbors. Cancellation in streaming MCP runs waits up to the evaluation
-timeout plus normal step completion. This short Cu workflow is an interface
-reference, not material validation or a throughput benchmark.
+unchanged. One-shot launches a fresh Python process per snapshot; persistent
+reuses a session. The provider manages its own neighbors. Persistent failures
+leave the session terminal; drop/failure kills and reaps the direct child.
+Cancellation is checked at safe setup/step boundaries; in-flight calls wait
+under the evaluation deadline plus bookkeeping. This short Cu workflow is an
+interface reference. [B09 evidence](../docs/B09_VERIFICATION.md) records local
+full-run startup savings and the limits of both adapter directions.
 
 ## Development and support
 

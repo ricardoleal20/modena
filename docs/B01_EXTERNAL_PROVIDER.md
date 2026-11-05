@@ -6,6 +6,9 @@ default Rust build. This first reference checks transport, unit conversion,
 derivatives and continuation against direct EMT calls; it does not establish
 copper material accuracy or agreement with another dynamics engine. Executed
 versions, tolerances and local results are in [B01 verification](B01_VERIFICATION.md).
+B09 adds opt-in persistent sessions; its [verification record](B09_VERIFICATION.md)
+includes reproducible local full-run timings and the separate native LJ ASE
+calculator direction.
 
 ## Supported configuration
 
@@ -124,8 +127,9 @@ with three full-rate samples; this does not validate canonical sampling.
 
 ## Evaluation and failure behavior
 
-Each snapshot starts a new Python process and constructs fresh Atoms and
-`EMT(asap_cutoff=False)`. Protocol `modena-ase-emt-v1` transfers positions in Å,
+The default one-shot transport starts a new Python process and constructs fresh
+Atoms and `EMT(asap_cutoff=False)` for each snapshot. Protocol
+`modena-ase-emt-v1` transfers positions in Å,
 cell vectors as rows, explicit Z and PBC; responses contain eV, eV/Å and
 tensile-positive eV/Å³ stress. The real-unit runner uses reference length 1 Å
 and energy 1 kcal/mol; the library also supports explicit `UnitFactors`.
@@ -179,8 +183,9 @@ These bounds are not an operating-system sandbox.
 MCP cancellation is observed before setup, between provider calls,
 and before each integration step. One in-flight call may finish under its
 configured deadline plus ordinary bookkeeping; this is not a hard global
-wall-time guarantee. One-shot startup latency is expected; no throughput claim
-follows from transport support alone.
+wall-time guarantee. [B09's local full-run measurements](B09_VERIFICATION.md)
+quantify avoided repeated startup for short pinned Cu runs; they do not measure
+isolated steady EMT evaluation or establish general solver throughput.
 
 ## Checkpoints and public API migration
 

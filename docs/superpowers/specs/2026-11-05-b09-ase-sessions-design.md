@@ -36,6 +36,15 @@ invalidation must account for positions, numbers, cell/PBC and calculator
 parameters, and failures must clear old results. Changing executable/parameters
 must not leave an old result cached. Unsupported inputs fail before evaluation.
 
+Snapshot cache comparison is exact, including changes below ASE's default
+1e-15 tolerance; no-calculation cache probes preserve ASE's absent-result
+semantics. Normalize finite periodic coordinates with remainder arithmetic,
+including large positive/negative coordinates. A documented candidate/pair
+storage budget must reject dense inputs before neighbor allocation grows past
+the budget; atom/grid limits alone do not bound pair storage. Keep normal
+unbounded MD neighbor behavior unchanged, and test the bounded path with a
+small explicit budget rather than a destructive huge allocation.
+
 ## Verification and performance
 
 Use direct installed ASE EMT references for changed positions/cells, assert one
@@ -47,6 +56,8 @@ Measure repeated cold one-shot versus persistent full MODENA runs on the same
 Cu configuration, hardware, versions, steps and outputs. Record all timings,
 provenance, medians and matching numerical output. Separate startup and steady
 evaluation where useful; do not generalize to DFT/ML solver cost or other engines.
+The benchmark validates required physical checkpoint signature and thermo
+columns before comparing runs, so shared omissions cannot satisfy parity.
 
 ## Global constraints
 

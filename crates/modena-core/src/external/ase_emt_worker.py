@@ -96,12 +96,14 @@ def session():
         if len(data) != size:
             raise ValueError("truncated session frame")
         frame = json.loads(data)
-        if (not isinstance(frame, dict) or set(frame) != {"session_protocol", "request_id", "request"}
+        if (not isinstance(frame, dict) or set(frame) != {"session_protocol", "request_id", "nonce", "request"}
                 or frame["session_protocol"] != SESSION_PROTOCOL
-                or type(frame["request_id"]) is not int or frame["request_id"] != expected_id):
-            raise ValueError("invalid session protocol or request ID")
+                or type(frame["request_id"]) is not int or frame["request_id"] != expected_id
+                or not isinstance(frame["nonce"], list) or len(frame["nonce"]) != 32
+                or any(type(x) is not int or not 0 <= x < 256 for x in frame["nonce"])):
+            raise ValueError("invalid session protocol, request ID or nonce")
         response = handle(frame["request"], calculator, provider_identity)
-        output = json.dumps({"session_protocol": SESSION_PROTOCOL, "request_id": expected_id, "response": response}, allow_nan=False, separators=(",", ":")).encode()
+        output = json.dumps({"session_protocol": SESSION_PROTOCOL, "request_id": expected_id, "nonce": frame["nonce"], "response": response}, allow_nan=False, separators=(",", ":")).encode()
         if len(output) > MAX_FRAME:
             raise ValueError("session output frame limit exceeded")
         sys.stdout.buffer.write(struct.pack(">I", len(output)) + output)

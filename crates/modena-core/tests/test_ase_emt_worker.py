@@ -44,7 +44,7 @@ class WorkerTests(unittest.TestCase):
         requests=[{"protocol":"modena-ase-emt-v1","action":"info"}]+snapshots
         data=b""
         for i, request in enumerate(requests,1):
-            frame=json.dumps(dict(session_protocol="modena-ase-emt-session-v1",request_id=i,request=request)).encode()
+            frame=json.dumps(dict(session_protocol="modena-ase-emt-session-v1",request_id=i,nonce=[i]*32,request=request)).encode()
             data+=struct.pack(">I",len(frame))+frame
         with tempfile.TemporaryDirectory() as td:
             counter=pathlib.Path(td)/"calculators"
@@ -77,6 +77,7 @@ runpy.run_path({str(WORKER)!r},run_name="__main__")
         self.assertEqual(len(replies),len(requests))
         for i, reply in enumerate(replies,1):
             self.assertEqual(reply["request_id"],i)
+            self.assertEqual(reply["nonce"],[i]*32)
             self.assertEqual(reply["session_protocol"],"modena-ase-emt-session-v1")
         for request,reply in zip(snapshots,replies[1:]):
             atoms=Atoms(numbers=request["atomic_numbers"],positions=request["positions_angstrom"],cell=request["cell_angstrom"],pbc=True)
@@ -93,5 +94,19 @@ runpy.run_path({str(WORKER)!r},run_name="__main__")
             process=self.call(request)
             self.assertNotEqual(process.returncode,0,(key,process.stdout))
             self.assertEqual(process.stdout,"")
+
+    def test_session_rejects_invalid_nonce_and_frame_before_output(self):
+        valid=dict(session_protocol="modena-ase-emt-session-v1",request_id=1,
+            nonce=[0]*32,request={"protocol":"modena-ase-emt-v1","action":"info"})
+        frames=[]
+        for nonce in [None,[],[0]*31,[0]*33,[True]*32,[-1]*32,[256]*32]:
+            frame=dict(valid);frame["nonce"]=nonce;frames.append(frame)
+        missing=dict(valid);del missing["nonce"];frames.append(missing)
+        wrong=dict(valid);wrong["request_id"]=2;frames.append(wrong)
+        for frame in frames:
+            data=json.dumps(frame).encode()
+            p=subprocess.run([sys.executable,str(WORKER),"--persistent"],input=struct.pack(">I",len(data))+data,capture_output=True,timeout=20)
+            self.assertNotEqual(p.returncode,0,frame)
+            self.assertEqual(p.stdout,b"")
 
 if __name__ == "__main__": unittest.main()

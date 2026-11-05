@@ -155,11 +155,18 @@ cell and numbers invalidate ASE's cache exactly, including changes smaller
 than its normal cache tolerance. The Rust provider still requires the pinned
 per-atom numbers in every snapshot. Persistent messages have a four-byte
 big-endian length followed by strict JSON, with a separate
-`modena-ase-emt-session-v1` envelope and increasing request IDs. The unchanged
+`modena-ase-emt-session-v1` envelope, increasing request IDs and a fresh
+256-bit OS-random nonce echoed by the response. A buffered reply cannot match
+the nonce of a future snapshot. The unchanged
 `modena-ase-emt-v1` physical identity remains inside each response. Frames are
 limited to 16 MiB, lifetime stderr to 64 KiB (only 4096 bytes retained), and IO
 queues are bounded. Dedicated IO threads allow the request deadline to cover
 both pipe writes and reads even when the worker stops consuming input.
+Borrowed snapshots serialize scaled coordinate triples directly into one
+capped frame buffer; no per-snapshot JSON trees or complete transport copies
+precede the size check. IO threads also validate response correlation and
+enforce fatal stdout/stderr failures while the model is idle. Terminalization
+disconnects both queues and releases queued frames immediately.
 
 Drop kills and reaps the direct worker child. Timeout, EOF, malformed or stale
 replies, changed identity and invalid/missing properties terminate and reap

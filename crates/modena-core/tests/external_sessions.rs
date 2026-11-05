@@ -33,13 +33,14 @@ while True:
  if not header:break
  frame=json.loads(sys.stdin.buffer.read(struct.unpack('>I',header)[0]))
  request=frame['request']
+ with (root/'nonces').open('a') as f:f.write(json.dumps(frame['nonce'])+'\n')
  with (root/'requests').open('a') as f:f.write(request['action']+'\n')
  while (root/('block-'+request['action'])).exists() and not (root/('release-'+request['action'])).exists():time.sleep(0.005)
  response={{'protocol':'modena-ase-emt-v1','action':request['action'],'identity':identity}}
  if request['action']=='evaluate':
   response['evaluation']={{'energy_ev':request['positions_angstrom'][0][0]+2.0,'forces_ev_per_angstrom':[[request['positions_angstrom'][0][0]+1.0,2.0,3.0]]*len(request['atomic_numbers']),'stress_ev_per_angstrom3':[[0.1,0,0],[0,0.2,0],[0,0,0.3]]}}
   {}
- send({{'session_protocol':'modena-ase-emt-session-v1','request_id':frame['request_id'],'response':response}})
+ send({{'session_protocol':'modena-ase-emt-session-v1','request_id':frame['request_id'],'nonce':frame['nonce'],'response':response}})
 "##,
         "a".repeat(64),
         body
@@ -59,6 +60,95 @@ fn assert_reaped(dir: &std::path::Path) {
         .output()
         .unwrap();
     assert!(!output.status.success(), "provider child survived cleanup");
+}
+
+fn append_after_reply(python: &str, code: &str) {
+    let mut script = std::fs::read_to_string(python).unwrap();
+    script.push_str(code);
+    std::fs::write(python, script).unwrap();
+}
+
+#[test]
+fn persistent_rejects_unsolicited_future_replies_before_their_request() {
+    for after_id in [1, 2] {
+        let (dir, python) = fixture("pass");
+        append_after_reply(
+            &python,
+            &format!(
+                r#" if frame['request_id']=={after_id}:
+  fake={{'session_protocol':'modena-ase-emt-session-v1','request_id':frame['request_id']+1,'response':{{'protocol':'modena-ase-emt-v1','action':'evaluate','identity':identity,'evaluation':{{'energy_ev':-777.0,'forces_ev_per_angstrom':[[0.0]*3],'stress_ev_per_angstrom3':[[0.0]*3]*3}}}}}}
+  if 'nonce' in frame:fake['nonce']=frame['nonce']
+  send(fake)
+  (root/'forged-sent').touch()
+"#
+            ),
+        );
+        let result = AseEmtForceModel::new(config(&python), UnitFactors::new(1.0, 1.0, 1.0));
+        if let Ok(m) = result {
+            if after_id == 2 && m.evaluate(&system()).is_err() {
+                assert_reaped(dir.path());
+                continue;
+            }
+            let start = Instant::now();
+            while !dir.path().join("forged-sent").exists() {
+                assert!(start.elapsed() < Duration::from_secs(5));
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let mut s = system();
+            let before = s.forces.clone();
+            let mut w = Virial { w: 7.0 };
+            assert!(
+                m.compute(&mut s, &mut w, &mut NeighborList::new(1.0))
+                    .is_err(),
+                "accepted a reply fabricated before request {}",
+                after_id + 1
+            );
+            assert_eq!(s.forces, before);
+            assert_eq!(w.w, 7.0);
+        }
+        assert_reaped(dir.path());
+    }
+}
+
+#[test]
+fn persistent_reaps_idle_failures_without_another_request_or_drop() {
+    for failure in [
+        "sys.stderr.write('x'*70000);sys.stderr.flush()",
+        "os.close(sys.stdout.fileno())",
+        "sys.stdout.buffer.write(struct.pack('>I',17000000));sys.stdout.buffer.flush()",
+        "send({'malformed':'envelope'})",
+    ] {
+        let (dir, python) = fixture("pass");
+        append_after_reply(
+            &python,
+            &format!(" time.sleep(0.1)\n {failure}\n time.sleep(20)\n"),
+        );
+        let m = model(&python);
+        let pid = std::fs::read_to_string(dir.path().join("starts")).unwrap();
+        let start = Instant::now();
+        loop {
+            if !std::process::Command::new("kill")
+                .args(["-0", pid.trim()])
+                .output()
+                .unwrap()
+                .status
+                .success()
+            {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(3),
+                "idle failure did not kill/reap: {failure}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(m
+            .evaluate(&system())
+            .unwrap_err()
+            .to_string()
+            .contains("terminal"));
+        assert_reaped(dir.path());
+    }
 }
 
 #[test]
@@ -85,6 +175,17 @@ fn persistent_reuses_handshake_process_and_validates_before_sending() {
         std::fs::read_to_string(dir.path().join("requests")).unwrap(),
         "info\nevaluate\nevaluate\nevaluate\n"
     );
+    let nonces: Vec<[u8; 32]> = std::fs::read_to_string(dir.path().join("nonces"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(nonces.len(), 4);
+    for i in 0..nonces.len() {
+        for j in 0..i {
+            assert_ne!(nonces[i], nonces[j], "request nonce was reused");
+        }
+    }
     drop(m);
     assert_reaped(dir.path());
 }

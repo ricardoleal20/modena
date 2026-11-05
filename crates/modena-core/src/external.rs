@@ -106,6 +106,36 @@ struct EvaluateResponse {
     evaluation: ProviderEvaluation,
 }
 
+#[derive(Serialize)]
+struct EvaluateRequest<'a> {
+    protocol: &'static str,
+    action: &'static str,
+    atomic_numbers: &'a [u8],
+    positions_angstrom: ScaledPositions<'a>,
+    cell_angstrom: [[f64; 3]; 3],
+    pbc: [bool; 3],
+    asap_cutoff: bool,
+}
+// Borrow the caller's snapshot; triples are scaled on the stack during
+// serialization instead of materializing another N-atom buffer or Value tree.
+struct ScaledPositions<'a> {
+    positions: &'a [f64],
+    sigma: f64,
+}
+impl Serialize for ScaledPositions<'_> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.positions.len() / 3))?;
+        for p in self.positions.chunks_exact(3) {
+            seq.serialize_element(&[p[0] * self.sigma, p[1] * self.sigma, p[2] * self.sigma])?;
+        }
+        seq.end()
+    }
+}
+
 fn failure(message: impl Into<String>) -> ModenaError {
     // Parser diagnostics may quote arbitrary response keys. Bound every
     // provider diagnostic, not only the captured subprocess stderr.
@@ -259,6 +289,11 @@ impl AseEmtForceModel {
     /// Evaluate a fresh snapshot without changing any system or accumulator.
     pub fn evaluate(&self, system: &System) -> Result<ProviderEvaluation> {
         let n = system.n();
+        // Even the smallest JSON numbers/triples need at least ten bytes per
+        // atom. Reject impossible frames before snapshot validation/encoding.
+        if self.session.is_some() && n > MAX_STDOUT as usize / 10 {
+            return Err(failure("snapshot exceeds session input frame limit"));
+        }
         if system.atomic_numbers != self.spec.atomic_numbers || n != self.spec.atomic_numbers.len()
         {
             return Err(failure(
@@ -273,11 +308,6 @@ impl AseEmtForceModel {
         {
             return Err(failure("invalid snapshot buffers, charges or constraints"));
         }
-        let positions: Vec<[f64; 3]> = system
-            .positions
-            .chunks_exact(3)
-            .map(|p| std::array::from_fn(|k| p[k] * self.factors.sigma))
-            .collect();
         let cell = system
             .box_size
             .basis()
@@ -286,17 +316,28 @@ impl AseEmtForceModel {
         let volume = a.dot(b.cross(c));
         if !volume.is_finite()
             || volume <= 0.0
-            || positions
+            || system
+                .positions
                 .iter()
-                .flatten()
-                .chain(cell.iter().flatten())
-                .any(|x| !x.is_finite())
+                .any(|x| !(x * self.factors.sigma).is_finite())
+            || cell.iter().flatten().any(|x| !x.is_finite())
         {
             return Err(failure(
                 "snapshot requires finite positions and positive cell volume",
             ));
         }
-        let request = serde_json::json!({"protocol":PROTOCOL,"action":"evaluate","atomic_numbers":system.atomic_numbers,"positions_angstrom":positions,"cell_angstrom":cell,"pbc":self.spec.pbc,"asap_cutoff":self.spec.asap_cutoff});
+        let request = EvaluateRequest {
+            protocol: PROTOCOL,
+            action: "evaluate",
+            atomic_numbers: &system.atomic_numbers,
+            positions_angstrom: ScaledPositions {
+                positions: &system.positions,
+                sigma: self.factors.sigma,
+            },
+            cell_angstrom: cell,
+            pbc: self.spec.pbc,
+            asap_cutoff: self.spec.asap_cutoff,
+        };
         if let Some(session) = &self.session {
             let mut session = session
                 .lock()
@@ -427,7 +468,7 @@ fn diagnostic(file: &mut std::fs::File) -> String {
     let _ = file.take(4096).read_to_end(&mut bytes);
     String::from_utf8_lossy(&bytes).into_owned()
 }
-fn invoke(python: &str, timeout_ms: u64, request: &serde_json::Value) -> Result<Vec<u8>> {
+fn invoke(python: &str, timeout_ms: u64, request: &impl Serialize) -> Result<Vec<u8>> {
     if python.trim().is_empty() || timeout_ms == 0 {
         return Err(failure("python and positive timeout_ms required"));
     }

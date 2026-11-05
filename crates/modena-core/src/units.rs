@@ -57,8 +57,9 @@ pub struct UnitFactors {
 /// Boltzmann constant in kcal/(mol·K).
 pub const KB_KCAL: f64 = 0.001987204259;
 
-/// Conversion: 1 kcal/mol per Å³ → atm. `1 kcal/(mol·Å³) = 69477.8 atm`.
-pub const KCAL_PER_A3_TO_ATM: f64 = 69477.8;
+/// Standard atmospheres per kcal/(mol Å³), from exact SI definitions:
+/// `4184 / (6.02214076e23 * 1e-30 * 101325)`.
+pub const KCAL_PER_A3_TO_ATM: f64 = 68568.42296625092;
 
 impl UnitFactors {
     /// Build the conversion factors from reference σ (Å), ε (kcal/mol), m (amu).
@@ -191,5 +192,21 @@ mod tests {
         assert!((f.to_real_length(r) - l).abs() < 1e-12);
         let e = 0.5; // kcal/mol
         assert!((f.to_real_energy(f.to_reduced_energy(e)) - e).abs() < 1e-12);
+    }
+}
+
+#[cfg(test)]
+mod atmosphere_regressions {
+    use super::UnitFactors;
+    #[test]
+    fn exact_si_atmospheres_bidirectional_with_reference_scales() {
+        for (sigma, epsilon, want) in [
+            (1.0, 1.0, 68568.42296625092),
+            (2.0, 3.0, 25713.158612344094),
+        ] {
+            let f = UnitFactors::new(sigma, epsilon, 10.0);
+            assert!((f.to_real_pressure(1.0) - want).abs() < 1e-9);
+            assert!((f.to_reduced_pressure(want) - 1.0).abs() < 1e-14);
+        }
     }
 }

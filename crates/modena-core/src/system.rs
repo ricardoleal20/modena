@@ -272,6 +272,8 @@ pub struct System {
     pub masses: Vec<f64>,
     pub species: Vec<u32>,
     pub charges: Vec<f64>,
+    /// Chemical identity, independent of force-field species; zero is unspecified.
+    pub atomic_numbers: Vec<u8>,
     /// Element symbols for I/O (cosmetic; not used by the physics).
     pub elements: Vec<String>,
     pub box_size: SimBox,
@@ -288,6 +290,7 @@ impl System {
             masses: Vec::new(),
             species: Vec::new(),
             charges: Vec::new(),
+            atomic_numbers: Vec::new(),
             elements: Vec::new(),
             box_size,
             constraint_count: 0,
@@ -310,6 +313,7 @@ impl System {
         self.masses.resize(n, 1.0);
         self.species.resize(n, 0);
         self.charges.resize(n, 0.0);
+        self.atomic_numbers.resize(n, 0);
         self.elements.resize(n, "X".to_string());
     }
 

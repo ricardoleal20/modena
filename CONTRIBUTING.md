@@ -55,6 +55,13 @@ python3 bench/validate.py --output target/scientific-smoke
 Use the harness's `--binary` option if the scientific example is in a custom
 target directory or has a platform-specific executable suffix.
 
+For optional external-provider reference checks, install ASE in a separate
+Python 3.11+ environment and set `MODENA_ASE_PYTHON` to its executable. The
+[B01 test instructions](docs/B01_EXTERNAL_PROVIDER.md#optional-reference-tests)
+cover core, CLI/MCP, wrapper and direct-worker tests. Unset optional references
+are skips, including Rust functions that return successfully after printing
+`SKIP`; record actual execution separately. The default build requires no ASE.
+
 For GPU changes, run:
 
 ```bash

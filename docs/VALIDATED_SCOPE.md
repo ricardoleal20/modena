@@ -10,6 +10,7 @@ converged material properties.
 | Area | Implementation and evidence |
 | --- | --- |
 | Pair interactions | Lennard-Jones, Buckingham, Morse, soft-sphere, and tabulated models. Force/energy and cutoff checks cover selected parameters. Tabulated energy and force share cubic Hermite interpolation, including the lower endpoint tangent extension; the legacy selector is still named `linear`. |
+| Optional ASE EMT | Pinned total energy/forces/stress, seven standard EMT metals with explicit Z/masses, real units and full PBC, unconstrained fixed-cell NVE/NVT. Displaced orthorhombic/skew Cu snapshot parity, finite-difference force/virial, translation and selected restart/transport checks against direct installed EMT; [executed B01 record](B01_VERIFICATION.md). |
 | NVE | Velocity-Verlet, with short energy/momentum tests and a timestep convergence check. Pair and direct-Ewald paths support orthorhombic and triclinic periodic cells. |
 | NVT | Stochastic velocity rescaling, Langevin BAOAB, and Nosé–Hoover chains. Coverage includes conditional/stationary kinetic moments, free-atom Maxwell variance, selected constrained sampling, and extended-Hamiltonian checks. |
 | Molecular models | Bond/angle/dihedral terms, explicit topology weights and exceptions, typed XYZ, SHAKE/RATTLE, and rigid-water projection. Force gradients, constraint errors, and selected rigid-rotation statistics are checked. |
@@ -28,6 +29,12 @@ Representative tests are
 
 ## Limits that affect interpretation
 
+- **External EMT checks are bounded reference checks.** They establish interface,
+  conversion and derivative agreement with the same installed model, not Cu
+  material accuracy, converged sampling or independent-engine parity. One-shot
+  Python startup has no throughput claim; external cost estimates are unsupported.
+  `asap_cutoff=false` only; unsupported charges/spin, partial PBC, constraints,
+  NPT and composition fail. See [B01 usage/migration](B01_EXTERNAL_PROVIDER.md).
 - **Constrained pressure is diagnostic.** It omits constraint impulse stress.
   Constrained NPT and full anisotropic coupling are rejected. Berendsen coupling
   is for equilibration; the legacy piston is experimental.
@@ -63,6 +70,14 @@ NVT/NPT receive `not_applicable`. The legacy endpoint-relative number is
 retained for compatibility, without selecting the runner's verdict.
 
 ## Units and restart compatibility
+
+Real pressure now uses the exact-SI standard-atmosphere scale
+68568.42296625092 per kcal/(mol Å³). Independent cold-Cu/direct ASE and native
+pressure-target/compressibility checks cover the correction. Fixed-cell real
+checkpoint migration accepts only the exact old pressure-factor difference;
+old real pressure-coupled runs require an explicit new protocol. Reduced
+configurations and fixed-cell integration mechanics are unchanged. See the
+[B01 final-fix evidence](B01_VERIFICATION.md#corrected-pressure-units-and-final-fix-evidence).
 
 Real inputs use Å, ps, kcal/mol, amu, K, elementary charge, and atm. Thermodynamic
 output uses the selected units; checkpoint mechanics and conservation energies

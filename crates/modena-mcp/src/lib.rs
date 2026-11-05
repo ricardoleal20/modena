@@ -35,8 +35,8 @@ use std::thread::{self, JoinHandle};
 
 use modena_core::{
     lattice, read_xyz, ConservationReport, ConservationVerdict, Energies, InputConfig,
-    IntegratorSpec, RunEvent, RunMetadata, RunSummary, SimBox, Simulation, StructureSpec,
-    ThermostatSpec,
+    IntegratorSpec, ModelSpec, RunEvent, RunMetadata, RunSummary, SimBox, Simulation,
+    StructureSpec, ThermostatSpec,
 };
 
 pub mod protocol;
@@ -70,7 +70,8 @@ pub enum RunState {
     Running,
     /// Reached its step count cleanly.
     Completed,
-    /// Cancelled via [`RunManager::cancel_run`] (stopped within one step).
+    /// Cancelled at a safe setup or step boundary. An in-flight provider call
+    /// finishes under its configured timeout plus ordinary bookkeeping.
     Cancelled,
     /// Aborted — the error is in [`RunStatus::error`].
     Failed,
@@ -159,8 +160,12 @@ impl RunStatusInner {
             step: self.step,
             total_steps: self.total_steps,
             latest_thermo: self.latest_thermo,
-            metadata: self.metadata,
-            thermo_units: self.metadata.map(|m| m.output_units).unwrap_or_default(),
+            metadata: self.metadata.clone(),
+            thermo_units: self
+                .metadata
+                .as_ref()
+                .map(|m| m.output_units)
+                .unwrap_or_default(),
             conservation_units: "reduced",
             mean_potential_energy: self.mean_potential_energy,
             sample_count: self.sample_count,
@@ -359,7 +364,7 @@ impl RunManager {
 
     // ---- discovery ----
 
-    /// `list_potentials`: the registered pair potentials.
+    /// `list_potentials`: registered native pair and optional external models.
     pub fn list_potentials(&self) -> Vec<PotentialInfo> {
         // Derive the inventory from the same model alternatives used by the
         // request schema, so production families/field names cannot drift.
@@ -425,6 +430,11 @@ impl RunManager {
         &self,
         config: &InputConfig,
     ) -> Result<EstimateRunCostResult, McpError> {
+        if matches!(config.model, ModelSpec::AseEmt(_)) {
+            return Err(McpError::InvalidInput(
+                "unsupported cost estimate for ase_emt: the native pair-kernel model cannot estimate one-shot Python/EMT runtime or memory; run_probe and run_async remain available".into(),
+            ));
+        }
         let config = config
             .normalized()
             .map_err(|e| McpError::InvalidInput(e.to_string()))?;
@@ -490,7 +500,7 @@ impl RunManager {
             metadata,
         } = sim.run().map_err(|e| McpError::Simulation(e.to_string()))?;
         Ok(ProbeResult {
-            metadata,
+            metadata: metadata.clone(),
             thermo_units: metadata.output_units,
             conservation_units: "reduced",
             steps,
@@ -607,12 +617,13 @@ impl RunManager {
             .collect())
     }
 
-    /// `cancel_run`: request a clean stop. The run transitions to `Cancelled`
-    /// within one integration step.
+    /// `cancel_run`: request a clean stop at the next setup or step boundary.
+    /// One in-flight provider call may finish under its configured timeout;
+    /// this is not a hard global wall-time or OS-sandbox guarantee.
     pub fn cancel_run(&self, run_id: RunId) -> Result<RunStatus, McpError> {
         let runs = self.runs.lock().unwrap();
         let entry = runs.get(&run_id).ok_or(McpError::RunNotFound(run_id))?;
-        entry.stop.store(true, Ordering::Relaxed);
+        entry.stop.store(true, Ordering::Release);
         let st = entry.status.lock().unwrap();
         Ok(st.snapshot(run_id))
     }
@@ -781,12 +792,16 @@ fn run_loop(
     stop: Arc<AtomicBool>,
     status: Arc<Mutex<RunStatusInner>>,
 ) {
-    let mut sim = match Simulation::from_config(&config, &work_dir) {
+    let mut sim = match Simulation::from_config_with_stop(&config, &work_dir, &stop) {
         Ok(s) => s,
         Err(e) => {
             let mut st = status.lock().unwrap();
-            st.state = RunState::Failed;
-            st.error = Some(e.to_string());
+            if matches!(e, modena_core::ModenaError::Cancelled) {
+                st.state = RunState::Cancelled;
+            } else {
+                st.state = RunState::Failed;
+                st.error = Some(e.to_string());
+            }
             return;
         }
     };
@@ -834,7 +849,7 @@ fn run_loop(
             }
             RunEvent::Frame { step, .. } => st.step = *step,
             RunEvent::Finished { summary } => {
-                let summary = *summary;
+                let summary = summary.clone();
                 st.step = initial_step + summary.steps;
                 st.conservation = summary.conservation;
                 st.latest_thermo = Some(summary.final_energies);
@@ -1225,8 +1240,18 @@ pub fn capabilities() -> serde_json::Value {
             {"name":"wgpu_gpu","present_in_core_source":true,"optional_build_feature":"gpu","runtime_available":null,"production_config":false,"runtime_probe":"not_performed"},
             {"name":"mpi","present_in_core_source":true,"optional_build_feature":"mpi","runtime_available":null,"production_config":false,"runtime_probe":"not_performed"}
         ],
+        "external_providers": [{
+            "name":"ase_emt", "model":"ASE EMT", "optional":true,
+            "runtime_available":null, "runtime_probe":"not_performed",
+            "runtime":"local Python with ASE>=3.26,<4; exact installed ASE version and EMT source SHA-256 pins required",
+            "scope":"real units; fixed cell; fully periodic; unconstrained NVE/NVT; total energy, forces and configurational stress; explicit per-atom standard-metal Z and mechanical masses",
+            "neighbors":"provider_managed", "transport":"one-shot Python process for every snapshot; startup latency per evaluation; no throughput claim",
+            "cancellation":"safe setup/step boundaries; one in-flight provider call under its configured timeout plus ordinary bookkeeping; no hard global wall-time or OS sandbox guarantee",
+            "cost_estimate":"unsupported", "material_validation":false,
+            "identity":"core RunMetadata.provider in run_probe and live/final get_run_status; CLI provider-info discovers installed pins"
+        }],
         "supported": ["shifted-force pair potentials and reduced-unit tables", "typed XYZ numeric model types, masses and charges", "shortest bond graph 1-2/1-3/1-4 LJ/Coulomb scales with explicit precedence", "Ewald/SPME periodic ions", "fixed-volume constrained molecules and rigid water", "CSVR/Langevin/NHC NVT", "unconstrained isotropic MC NPT with matching canonical thermal control", "identity-checked v2 continuation and explicit state_only import"],
-        "limitations": ["constraint pressure omits validated impulse stress and is diagnostic", "constrained or anisotropic NPT and legacy piston rejected", "Berendsen is equilibration only", "GPU/MPI library backends are not production config engines", "no electronic-structure, reactive or many-body models", "transition finite-difference heuristic includes equilibration and is not proof of a phase transition"],
+        "limitations": ["constraint pressure omits validated impulse stress and is diagnostic", "constrained or anisotropic NPT and legacy piston rejected", "Berendsen is equilibration only", "GPU/MPI library backends are not production config engines", "no electronic-structure or reactive models; optional EMT scope is limited to standard metals and is not material validation", "transition finite-difference heuristic includes equilibration and is not proof of a phase transition"],
         "units": {"real":"Angstrom, ps, amu, e, kcal/mol, K, atm", "reduced_charge":"q*=q_e sqrt(332.06371/(sigma_Angstrom epsilon_kcal/mol))", "typed_xyz_reference_mass":"1 amu; global XYZ mass/charge overrides require plain XYZ", "thermo":"already converted runner output", "conservation":"internal reduced energy", "checkpoint":"internal reduced mechanics"},
         "sweeps": {"initial_temperature":"initial draw only; does not change canonical target", "langevin_target_temperature":"Langevin only; rejects MC coupling", "thermostat_target_temperature":"CSVR/Berendsen thermostat only; rejects MC coupling; NHC target sweep not implemented", "density":"FCC only"}
     })
@@ -1262,6 +1287,22 @@ seed = 42
 "#
         );
         toml::from_str(&toml).expect("valid config")
+    }
+
+    #[test]
+    fn pre_cancelled_queued_run_is_cancelled_without_setup_failure() {
+        let stop = Arc::new(AtomicBool::new(true));
+        let status = Arc::new(Mutex::new(RunStatusInner::new(100, true)));
+        run_loop(
+            sample_config(100),
+            PathBuf::from("."),
+            stop,
+            Arc::clone(&status),
+        );
+        let status = status.lock().unwrap();
+        assert_eq!(status.state, RunState::Cancelled);
+        assert_eq!(status.step, 0);
+        assert!(status.error.is_none());
     }
 
     #[test]

@@ -57,6 +57,10 @@ modena run --diagnostics-json -i examples/argon_nve.toml
 
 The optional flag appends one `energy diagnostics = {JSON}` line containing the whole report. The human summary shows the legacy endpoint number separately from the normalized excursion and time-series statistics.
 
+B01 additionally emits a separate `run metadata = {JSON}` line under the same
+flag; the energy-diagnostics line remains unchanged. Python appends optional
+`RunResult.metadata` (None with older CLIs). See [B01 migration](B01_EXTERNAL_PROVIDER.md#checkpoints-and-public-api-migration).
+
 Python's `RunResult.energy_diagnostics` contains that report. `RunResult.conservation` exposes the scoped verdict in the existing title-case style, including `Uncalibrated`, `NotApplicable`, `Unavailable` and `InsufficientData`. Configure optional tolerances with `Run(energy_error_thresholds={"warning": 0.01, "drifting": 0.05})`. With an older CLI, the wrapper retries without the new flag only after its exact argument-parser rejection, before a simulation starts; the old verdict remains available and `energy_diagnostics` is null. Physics failures are not retried.
 
 MCP live status consumes the runner's full-rate report, including at sparse log cadence; it does not reconstruct energy errors from displayed thermodynamic samples. `detect_anomaly` emits the legacy `energy_drift` finding only for NVE above explicit tolerances, with the actual metric, policy and diagnostics in its evidence. A failed run generates a `run_failure` finding. A monitor failure reports the offending step and error even when the last logged sample was finite. No findings does not certify sampling or accuracy. MCP's ordinary accumulated sample means remain uncorrected for burn-in/autocorrelation.

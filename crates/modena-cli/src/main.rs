@@ -22,6 +22,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Discover the installed optional ASE EMT provider as one JSON descriptor.
+    ProviderInfo {
+        #[arg(long, default_value = "python3")]
+        python: String,
+        /// Maximum discovery time, including Python startup.
+        #[arg(long, default_value_t = 30000)]
+        timeout_ms: u64,
+    },
     /// Validate an input file without running (parses + builds the system).
     Check {
         #[arg(short, long)]
@@ -31,7 +39,7 @@ enum Command {
     Run {
         #[arg(short, long)]
         input: PathBuf,
-        /// Emit a machine-readable energy diagnostics line (reduced energy/time).
+        /// Emit energy diagnostics (reduced energy/time) and run metadata JSON lines.
         #[arg(long)]
         diagnostics_json: bool,
     },
@@ -41,6 +49,11 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::ProviderInfo { python, timeout_ms } => {
+            let identity = modena_core::describe_ase_emt(&python, timeout_ms)
+                .context("failed to discover ASE EMT provider")?;
+            println!("{}", serde_json::to_string(&identity)?);
+        }
         Command::Check { input } => {
             let config = InputConfig::from_path(&input)
                 .with_context(|| format!("failed to read input file {}", input.display()))?;
@@ -84,6 +97,13 @@ fn main() -> Result<()> {
             {
                 println!("  pressure diagnostic: omits constraint impulse stress; constrained pressure is not validated");
             }
+            if let Some(provider) = &summary.metadata.provider {
+                println!(
+                    "  provider = {} (ASE {}, NumPy {}; {})",
+                    provider.provider, provider.ase_version, provider.numpy_version, provider.model
+                );
+                println!("  pressure derived from provider configurational stress");
+            }
             let c = &summary.conservation;
             if summary.metadata.ensemble == Ensemble::Nve {
                 println!(
@@ -116,6 +136,11 @@ fn main() -> Result<()> {
                 println!(
                     "  energy diagnostics = {}",
                     serde_json::to_string(c).context("failed to serialize energy diagnostics")?
+                );
+                println!(
+                    "  run metadata = {}",
+                    serde_json::to_string(&summary.metadata)
+                        .context("failed to serialize run metadata")?
                 );
             }
             let per_step_us = elapsed.as_secs_f64() / summary.steps.max(1) as f64 * 1e6;

@@ -83,6 +83,7 @@ Keep running example commands from the repository root so the input paths resolv
 | Area | Implemented methods and workflows |
 | --- | --- |
 | Pair interactions | Lennard-Jones, Buckingham, Morse, soft-sphere, and tabulated models |
+| Optional external provider | Pinned ASE EMT total energy/forces/stress for fully periodic, unconstrained fixed-cell real-unit NVE/NVT with explicit atomic numbers and masses |
 | Molecular interactions | Bond, angle, and dihedral terms; topology weights and exceptions; typed XYZ input |
 | Time integration & ensembles | Velocity-Verlet NVE; Langevin BAOAB, stochastic velocity rescaling, and Nosé–Hoover chains for NVT |
 | Electrostatics | Direct Ewald and orthorhombic SPME |
@@ -95,6 +96,12 @@ with material-property validation still incomplete. Optional MPI and GPU
 backends are experimental library code with separate examples; enabling their
 Cargo features does not select them in the ordinary TOML runner.
 See [method coverage and limitations](docs/VALIDATED_SCOPE.md) for the details.
+
+The [ASE EMT guide](docs/B01_EXTERNAL_PROVIDER.md) gives optional installation,
+exact-pin discovery and a short Cu input. Each evaluation starts a fresh Python
+process. [Executed reference checks](docs/B01_VERIFICATION.md) establish direct
+EMT snapshot/derivative parity and transport, with no material-validation or
+throughput claim; the default build needs no Python/ASE.
 
 ### Pick an example
 

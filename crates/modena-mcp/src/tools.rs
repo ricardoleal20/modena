@@ -22,7 +22,7 @@ pub fn tool_list() -> Vec<Tool> {
         Tool { name: "get_capabilities", description: "Discover supported scientific domains, parameter conventions, backend presence and production limitations.", input_schema: schema!({"type":"object","properties":{},"additionalProperties":false}) },
         Tool {
             name: "list_potentials",
-            description: "List the registered pair potentials and their parameter names.",
+            description: "List registered models (native pair potentials and optional ASE EMT) and their parameter names.",
             input_schema: schema!({
                 "type": "object",
                 "properties": {},
@@ -44,7 +44,7 @@ pub fn tool_list() -> Vec<Tool> {
         },
         Tool {
             name: "estimate_run_cost",
-            description: "Estimate wall-clock seconds and RSS megabytes for a config from an internal cost model. Helps budget before large runs. Figures are rough estimates, not guarantees.",
+            description: "Estimate wall-clock seconds and RSS megabytes for a config from an internal cost model. Helps budget before large runs. Figures are rough estimates, not guarantees. ASE EMT estimates are explicitly unsupported; use run_probe or run_async.",
             input_schema: schema!({
                 "type": "object",
                 "properties": {
@@ -71,7 +71,7 @@ pub fn tool_list() -> Vec<Tool> {
         },
         Tool {
             name: "run_async",
-            description: "Launch a streaming simulation on a background thread. Returns a run_id immediately. Poll with get_run_status; cancel with cancel_run.",
+            description: "Launch a streaming simulation on a background thread. Returns a run_id immediately. Poll with get_run_status; cancel with cancel_run. Optional ASE EMT starts one Python process per evaluation; cancellation waits up to its configured evaluation timeout plus step completion.",
             input_schema: schema!({
                 "type": "object",
                 "properties": {

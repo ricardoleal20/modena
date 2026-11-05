@@ -35,6 +35,10 @@ pub struct Virial {
 /// The force/energy provider. Implement this to plug in a new potential —
 /// analytical pair, many-body, bonded, or a learned ML surrogate.
 pub trait ForceModel: Send + Sync {
+    /// The provider constructs its own neighbors and ignores the compatibility list.
+    fn uses_provider_neighbors(&self) -> bool {
+        false
+    }
     /// Whether this model preserves total momentum for these atoms under a
     /// common continuous translation. Drivers may remove COM modes only when
     /// both the model and the controller preserve an initialized zero momentum.
@@ -43,7 +47,9 @@ pub trait ForceModel: Send + Sync {
         false
     }
     /// Maximum real-space neighbor radius required by this model. Drivers
-    /// must reject an absent radius when they need to construct a list.
+    /// must reject an absent radius when they need to construct a list,
+    /// unless `uses_provider_neighbors()` explicitly opts into an unused
+    /// compatibility list. Such a list implies no physical provider cutoff.
     fn neighbor_cutoff(&self) -> Option<f64> {
         None
     }

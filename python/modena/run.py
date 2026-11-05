@@ -50,6 +50,7 @@ class RunResult:
     perf: Optional[str]     # e.g. "752.77 µs/step"
     toml: str               # the rendered config (reproducibility)
     energy_diagnostics: Optional[dict] = None  # full report; energies/time are reduced
+    metadata: Optional[dict] = None  # serialized core RunMetadata; absent in older CLIs
 
 
 def _resolve_paths(cfg: Config, base_dir: Optional[Path] = None) -> Config:
@@ -62,7 +63,30 @@ def _resolve_paths(cfg: Config, base_dir: Optional[Path] = None) -> Config:
             value = getattr(obj, name, None)
             if value is not None:
                 setattr(obj, name, str((base / value).resolve()))
+    python = getattr(cfg.model, "python", None)
+    if python is not None and ("/" in python or "\\" in python):
+        # Preserve executable symlinks: resolving venv/bin/python to the base
+        # interpreter changes its environment and can lose the installed ASE.
+        cfg.model.python = os.path.abspath(base / python)
     return cfg
+
+
+def provider_info(python: str = "python3", binary: Optional[str] = None, *,
+                  timeout_ms: int = 30000) -> dict:
+    """Return core discovery JSON; use its exact version/hash to pin AseEmt.
+
+    `python` is one executable path or PATH name, never shell arguments.
+    The CLI enforces the discovery timeout; ASE is optional for native runs.
+    """
+    result = subprocess.run(
+        [binary or _binary(), "provider-info", "--python", python,
+         "--timeout-ms", str(timeout_ms)],
+        capture_output=True, text=True, timeout=max(timeout_ms, 0) / 1000 + 10,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"modena provider-info failed (rc={result.returncode}):\n"
+                           f"{result.stdout}\n{result.stderr}")
+    return json.loads(result.stdout)
 
 
 def check(cfg: Config, binary: Optional[str] = None, *, base_dir: Optional[Path] = None) -> str:
@@ -114,6 +138,7 @@ def run(cfg: Config, binary: Optional[str] = None, *, base_dir: Optional[Path] =
         conservation = "unknown"
         perf = None
         energy_diagnostics = None
+        metadata = None
         if log_path.exists():
             with log_path.open(encoding="utf-8", newline="") as lf:
                 rows = [
@@ -124,6 +149,8 @@ def run(cfg: Config, binary: Optional[str] = None, *, base_dir: Optional[Path] =
         for line in out.splitlines():
             if line.strip().startswith("energy diagnostics = "):
                 energy_diagnostics = json.loads(line.strip().split(" = ", 1)[1])
+            if line.strip().startswith("run metadata = "):
+                metadata = json.loads(line.strip().split(" = ", 1)[1])
             if "conservation" in line:
                 m = re.search(r"\((Healthy|Warning|Drifting)\)", line)
                 conservation = m.group(1) if m else "unknown"
@@ -134,4 +161,4 @@ def run(cfg: Config, binary: Optional[str] = None, *, base_dir: Optional[Path] =
                         "not_applicable": "NotApplicable", "unavailable": "Unavailable",
                         "insufficient_data": "InsufficientData", "uncalibrated": "Uncalibrated"}
             conservation = verdicts.get(energy_diagnostics["verdict"], "unknown")
-        return RunResult(rows, conservation, perf, toml_text, energy_diagnostics)
+        return RunResult(rows, conservation, perf, toml_text, energy_diagnostics, metadata)

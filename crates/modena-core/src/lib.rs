@@ -26,6 +26,7 @@ pub mod constraints;
 pub mod decomp;
 pub mod error;
 pub mod ewald;
+pub mod external;
 pub mod force_model;
 #[cfg(feature = "gpu")]
 pub mod gpu_comm;
@@ -61,6 +62,10 @@ pub use decomp::{
 };
 pub use error::{ModenaError, Result};
 pub use ewald::EwaldForceModel;
+pub use external::{
+    describe_ase_emt, AseEmtForceModel, AseEmtSpec, ProviderEvaluation, ProviderIdentity,
+    ProviderUnits,
+};
 pub use force_model::{ForceModel, PairForceModel, Virial};
 #[cfg(feature = "gpu")]
 pub use gpu_comm::{GpuGather, GpuPairForceModel};

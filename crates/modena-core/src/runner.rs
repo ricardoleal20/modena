@@ -21,6 +21,7 @@ use crate::conservation::{
 use crate::constraints::{Constraint, Constraints, RigidWater};
 use crate::error::{ModenaError, Result};
 use crate::ewald::EwaldForceModel;
+use crate::external::{AseEmtForceModel, ProviderIdentity};
 use crate::force_model::{ForceModel, PairForceModel, Virial};
 use crate::integrator::{Integrator, LangevinBAOAB, VelocityVerlet};
 use crate::io::input::{
@@ -45,6 +46,7 @@ use crate::units::{UnitFactors, UnitSystem};
 use crate::vec3::Vec3;
 
 pub struct Simulation {
+    failed: bool,
     system: System,
     model: Box<dyn ForceModel>,
     integrator: Box<dyn Integrator>,
@@ -70,6 +72,7 @@ pub struct Simulation {
     /// reduced; only the rendered observables are scaled.
     unit_factors: Option<UnitFactors>,
     physical_signature: serde_json::Value,
+    provider: Option<ProviderIdentity>,
     ensemble: Ensemble,
     energy_error_thresholds: Option<EnergyErrorThresholds>,
 }
@@ -77,6 +80,9 @@ pub struct Simulation {
 /// Events emitted by [`Simulation::run_streaming`]. One consumer is the MCP
 /// agent layer (`modena-mcp`); another is the future GUI. The blocking
 /// [`Simulation::run`] path simply discards them.
+// Preserve the public by-value Finished payload; provider identity is emitted
+// once per run, while the high-frequency thermo event remains allocation-free.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum RunEvent {
     /// Emitted once before the first integration step.
@@ -117,11 +123,15 @@ pub enum Ensemble {
 #[serde(rename_all = "snake_case")]
 pub enum PressureStatus {
     UnconstrainedPairVirial,
+    /// Configurational scalar virial derived from provider stress: -V trace(stress).
+    UnconstrainedProviderStress,
     DiagnosticWithoutConstraintImpulseStress,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct RunMetadata {
+    /// Validated installed identity for an external model; None for native models.
+    pub provider: Option<ProviderIdentity>,
     pub ensemble: Ensemble,
     pub kinetic_dof: usize,
     pub constraint_count: usize,
@@ -131,7 +141,7 @@ pub struct RunMetadata {
     pub output_units: UnitSystem,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct RunSummary {
     pub steps: usize,
     pub final_energies: Energies,
@@ -150,19 +160,38 @@ impl Simulation {
     /// Build a `Simulation` from a parsed config. `base_dir` resolves relative
     /// structure-file paths.
     pub fn from_config(config: &InputConfig, base_dir: &Path) -> Result<Self> {
-        Self::build_config(config, base_dir, true)
+        Self::build_config(config, base_dir, true, None)
     }
 
     /// Perform all scientific setup and restart checks without opening outputs.
     pub fn from_config_without_outputs(config: &InputConfig, base_dir: &Path) -> Result<Self> {
-        Self::build_config(config, base_dir, false)
+        Self::build_config(config, base_dir, false, None)
     }
 
-    fn build_config(raw: &InputConfig, base_dir: &Path, outputs: bool) -> Result<Self> {
+    /// Build with cancellation checks between setup operations. A single
+    /// in-flight provider call finishes under its configured deadline.
+    pub fn from_config_with_stop(
+        config: &InputConfig,
+        base_dir: &Path,
+        stop: &AtomicBool,
+    ) -> Result<Self> {
+        Self::build_config(config, base_dir, true, Some(stop))
+    }
+
+    fn build_config(
+        raw: &InputConfig,
+        base_dir: &Path,
+        outputs: bool,
+        stop: Option<&AtomicBool>,
+    ) -> Result<Self> {
+        check_setup_stop(stop)?;
         let normalized = raw.normalized()?;
         let config = &normalized;
         let mut system = build_system(&config.structure, base_dir, config.unit_factors.as_ref())?;
 
+        if let ModelSpec::AseEmt(spec) = &config.model {
+            system.atomic_numbers = spec.atomic_numbers.clone();
+        }
         crate::config::validation::validate_system(config, &system)?;
         let checkpoint = config
             .run
@@ -176,124 +205,151 @@ impl Simulation {
             ));
         }
 
-        let (pair_model, _) = build_model(&config.model, base_dir)?;
-        // Species-range validation: a multi-species structure (rocksalt sets
-        // species {0,1}; random_alloy whatever it was asked for) fed to a
-        // single-type model would panic with "index out of bounds" inside the
-        // parallel force fold — an unhelpful crash at runtime instead of a
-        // config error.
-        if let Some(max_sp) = system.species.iter().max().copied() {
-            let n_types = pair_model.potential.n_types();
-            if max_sp as usize >= n_types {
-                return Err(ModenaError::Config(format!(
-                    "structure uses species index {max_sp}, but the pair model \
+        check_setup_stop(stop)?;
+        let (model, provider, mut neighbors, water_constraints): (Box<dyn ForceModel>, _, _, _) =
+            if let ModelSpec::AseEmt(spec) = &config.model {
+                let mut spec = spec.clone();
+                spec.python = resolve_provider_python(&spec.python, base_dir)?;
+                let model = AseEmtForceModel::new(
+                    spec,
+                    config.unit_factors.expect("validated real units"),
+                )?;
+                let identity = model.identity().clone();
+                // Explicit provider-managed path: this valid compatibility list is
+                // never built or consumed by ASE; it implies no physical cutoff.
+                debug_assert!(model.uses_provider_neighbors());
+                debug_assert_eq!(model.neighbor_cutoff(), None);
+                (
+                    Box::new(model),
+                    Some(identity),
+                    NeighborList::new(1.0),
+                    None,
+                )
+            } else {
+                let (pair_model, _) = build_model(&config.model, base_dir)?;
+                // Species-range validation: a multi-species structure (rocksalt sets
+                // species {0,1}; random_alloy whatever it was asked for) fed to a
+                // single-type model would panic with "index out of bounds" inside the
+                // parallel force fold — an unhelpful crash at runtime instead of a
+                // config error.
+                if let Some(max_sp) = system.species.iter().max().copied() {
+                    let n_types = pair_model.potential.n_types();
+                    if max_sp as usize >= n_types {
+                        return Err(ModenaError::Config(format!(
+                            "structure uses species index {max_sp}, but the pair model \
                      has only {n_types} type{s}; configure the model with \
                      matching [[model.types]] entries",
-                    s = if n_types == 1 { "" } else { "s" }
-                )));
-            }
-        }
-        let mut scales = config
-            .topology
-            .as_ref()
-            .map(|t| crate::config::topology_pair_scales(t, system.n()))
-            .transpose()?
-            .unwrap_or_default();
-        // Rigid water: the structure implies its constraints (exact
-        // per-molecule projection) and its intramolecular exclusions.
-        let mut water_constraints: Option<Constraints> = None;
-        if let StructureSpec::Water {
-            n_waters,
-            d_oh,
-            hoh_angle,
-            ..
-        } = &config.structure
-        {
-            let pair_key = |i: usize, j: usize| (i.min(j), i.max(j));
-            let mut policy: std::collections::BTreeMap<_, _> = scales
-                .iter()
-                .copied()
-                .map(|p| (pair_key(p.i, p.j), p))
-                .collect();
-            let explicit: std::collections::HashMap<_, _> = config
-                .topology
-                .as_ref()
-                .map(|t| {
-                    t.exceptions
-                        .iter()
-                        .map(|e| (pair_key(e.atoms[0], e.atoms[1]), (e.lj, e.coulomb)))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let d_hh = 2.0 * d_oh * (hoh_angle.to_radians() * 0.5).sin();
-            let mut waters = Vec::with_capacity(*n_waters as usize);
-            for w in 0..*n_waters as usize {
-                let first = 3 * w;
-                waters.push(RigidWater {
-                    first,
-                    d_oh: *d_oh,
-                    d_hh,
-                });
-                for (i, j) in [
-                    (first, first + 1),
-                    (first, first + 2),
-                    (first + 1, first + 2),
-                ] {
-                    // Rigid water's physical intramolecular policy is mandatory.
-                    if explicit
-                        .get(&pair_key(i, j))
-                        .is_some_and(|&(lj, coulomb)| lj != 0.0 || coulomb != 0.0)
-                    {
-                        return Err(ModenaError::Config("explicit water intramolecular exceptions must preserve zero LJ/Coulomb exclusions".into()));
+                            s = if n_types == 1 { "" } else { "s" }
+                        )));
                     }
-                    policy.insert(
-                        pair_key(i, j),
-                        PairScale {
-                            i,
-                            j,
-                            lj: 0.0,
-                            coulomb: 0.0,
-                        },
-                    );
                 }
-            }
-            scales = policy.into_values().collect();
-            water_constraints = Some(Constraints {
-                bonds: Vec::new(),
-                waters,
-            });
-        }
-        let ewald = build_electrostatics(&config.electrostatics)?;
-        // Wrap in a composite only when there is something to compose (bonded
-        // topology or Ewald); otherwise the bare pair model stands alone.
-        let model: Box<dyn ForceModel> = match (&config.topology, &ewald) {
-            (None, None) => Box::new(pair_model),
-            _ => {
-                let mut comp = CompositeForceModel::new(pair_model);
-                if let Some(topo_spec) = &config.topology {
-                    comp = comp.with_bonded(BondedForceModel::new(build_topology(topo_spec)));
+                let mut scales = config
+                    .topology
+                    .as_ref()
+                    .map(|t| crate::config::topology_pair_scales(t, system.n()))
+                    .transpose()?
+                    .unwrap_or_default();
+                // Rigid water: the structure implies its constraints (exact
+                // per-molecule projection) and its intramolecular exclusions.
+                let mut water_constraints: Option<Constraints> = None;
+                if let StructureSpec::Water {
+                    n_waters,
+                    d_oh,
+                    hoh_angle,
+                    ..
+                } = &config.structure
+                {
+                    let pair_key = |i: usize, j: usize| (i.min(j), i.max(j));
+                    let mut policy: std::collections::BTreeMap<_, _> = scales
+                        .iter()
+                        .copied()
+                        .map(|p| (pair_key(p.i, p.j), p))
+                        .collect();
+                    let explicit: std::collections::HashMap<_, _> = config
+                        .topology
+                        .as_ref()
+                        .map(|t| {
+                            t.exceptions
+                                .iter()
+                                .map(|e| (pair_key(e.atoms[0], e.atoms[1]), (e.lj, e.coulomb)))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let d_hh = 2.0 * d_oh * (hoh_angle.to_radians() * 0.5).sin();
+                    let mut waters = Vec::with_capacity(*n_waters as usize);
+                    for w in 0..*n_waters as usize {
+                        let first = 3 * w;
+                        waters.push(RigidWater {
+                            first,
+                            d_oh: *d_oh,
+                            d_hh,
+                        });
+                        for (i, j) in [
+                            (first, first + 1),
+                            (first, first + 2),
+                            (first + 1, first + 2),
+                        ] {
+                            // Rigid water's physical intramolecular policy is mandatory.
+                            if explicit
+                                .get(&pair_key(i, j))
+                                .is_some_and(|&(lj, coulomb)| lj != 0.0 || coulomb != 0.0)
+                            {
+                                return Err(ModenaError::Config("explicit water intramolecular exceptions must preserve zero LJ/Coulomb exclusions".into()));
+                            }
+                            policy.insert(
+                                pair_key(i, j),
+                                PairScale {
+                                    i,
+                                    j,
+                                    lj: 0.0,
+                                    coulomb: 0.0,
+                                },
+                            );
+                        }
+                    }
+                    scales = policy.into_values().collect();
+                    water_constraints = Some(Constraints {
+                        bonds: Vec::new(),
+                        waters,
+                    });
                 }
-                match ewald {
-                    Some(LongRangeForceModel::Ewald(e)) => comp = comp.with_ewald(e),
-                    Some(LongRangeForceModel::Spme(s)) => comp = comp.with_spme(s),
-                    None => {}
+                let ewald = build_electrostatics(&config.electrostatics)?;
+                // Wrap in a composite only when there is something to compose (bonded
+                // topology or Ewald); otherwise the bare pair model stands alone.
+                let model: Box<dyn ForceModel> = match (&config.topology, &ewald) {
+                    (None, None) => Box::new(pair_model),
+                    _ => {
+                        let mut comp = CompositeForceModel::new(pair_model);
+                        if let Some(topo_spec) = &config.topology {
+                            comp =
+                                comp.with_bonded(BondedForceModel::new(build_topology(topo_spec)));
+                        }
+                        match ewald {
+                            Some(LongRangeForceModel::Ewald(e)) => comp = comp.with_ewald(e),
+                            Some(LongRangeForceModel::Spme(s)) => comp = comp.with_spme(s),
+                            None => {}
+                        }
+                        Box::new(comp)
+                    }
+                };
+                let neighbor_cutoff = model.neighbor_cutoff().ok_or_else(|| {
+                    ModenaError::Config(
+                        "force model must provide its physical neighbor cutoff".into(),
+                    )
+                })?;
+                // Verlet skin (config.run.neighbor_skin, default 0.3): the list is
+                // rebuilt only when an atom moves > skin/2 since the last build. Each
+                // sub-model still gates pairs by its own cutoff, so a list built at
+                // neighbor_cutoff + skin is safe for every model.
+                let skin = config.run.neighbor_skin;
+                if !(skin >= 0.0) {
+                    return Err(ModenaError::Config("run.neighbor_skin must be >= 0".into()));
                 }
-                Box::new(comp)
-            }
-        };
-        let neighbor_cutoff = model.neighbor_cutoff().ok_or_else(|| {
-            ModenaError::Config("force model must provide its physical neighbor cutoff".into())
-        })?;
-        // Verlet skin (config.run.neighbor_skin, default 0.3): the list is
-        // rebuilt only when an atom moves > skin/2 since the last build. Each
-        // sub-model still gates pairs by its own cutoff, so a list built at
-        // neighbor_cutoff + skin is safe for every model.
-        let skin = config.run.neighbor_skin;
-        if !(skin >= 0.0) {
-            return Err(ModenaError::Config("run.neighbor_skin must be >= 0".into()));
-        }
-        let mut neighbors = NeighborList::with_pair_scales(neighbor_cutoff, skin, &scales)?;
-        neighbors.validate_pair_scales(system.n())?;
+                let neighbors = NeighborList::with_pair_scales(neighbor_cutoff, skin, &scales)?;
+                neighbors.validate_pair_scales(system.n())?;
+                (model, None, neighbors, water_constraints)
+            };
+        check_setup_stop(stop)?;
         let mut constraints = config.constraints.as_ref().map(build_constraints);
         match (&mut constraints, water_constraints) {
             (Some(c), Some(wc)) => c.waters.extend(wc.waters),
@@ -303,7 +359,7 @@ impl Simulation {
         if let Some(c) = &constraints {
             validate_constraint_pairs(c)?;
         }
-        let physical_signature = physical_signature(config, &system, base_dir)?;
+        let physical_signature = physical_signature(config, &system, base_dir, provider.as_ref())?;
         let count = constraints.as_ref().map_or(0, Constraints::count);
         system.set_constraint_count(count)?;
         let com_eligible = !matches!(config.integrator, IntegratorSpec::LangevinBaoab { .. })
@@ -363,15 +419,24 @@ impl Simulation {
         // Initial force evaluation so F(t) is cached for the first integrator
         // half-kick.
         let mut virial = Virial::default();
+        check_setup_stop(stop)?;
         let mut pe = model.compute(&mut system, &mut virial, &mut neighbors)?;
+        check_setup_stop(stop)?;
         if let Some(cp) = &checkpoint {
             match config.run.restart_mode {
                 RestartMode::Continue => {
                     let state=cp.continuation.as_ref().ok_or_else(||ModenaError::Config(
                         "legacy/mechanical checkpoint requires explicit restart_mode = \"state_only\"; full continuation state is absent".into()))?;
-                    if state.physical_signature != physical_signature
-                        || state.masses != system.masses
+                    if !checkpoint_signature_matches(
+                        config,
+                        &state.physical_signature,
+                        &physical_signature,
+                    ) || state.masses != system.masses
                         || state.species != system.species
+                        || !(state.atomic_numbers == system.atomic_numbers
+                            || (state.atomic_numbers.is_empty()
+                                && provider.is_none()
+                                && system.atomic_numbers.iter().all(|z| *z == 0)))
                         || state.charges != system.charges
                         || state.elements != system.elements
                         || state.constraint_count != system.constraint_count()
@@ -397,7 +462,9 @@ impl Simulation {
                         system.zero_forces();
                         virial = Virial::default();
                         neighbors.force_rebuild(&system);
+                        check_setup_stop(stop)?;
                         pe = model.compute(&mut system, &mut virial, &mut neighbors)?;
+                        check_setup_stop(stop)?;
                     }
                     if com_eligible {
                         // Constraint projection can change the imported
@@ -423,6 +490,7 @@ impl Simulation {
             IntegratorSpec::NoseHooverChain { dt, .. } => *dt,
         };
 
+        check_setup_stop(stop)?;
         let trajectory_writer = if outputs {
             open_trajectory(&config.run, base_dir)?
         } else {
@@ -454,6 +522,8 @@ impl Simulation {
             },
         };
         Ok(Self {
+            failed: false,
+            provider,
             ensemble,
             energy_error_thresholds: config.run.energy_error_thresholds,
             system,
@@ -484,6 +554,7 @@ impl Simulation {
 
     pub fn metadata(&self) -> RunMetadata {
         RunMetadata {
+            provider: self.provider.clone(),
             ensemble: self.ensemble,
             kinetic_dof: self.system.dof(),
             constraint_count: self.system.constraint_count(),
@@ -495,6 +566,8 @@ impl Simulation {
             },
             pressure_status: if self.system.constraint_count() > 0 {
                 PressureStatus::DiagnosticWithoutConstraintImpulseStress
+            } else if self.provider.is_some() {
+                PressureStatus::UnconstrainedProviderStress
             } else {
                 PressureStatus::UnconstrainedPairVirial
             },
@@ -511,11 +584,14 @@ impl Simulation {
         self.current_step
     }
 
+    /// Rejects failed instances without opening the destination; a failed step
+    /// may leave partial buffers and requires construction from a good checkpoint.
     /// Atomically write v2 mechanical, identity, DOF, cached force, RNG and
     /// extended state (reduced units) to `path`. Called by the run
     /// loop every `restart_every` steps and at run end; public for tests and
     /// callers that drive stepping manually.
     pub fn write_checkpoint(&self, path: &Path) -> Result<()> {
+        self.ensure_usable()?;
         crate::io::restart::save(
             path,
             &crate::io::restart::Checkpoint {
@@ -529,6 +605,7 @@ impl Simulation {
                     forces: self.system.forces.clone(),
                     masses: self.system.masses.clone(),
                     species: self.system.species.clone(),
+                    atomic_numbers: self.system.atomic_numbers.clone(),
                     charges: self.system.charges.clone(),
                     elements: self.system.elements.clone(),
                     constraint_count: self.system.constraint_count(),
@@ -547,6 +624,8 @@ impl Simulation {
     /// Run to completion, discarding streamed events. Equivalent to
     /// [`run_streaming`](Self::run_streaming) with no stop flag and a no-op
     /// sink. Kept as the simple blocking entry point for the CLI and tests.
+    /// Any returned run error makes this instance terminal; construct a new
+    /// simulation from a good checkpoint. Clean cancellation remains usable.
     pub fn run(&mut self) -> Result<RunSummary> {
         self.run_streaming(None, |_| {})
     }
@@ -563,6 +642,27 @@ impl Simulation {
         &mut self,
         stop: Option<&AtomicBool>,
         mut on_event: impl FnMut(&RunEvent),
+    ) -> Result<RunSummary> {
+        self.ensure_usable()?;
+        let result = self.run_streaming_inner(stop, &mut on_event);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    fn ensure_usable(&self) -> Result<()> {
+        if self.failed {
+            Err(ModenaError::Physics("simulation is unusable after a failed run; construct a new simulation from a good checkpoint".into()))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn run_streaming_inner(
+        &mut self,
+        stop: Option<&AtomicBool>,
+        on_event: &mut impl FnMut(&RunEvent),
     ) -> Result<RunSummary> {
         let dt = self.dt;
         let mut e = Energies::from(&self.system, self.current_pe, &self.current_virial);
@@ -603,12 +703,24 @@ impl Simulation {
 
         let mut executed = 0usize;
         for i in 1..=self.steps {
+            if stop.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+                break;
+            }
             // Global step label: a resumed run continues from the checkpoint.
             let step = start_step + i;
-            self.current_step = step;
-            e = self
+            e = match self
                 .integrator
-                .step(&mut self.system, &*self.model, &mut self.neighbors, dt)?;
+                .step(&mut self.system, &*self.model, &mut self.neighbors, dt)
+            {
+                Ok(e) => e,
+                Err(error) => {
+                    on_event(&RunEvent::Failed {
+                        step,
+                        error: error.to_string(),
+                    });
+                    return Err(error);
+                }
+            };
             self.current_pe = e.potential;
             self.current_virial = Virial { w: e.virial };
 
@@ -619,14 +731,20 @@ impl Simulation {
             // Pressure coupling: scales the box + positions. Only `NoneBarostat`
             // is a true no-op; any real barostat changes V (and thus the
             // pressure/KE observables), so recompute the thermo snapshot.
-            self.barostat.apply_with_model(
+            if let Err(error) = self.barostat.apply_with_model(
                 &mut self.system,
                 &*self.model,
                 &mut self.neighbors,
                 &mut self.current_pe,
                 &mut self.current_virial,
                 dt,
-            )?;
+            ) {
+                on_event(&RunEvent::Failed {
+                    step,
+                    error: error.to_string(),
+                });
+                return Err(error);
+            }
             e = Energies::from(&self.system, self.current_pe, &self.current_virial);
             if let Err(error) = monitor.observe(i as f64 * dt, e.total) {
                 on_event(&RunEvent::Failed {
@@ -636,6 +754,7 @@ impl Simulation {
                 return Err(error);
             }
 
+            self.current_step = step;
             let time_reduced = step as f64 * dt;
             let time = self.display_time(time_reduced);
             if step.is_multiple_of(self.log_every) {
@@ -685,7 +804,9 @@ impl Simulation {
             conservation: monitor.report(),
             metadata: self.metadata(),
         };
-        on_event(&RunEvent::Finished { summary });
+        on_event(&RunEvent::Finished {
+            summary: summary.clone(),
+        });
         Ok(summary)
     }
 
@@ -962,9 +1083,13 @@ fn physical_signature(
     config: &InputConfig,
     system: &System,
     base_dir: &Path,
+    provider: Option<&ProviderIdentity>,
 ) -> Result<serde_json::Value> {
     let mut model =
         serde_json::to_value(&config.model).map_err(|e| ModenaError::Config(e.to_string()))?;
+    if let ModelSpec::AseEmt(spec) = &config.model {
+        model = serde_json::json!({"type":"ase_emt", "provider":provider, "atomic_numbers":system.atomic_numbers, "pbc":spec.pbc, "asap_cutoff":spec.asap_cutoff, "composition":spec.composition});
+    }
     if let ModelSpec::Tabulated { file, .. } = &config.model {
         model.as_object_mut().unwrap().remove("file");
         model["table_contents"] = std::fs::read_to_string(base_dir.join(file))?.into();
@@ -1031,6 +1156,11 @@ fn conserved_zero_com_dof(system: &System) -> usize {
 
 fn build_model(spec: &ModelSpec, base_dir: &Path) -> Result<(PairForceModel, f64)> {
     let potential: Box<dyn PairPotential> = match spec {
+        ModelSpec::AseEmt(_) => {
+            return Err(ModenaError::Config(
+                "external total provider cannot be built as pair model".into(),
+            ))
+        }
         ModelSpec::LennardJones {
             sigma,
             epsilon,
@@ -1451,4 +1581,103 @@ pub fn run_from_file<P: AsRef<Path>>(path: P) -> Result<RunSummary> {
         .ok_or_else(|| ModenaError::Input("input file has no parent dir".into()))?;
     let mut sim = Simulation::from_config(&config, base_dir)?;
     sim.run()
+}
+
+fn check_setup_stop(stop: Option<&AtomicBool>) -> Result<()> {
+    if stop.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        Err(ModenaError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+/// Only the historical display-factor error may migrate, and only for real
+/// fixed-cell protocols. All chemistry/provider/ensemble/RNG identity remains exact.
+fn checkpoint_signature_matches(
+    config: &InputConfig,
+    saved: &serde_json::Value,
+    current: &serde_json::Value,
+) -> bool {
+    if saved == current {
+        return true;
+    }
+    if config.units != UnitSystem::Real || config.barostat.is_some() {
+        return false;
+    }
+    let Some(f) = config.unit_factors else {
+        return false;
+    };
+    let Some(old) = saved.get("output_unit_factors").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    let Some(new) = current
+        .get("output_unit_factors")
+        .and_then(|v| v.as_array())
+    else {
+        return false;
+    };
+    if old.len() != 7
+        || new.len() != 7
+        || old[5].as_f64() != Some(f.epsilon / (f.sigma * f.sigma * f.sigma) * 69477.8)
+    {
+        return false;
+    }
+    let mut migrated = saved.clone();
+    migrated["output_unit_factors"][5] = new[5].clone();
+    migrated == *current
+}
+
+/// Resolve explicit relative paths without changing PATH basenames or symlinks.
+fn resolve_provider_python(python: &str, base_dir: &Path) -> Result<String> {
+    let path = Path::new(python);
+    if path.is_relative() && python.chars().any(std::path::is_separator) {
+        let resolved = std::path::absolute(base_dir.join(path))?;
+        resolved.into_os_string().into_string().map_err(|_| {
+            ModenaError::Config("resolved model.python path is not valid UTF-8; select a UTF-8 executable path or a bare PATH name".into())
+        })
+    } else {
+        Ok(python.to_owned())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod interpreter_path_tests {
+    use super::resolve_provider_python;
+    use crate::ModenaError;
+    use std::path::Path;
+
+    #[test]
+    fn bare_names_remain_on_path_and_explicit_paths_resolve_lexically() {
+        for name in ["python3", ".emt-python"] {
+            assert_eq!(
+                resolve_provider_python(name, Path::new("/config")).unwrap(),
+                name
+            );
+        }
+        assert_eq!(
+            resolve_provider_python("./venv/bin/python", Path::new("/config")).unwrap(),
+            "/config/venv/bin/python"
+        );
+        assert_eq!(
+            resolve_provider_python("/venv/bin/python", Path::new("/config")).unwrap(),
+            "/venv/bin/python"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_base_is_explicitly_rejected_only_when_a_path_is_resolved() {
+        use std::os::unix::ffi::OsStringExt;
+        let base =
+            std::path::PathBuf::from(std::ffi::OsString::from_vec(b"/tmp/modena-\xff".to_vec()));
+        let error = resolve_provider_python("./venv/bin/python", &base).unwrap_err();
+        assert!(
+            matches!(error,ModenaError::Config(ref message) if message.contains("UTF-8")),
+            "{error}"
+        );
+        assert_eq!(
+            resolve_provider_python(".emt-python", &base).unwrap(),
+            ".emt-python"
+        );
+    }
 }

@@ -14,3 +14,15 @@ charge factor and atom charges, and rejects mismatches. Reduced/sigma1 cases
 are unchanged. Fresh reinitialization is a separate mode, not evidence that an
 old Hamiltonian has been migrated. Historical real ionic benchmarks cannot be
 compared as corrected-model energies or strict before/after performance.
+
+
+Standard-atmosphere pressure uses the exact-SI factor
+`4184/(6.02214076e23*1e-30*101325) = 68568.42296625092` atm per kcal/(mol Å³).
+The former 69477.8 scale was about 1.32623% high. This correction also changes
+real pressure-target normalization and inverse-pressure compressibility; it
+does not change energy/force/time/temperature conversions, reduced inputs or
+fixed-cell real integration mechanics. Exact fixed-cell v2 migration accepts
+only the sole historical pressure factor in the seven-entry output factors,
+with all other signature fields unchanged. Old real pressure-coupled runs need
+an explicit new protocol (`restart_mode="state_only"`); unrelated mismatches
+remain rejected. See [B01 migration](../B01_EXTERNAL_PROVIDER.md#checkpoints-and-public-api-migration).

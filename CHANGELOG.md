@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **Breaking real-pressure correction:** use exact standard atmospheres
+  (68568.42296625092 per kcal/(mol Å³)); update real pressure targets and
+  inverse-pressure compressibility. Reduced inputs and fixed-cell integration
+  mechanics are unchanged. Fixed-cell v2 continuation accepts only the exact
+  sole legacy pressure-factor difference; old real pressure-coupled runs require
+  an explicit new protocol/state_only.
+- Make failed Simulation instances terminal: reject retries and checkpoint
+  writes, preserve the last good file, and count only completed steps.
+- Add cancellable setup via `Simulation::from_config_with_stop` and public
+  `ModenaError::Cancelled`; exhaustive error matches must handle the new variant.
+  MCP honors queued/setup cancellation at safe boundaries. Resolve path-like
+  relative interpreters against config/work_dir while preserving venv symlinks.
+
+- Add B01's optional pinned ASE EMT total provider through the real-unit runner,
+  explicit atomic numbers, provider-stress virial, restart identity, CLI
+  discovery, Python configuration and MCP transport. Direct snapshot/derivative
+  parity is covered; material validation and throughput are not established.
+- **Breaking Rust API additions:** add System/continuation atomic numbers,
+  `ModelSpec::AseEmt`, `RunMetadata.provider` and
+  `PressureStatus::UnconstrainedProviderStress`; RunMetadata/RunSummary are
+  Clone rather than Copy. Native checkpoint signatures remain compatible;
+  external continuation requires matching runtime identity/Z. See
+  [B01 migration](docs/B01_EXTERNAL_PROVIDER.md#checkpoints-and-public-api-migration).
+- `--diagnostics-json` additionally emits a separate runtime metadata line;
+  Python's appended optional `RunResult.metadata` supports older CLIs with None.
 - Implement B06: full-rate, energy-offset-invariant integration diagnostics,
   ensemble-aware advisories with optional caller-selected tolerances, CLI/Python/
   MCP reports, failure-step telemetry and observable sampling analysis with

@@ -75,6 +75,25 @@ class Xyz:
 ############################### model ###############################
 
 @dataclass
+class AseEmt:
+    """Optional fixed ASE EMT total model; pins come from provider_info().
+
+    Atomic numbers are explicit per atom; labels/types do not infer chemistry.
+    Core validates the fully periodic, real-unit, fixed-cell unconstrained scope.
+    """
+
+    ase_version: str
+    model_sha256: str
+    atomic_numbers: list[int]
+    composition: str
+    python: str = "python3"
+    pbc: list[bool] = field(default_factory=lambda: [True, True, True])
+    asap_cutoff: bool = False
+    timeout_ms: int = 30000
+    type: str = "ase_emt"
+
+
+@dataclass
 class LennardJones:
     cutoff: float
     sigma: Optional[float] = None
@@ -312,7 +331,7 @@ class Config:
     """Input units are reduced or real (Å, ps, amu, e, kcal/mol, K, atm)."""
 
     structure: Union[Fcc, Xyz, Water, RockSalt, RandomAlloy]
-    model: Union[LennardJones, Buckingham, Morse, SoftSphere, Tabulated]
+    model: Union[LennardJones, Buckingham, Morse, SoftSphere, Tabulated, AseEmt]
     integrator: Union[VelocityVerlet, Langevin, NoseHooverChain]
     run: Run = field(default_factory=Run)
 

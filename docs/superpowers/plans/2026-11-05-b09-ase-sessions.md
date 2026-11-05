@@ -41,11 +41,11 @@ Files: new focused core snapshot module and tests, CLI snapshot command/tests,
 Consumes existing core `PairForceModel` and `LennardJones`; produces a strict
 Angstrom/eV JSON snapshot command and `ModenaCalculator` with energy/forces only.
 
-- [ ] Add independent two-particle shifted-force LJ energy/forces assertions and finite differences; run failing CLI/calculator tests before implementation.
-- [ ] Implement strict snapshot validation and existing core force dispatch; add optional ASE calculator without importing it from base `modena`.
-- [ ] Verify position/number/cell/parameter/PBC invalidation, failure-cleared results, absent stress, invalid input and actual CLI E/F units. Reject constraints, nonzero initial charge/spin, mixed species and unsupported cells.
-- [ ] Run focused tests plus full workspace/Python/default+GPU lint and Rust 1.90 checks. Record skips and limits; commit.
-- [ ] Read-only spec/quality review and scoped fixes if required.
+- [x] Add independent two-particle shifted-force LJ energy/forces assertions and finite differences; run failing CLI/calculator tests before implementation.
+- [x] Implement strict snapshot validation and existing core force dispatch; add optional ASE calculator without importing it from base `modena`.
+- [x] Verify position/number/cell/parameter/PBC invalidation, failure-cleared results, absent stress, invalid input and actual CLI E/F units. Reject constraints, nonzero initial charge/spin, mixed species and unsupported cells.
+- [x] Run focused tests plus full workspace/Python/default+GPU lint and Rust 1.90 checks. Record skips and limits; commit.
+- [x] Read-only spec/quality review and scoped fixes if required.
 
 ## Task 3: measured evidence and closure
 

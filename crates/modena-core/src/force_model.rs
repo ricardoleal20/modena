@@ -35,6 +35,10 @@ pub struct Virial {
 /// The force/energy provider. Implement this to plug in a new potential —
 /// analytical pair, many-body, bonded, or a learned ML surrogate.
 pub trait ForceModel: Send + Sync {
+    /// The provider constructs its own neighbors and ignores the compatibility list.
+    fn uses_provider_neighbors(&self) -> bool {
+        false
+    }
     /// Whether this model preserves total momentum for these atoms under a
     /// common continuous translation. Drivers may remove COM modes only when
     /// both the model and the controller preserve an initialized zero momentum.

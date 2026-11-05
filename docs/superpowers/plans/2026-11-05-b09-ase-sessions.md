@@ -52,7 +52,12 @@ Angstrom/eV JSON snapshot command and `ModenaCalculator` with energy/forces only
 Files: reproducible B09 benchmark driver under `bench/`, `docs/B09_VERIFICATION.md`,
 provider/calculator scope and changelog documentation.
 
-- [ ] Build release from this branch; use pinned local ASE and alternate one-shot/persistent order over repeated equivalent Cu full runs. Retain timing rows, identity, command, hardware/source/binary hashes and E/F/thermo equality; calculate median ratios from raw rows.
-- [ ] Record cold/full-run versus steady transport limits; no unmeasured solver speed claim.
-- [ ] Check final source diff against design and run appropriate regressions for any changes. Whole-branch read-only review, one grouped fix wave if needed, covering tests and scoped rereview.
-- [ ] Push `ricardo/b09-ase-sessions` and create assigned/labeled PR with Summary, Changes, Test plan, Refs; no merge. Continue B02 from a separate `ricardo/` branch.
+- [x] Build release from this branch; use pinned local ASE and alternate one-shot/persistent order over repeated equivalent Cu full runs. Retain timing rows, identity, command, hardware/source/binary hashes and E/F/thermo equality; calculate median ratios from raw rows.
+- [x] Record cold/full-run versus steady transport limits; no unmeasured solver speed claim.
+- [x] Check final source diff against design and run appropriate regressions for any changes. Whole-branch read-only review, one grouped fix wave if needed, covering tests and scoped rereview.
+- [x] Push `ricardo/b09-ase-sessions` and create assigned/labeled PR with Summary, Changes, Test plan, Refs; no merge. Continue B02 from a separate `ricardo/` branch.
+
+Delivered as [PR #55](https://github.com/ricardoleal20/modena/pull/55), open.
+[Review closure](../../B09_REVIEW.md) records all final findings, decisions and
+remote CI limits. The last checked item's B02 transition is the next workflow
+action; it does not claim B02 implementation is already complete.

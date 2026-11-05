@@ -82,7 +82,31 @@ def verify_run(directory, stdout, atoms, steps):
         raise ValueError('checkpoint FCC box mismatch')
     if not finite_number(state.get('time')) or not math.isclose(state['time'], steps*0.005, rel_tol=1e-12, abs_tol=1e-10):
         raise ValueError('checkpoint integration time mismatch')
-    continuation = state['continuation']
+    continuation = state.get('continuation')
+    if not isinstance(continuation, dict):
+        raise ValueError('missing or malformed checkpoint continuation')
+    # Validate saved state, independently of its declared physical signature.
+    # Current native FCC checkpoints write explicit unspecified atomic numbers
+    # (zero), although the general Rust reader defaults older missing Z to [].
+    identities = [
+        ('masses', 1.0, finite_number),
+        ('species', 0, lambda x: type(x) is int),
+        ('atomic_numbers', 0, lambda x: type(x) is int),
+        ('charges', 0.0, finite_number),
+        ('elements', 'Ar', lambda x: type(x) is str),
+    ]
+    for key, expected_value, valid_type in identities:
+        values = continuation.get(key)
+        if (not isinstance(values, list) or len(values) != atoms
+                or any(not valid_type(x) or x != expected_value for x in values)):
+            raise ValueError(f'checkpoint continuation {key} mismatch')
+    for key, expected_value in [('constraint_count', 0), ('conserved_com_dof', 3)]:
+        if type(continuation.get(key)) is not int or continuation[key] != expected_value:
+            raise ValueError(f'checkpoint continuation {key} mismatch')
+    # Velocity Verlet and the absent thermostat/barostat are stateless here.
+    for key in ['integrator', 'thermostat', 'barostat']:
+        if key not in continuation or continuation[key] is not None:
+            raise ValueError(f'checkpoint continuation {key} state mismatch')
     for values in [state['positions'], state['velocities'], continuation['forces']]:
         if len(values) != 3 * atoms or not all(finite_number(x) for x in values):
             raise ValueError('invalid positions/velocities/forces')

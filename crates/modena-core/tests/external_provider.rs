@@ -495,7 +495,10 @@ fn external_checkpoint_checks_atomic_numbers_runtime_identity_and_transport_inde
     sim.run().unwrap();
     let path = dir.path().join("state.chk");
     sim.write_checkpoint(&path).unwrap();
-    let cp = restart::load(&path).unwrap();
+    let mut cp = restart::load(&path).unwrap();
+    cp.continuation.as_mut().unwrap().physical_signature["output_unit_factors"][5] =
+        serde_json::json!(69477.8);
+    restart::save(&path, &cp).unwrap();
     assert_eq!(
         cp.continuation.as_ref().unwrap().atomic_numbers,
         vec![29; 4]
@@ -553,7 +556,6 @@ fn external_checkpoint_checks_atomic_numbers_runtime_identity_and_transport_inde
     assert!(error.contains("physical identity"), "{error}");
     std::fs::write(&python, script).unwrap();
     // An external checkpoint cannot use the legacy native unspecified-Z default.
-    let mut cp = cp;
     cp.continuation.as_mut().unwrap().atomic_numbers.clear();
     restart::save(&path, &cp).unwrap();
     assert!(Simulation::from_config_without_outputs(&c, dir.path()).is_err());
@@ -689,6 +691,66 @@ fn external_runner_checks_z_count_before_process_launch_and_keeps_ff_species_sep
 }
 
 #[test]
+fn failed_runner_is_terminal_and_preserves_good_checkpoint() {
+    let (dir, python) = fixture(RUNNER_VALID);
+    let text = runner_toml(&python, &"a".repeat(64), "3.29.0");
+    let mut sim = build_runner(&text, dir.path());
+    let checkpoint = dir.path().join("good.chk");
+    sim.write_checkpoint(&checkpoint).unwrap();
+    let good = std::fs::read(&checkpoint).unwrap();
+    let script = std::fs::read_to_string(&python).unwrap();
+    let calls = dir.path().join("failed-calls");
+    std::fs::write(&python, format!("#!/usr/bin/env python3\nwith open({:?}, 'a') as f: f.write('call\\n')\nraise SystemExit(7)\n", calls.to_str().unwrap())).unwrap();
+    let mut events = Vec::new();
+    assert!(sim.run_streaming(None, |e| events.push(e.clone())).is_err());
+    assert!(matches!(
+        events.last(),
+        Some(modena_core::RunEvent::Failed { step: 1, .. })
+    ));
+    assert!(
+        sim.write_checkpoint(&checkpoint).is_err(),
+        "failed instance wrote corrupt continuation"
+    );
+    assert_eq!(std::fs::read(&checkpoint).unwrap(), good);
+    assert_eq!(sim.current_step(), 0);
+    let partial = sim.system().clone();
+    let invocations = std::fs::read(&calls).unwrap();
+    assert!(sim.run().is_err());
+    assert_eq!(sim.system().positions, partial.positions);
+    assert_eq!(sim.system().velocities, partial.velocities);
+    assert_eq!(std::fs::read(&calls).unwrap(), invocations);
+    std::fs::write(&python, script).unwrap();
+    let resumed = build_runner(&format!("{text}\nrestore_file = \"good.chk\""), dir.path());
+    assert_eq!(resumed.current_step(), 0);
+    assert_eq!(
+        resumed.system().positions,
+        modena_core::io::restart::load(checkpoint)
+            .unwrap()
+            .positions
+    );
+}
+
+#[test]
+fn stop_after_initial_event_starts_no_step_and_clean_instance_remains_usable() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (dir, python) = fixture(RUNNER_VALID);
+    let mut sim = build_runner(&runner_toml(&python, &"a".repeat(64), "3.29.0"), dir.path());
+    let stop = AtomicBool::new(false);
+    let before = sim.system().positions.clone();
+    let summary = sim
+        .run_streaming(Some(&stop), |e| {
+            if matches!(e, modena_core::RunEvent::Started { .. }) {
+                stop.store(true, Ordering::Release);
+            }
+        })
+        .unwrap();
+    assert_eq!(summary.steps, 0);
+    assert_eq!(sim.current_step(), 0);
+    assert_eq!(sim.system().positions, before);
+    assert_eq!(sim.run().unwrap().steps, 2);
+}
+
+#[test]
 fn legacy_real_fixed_cell_signature_migrates_only_exact_old_pressure_factor() {
     use modena_core::{io::restart, InputConfig, Simulation};
     for integrator in [
@@ -758,6 +820,72 @@ fn legacy_real_fixed_cell_signature_migrates_only_exact_old_pressure_factor() {
     assert!(Simulation::from_config_without_outputs(&config, dir.path()).is_ok());
 }
 
+fn synchronized_fixture() -> (tempfile::TempDir, String) {
+    let (dir, python) = fixture(RUNNER_VALID);
+    let script = std::fs::read_to_string(&python).unwrap().replace("request=json.load(sys.stdin)", r#"request=json.load(sys.stdin)
+from pathlib import Path
+root=Path(__file__).parent
+action=request['action']
+with (root/'invocations').open('a') as f: f.write(action+'\n')
+while (root/('block-'+action)).exists() and not (root/('release-'+action)).exists(): time.sleep(0.005)
+"#);
+    std::fs::write(&python, script).unwrap();
+    (dir, python)
+}
+fn wait_for_actions(dir: &std::path::Path, count: usize) {
+    let start = std::time::Instant::now();
+    while std::fs::read_to_string(dir.join("invocations"))
+        .unwrap_or_default()
+        .lines()
+        .count()
+        < count
+    {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "fixture failed to reach synchronized call"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn cancelled_setup_launches_no_provider_and_latches_discovery_and_initial_evaluation() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for action in ["pre", "info", "evaluate"] {
+        let (dir, python) = synchronized_fixture();
+        let config =
+            modena_core::InputConfig::from_str(&runner_toml(&python, &"a".repeat(64), "3.29.0"))
+                .unwrap();
+        let stop = AtomicBool::new(action == "pre");
+        if action != "pre" {
+            std::fs::write(dir.path().join(format!("block-{action}")), "").unwrap();
+        }
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(|| {
+                modena_core::Simulation::from_config_with_stop(&config, dir.path(), &stop)
+            });
+            if action != "pre" {
+                wait_for_actions(dir.path(), if action == "info" { 1 } else { 2 });
+                stop.store(true, Ordering::Release);
+                std::fs::write(dir.path().join(format!("release-{action}")), "").unwrap();
+            }
+            assert!(matches!(
+                handle.join().unwrap(),
+                Err(modena_core::ModenaError::Cancelled)
+            ));
+        });
+        let calls = std::fs::read_to_string(dir.path().join("invocations")).unwrap_or_default();
+        assert_eq!(
+            calls,
+            match action {
+                "pre" => "",
+                "info" => "info\n",
+                _ => "info\nevaluate\n",
+            }
+        );
+    }
+}
+
 #[test]
 fn real_pressure_targets_and_inverse_pressure_compressibility_use_standard_atmospheres() {
     use modena_core::io::input::BarostatSpec;
@@ -787,4 +915,14 @@ fn real_pressure_targets_and_inverse_pressure_compressibility_use_standard_atmos
     };
     assert!((target_pressure - 1.0).abs() < 1e-14);
     assert!((compressibility - 1.0).abs() < 1e-12, "{compressibility}");
+}
+
+#[test]
+fn relative_interpreter_is_resolved_against_config_base_without_changing_identity() {
+    let (dir, python) = fixture(RUNNER_VALID);
+    let relative = runner_toml("./python", &"a".repeat(64), "3.29.0");
+    let relative = build_runner(&relative, dir.path());
+    let absolute = build_runner(&runner_toml(&python, &"a".repeat(64), "3.29.0"), dir.path());
+    assert_eq!(relative.metadata().provider, absolute.metadata().provider);
+    assert_eq!(relative.system().forces, absolute.system().forces);
 }

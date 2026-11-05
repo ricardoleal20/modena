@@ -71,12 +71,13 @@ retained for compatibility, without selecting the runner's verdict.
 
 ## Units and restart compatibility
 
-The current real-pressure display factor has a known open gap: the constant
-69477.8 labeled atm per kcal/(mol Å³) is about 1.32623% above the SI-derived
-68568.42296625092. This affects native and external pressure output. See the
-[B01 verification concern](B01_VERIFICATION.md#open-pressure-unit-concern);
-passing tests do not validate the displayed atm scale. Energy, force and
-stress-derived virial reference checks remain separate.
+Real pressure now uses the exact-SI standard-atmosphere scale
+68568.42296625092 per kcal/(mol Å³). Independent cold-Cu/direct ASE and native
+pressure-target/compressibility checks cover the correction. Fixed-cell real
+checkpoint migration accepts only the exact old pressure-factor difference;
+old real pressure-coupled runs require an explicit new protocol. Reduced
+configurations and fixed-cell integration mechanics are unchanged. See the
+[B01 final-fix evidence](B01_VERIFICATION.md#corrected-pressure-units-and-final-fix-evidence).
 
 Real inputs use Å, ps, kcal/mol, amu, K, elementary charge, and atm. Thermodynamic
 output uses the selected units; checkpoint mechanics and conservation energies

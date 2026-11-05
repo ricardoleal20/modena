@@ -100,3 +100,116 @@ log_every=100
         .any(|line| line.trim().starts_with("energy diagnostics = ")));
     std::fs::remove_dir_all(d).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn cold_copper_cli_pressure_matches_direct_si_ase_from_other_cwd_with_venv_symlink() {
+    let Ok(python) = std::env::var("MODENA_ASE_PYTHON") else {
+        eprintln!("SKIP actual cold Cu SI pressure/relative CLI: set MODENA_ASE_PYTHON");
+        return;
+    };
+    let info = Command::new(env!("CARGO_BIN_EXE_modena"))
+        .args(["provider-info", "--python", &python])
+        .output()
+        .unwrap();
+    assert!(info.status.success());
+    let identity: serde_json::Value = serde_json::from_slice(&info.stdout).unwrap();
+    let root =
+        std::env::temp_dir().join(format!("modena_pressure_relative_{}", std::process::id()));
+    let config_dir = root.join("config");
+    let other = root.join("other");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let link = config_dir.join("venv");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(
+        std::path::Path::new(&python)
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap(),
+        &link,
+    )
+    .unwrap();
+    let config = format!(
+        r#"units="real"
+[structure]
+type="fcc"
+lattice_constant=3.6
+replicas=[1,1,1]
+mass=63.546
+[model]
+type="ase_emt"
+python="./venv/bin/python"
+ase_version={version}
+model_sha256={hash}
+atomic_numbers=[29,29,29,29]
+composition="total"
+[integrator]
+type="velocity_verlet"
+dt=0.0001
+[run]
+steps=0
+initial_temperature=0.0
+log_file="pressure.csv"
+"#,
+        version = identity["ase_version"],
+        hash = identity["model_sha256"]
+    );
+    std::fs::write(config_dir.join("in.toml"), config).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_modena"))
+        .current_dir(&other)
+        .args(["run", "--diagnostics-json", "-i"])
+        .arg(config_dir.join("in.toml"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let csv = std::fs::read_to_string(config_dir.join("pressure.csv")).unwrap();
+    let mut rows = csv.lines();
+    let header = rows.next().unwrap();
+    let index = header
+        .split(',')
+        .position(|name| name == "pressure")
+        .unwrap();
+    let pressure: f64 = rows
+        .next()
+        .unwrap()
+        .split(',')
+        .nth(index)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let direct=Command::new(&python).args(["-c",r#"from ase import Atoms
+from ase.calculators.emt import EMT
+a=Atoms(numbers=[29]*4,positions=[[0,0,0],[0,1.8,1.8],[1.8,0,1.8],[1.8,1.8,0]],cell=[3.6]*3,pbc=True)
+a.calc=EMT(asap_cutoff=False)
+print(-sum(a.get_stress()[:3])/3 * 1.602176634e-19 / 1e-30 / 101325)
+"#]).output().unwrap();
+    assert!(
+        direct.status.success(),
+        "{}",
+        String::from_utf8_lossy(&direct.stderr)
+    );
+    let expected: f64 = String::from_utf8(direct.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(
+        (pressure - expected).abs() < 1e-7,
+        "CLI {pressure} atm vs independent SI/ASE {expected} atm"
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let metadata = stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("run metadata = "))
+        .unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(metadata).unwrap();
+    assert_eq!(metadata["provider"], identity);
+    eprintln!("EXECUTED cold Cu CLI/SI pressure: actual={pressure:.12} expected={expected:.12} atm; relative venv symlink preserved");
+    std::fs::remove_dir_all(root).unwrap();
+}

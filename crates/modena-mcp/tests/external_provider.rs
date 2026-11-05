@@ -169,3 +169,71 @@ fn actual_ase_tool_json_probe_and_async_status_preserve_discovered_identity() {
         serde_json::to_value(identity).unwrap()
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn work_dir_relative_interpreter_and_synchronized_setup_cancellation() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::temp_dir().join(format!("modena_mcp_latch_{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let script = root.join("provider");
+    std::fs::write(&script,format!(r#"#!/usr/bin/env python3
+import sys,json,time
+from pathlib import Path
+root=Path(__file__).parent
+r=json.load(sys.stdin)
+action=r['action']
+with (root/'invocations').open('a') as f:f.write(action+'\n')
+while (root/('block-'+action)).exists() and not (root/('release-'+action)).exists():time.sleep(0.005)
+id={{"protocol":"modena-ase-emt-v1","provider":"ase_emt","model":"EMT","task":"energy_forces_stress","composition":"total","units":{{"positions":"angstrom","energy":"eV","forces":"eV/angstrom","stress":"eV/angstrom^3"}},"capabilities":["energy","forces","stress","full_pbc","provider_neighbors","conservative","total_momentum"],"ase_version":"3.29.0","numpy_version":"2.5.4","model_sha256":"{}","asap_cutoff":False}}
+out={{'protocol':'modena-ase-emt-v1','action':action,'identity':id}}
+if action=='evaluate':out['evaluation']={{'energy_ev':0.0,'forces_ev_per_angstrom':[[0.0]*3]*4,'stress_ev_per_angstrom3':[[0.0]*3]*3}}
+print(json.dumps(out))
+"#,"a".repeat(64))).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let link = root.join("venv-python");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&script, &link).unwrap();
+    let mgr = RunManager::new(1, root.clone());
+    let cfg = config("./venv-python", "3.29.0", &"a".repeat(64));
+    let probe = call_tool("run_probe", &json!({"config":cfg,"max_steps":1}), &mgr).unwrap();
+    assert_eq!(
+        probe["metadata"]["provider"]["model_sha256"],
+        "a".repeat(64)
+    );
+    for action in ["info", "evaluate"] {
+        std::fs::write(root.join("invocations"), "").unwrap();
+        std::fs::write(root.join(format!("block-{action}")), "").unwrap();
+        let run = call_tool("run_async", &json!({"config":cfg}), &mgr).unwrap();
+        let id = run["run_id"].as_u64().unwrap();
+        let start = std::time::Instant::now();
+        let expected = if action == "info" { 1 } else { 2 };
+        while std::fs::read_to_string(root.join("invocations"))
+            .unwrap()
+            .lines()
+            .count()
+            < expected
+        {
+            assert!(start.elapsed() < std::time::Duration::from_secs(10));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // This must acquire status while setup is blocked in a child.
+        mgr.cancel_run(id).unwrap();
+        std::fs::write(root.join(format!("release-{action}")), "").unwrap();
+        mgr.join_run(id).unwrap();
+        let status = mgr.get_run_status(id).unwrap();
+        assert_eq!(serde_json::to_value(&status).unwrap()["state"], "cancelled");
+        assert_eq!(status.step, 0);
+        assert!(status.error.is_none());
+        assert_eq!(
+            std::fs::read_to_string(root.join("invocations")).unwrap(),
+            if action == "info" {
+                "info\n"
+            } else {
+                "info\nevaluate\n"
+            }
+        );
+        std::fs::remove_file(root.join(format!("block-{action}"))).unwrap();
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}

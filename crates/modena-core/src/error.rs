@@ -4,6 +4,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ModenaError {
+    #[error("simulation setup cancelled")]
+    Cancelled,
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 

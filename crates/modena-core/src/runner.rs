@@ -46,6 +46,7 @@ use crate::units::{UnitFactors, UnitSystem};
 use crate::vec3::Vec3;
 
 pub struct Simulation {
+    failed: bool,
     system: System,
     model: Box<dyn ForceModel>,
     integrator: Box<dyn Integrator>,
@@ -159,15 +160,31 @@ impl Simulation {
     /// Build a `Simulation` from a parsed config. `base_dir` resolves relative
     /// structure-file paths.
     pub fn from_config(config: &InputConfig, base_dir: &Path) -> Result<Self> {
-        Self::build_config(config, base_dir, true)
+        Self::build_config(config, base_dir, true, None)
     }
 
     /// Perform all scientific setup and restart checks without opening outputs.
     pub fn from_config_without_outputs(config: &InputConfig, base_dir: &Path) -> Result<Self> {
-        Self::build_config(config, base_dir, false)
+        Self::build_config(config, base_dir, false, None)
     }
 
-    fn build_config(raw: &InputConfig, base_dir: &Path, outputs: bool) -> Result<Self> {
+    /// Build with cancellation checks between setup operations. A single
+    /// in-flight provider call finishes under its configured deadline.
+    pub fn from_config_with_stop(
+        config: &InputConfig,
+        base_dir: &Path,
+        stop: &AtomicBool,
+    ) -> Result<Self> {
+        Self::build_config(config, base_dir, true, Some(stop))
+    }
+
+    fn build_config(
+        raw: &InputConfig,
+        base_dir: &Path,
+        outputs: bool,
+        stop: Option<&AtomicBool>,
+    ) -> Result<Self> {
+        check_setup_stop(stop)?;
         let normalized = raw.normalized()?;
         let config = &normalized;
         let mut system = build_system(&config.structure, base_dir, config.unit_factors.as_ref())?;
@@ -188,10 +205,21 @@ impl Simulation {
             ));
         }
 
+        check_setup_stop(stop)?;
         let (model, provider, mut neighbors, water_constraints): (Box<dyn ForceModel>, _, _, _) =
             if let ModelSpec::AseEmt(spec) = &config.model {
+                let mut spec = spec.clone();
+                let python = Path::new(&spec.python);
+                if python.is_relative()
+                    && (python.components().count() > 1 || spec.python.starts_with('.'))
+                {
+                    // Lexical absolute paths preserve venv executable symlinks.
+                    spec.python = std::path::absolute(base_dir.join(python))?
+                        .to_string_lossy()
+                        .into_owned();
+                }
                 let model = AseEmtForceModel::new(
-                    spec.clone(),
+                    spec,
                     config.unit_factors.expect("validated real units"),
                 )?;
                 let identity = model.identity().clone();
@@ -329,6 +357,7 @@ impl Simulation {
                 neighbors.validate_pair_scales(system.n())?;
                 (model, None, neighbors, water_constraints)
             };
+        check_setup_stop(stop)?;
         let mut constraints = config.constraints.as_ref().map(build_constraints);
         match (&mut constraints, water_constraints) {
             (Some(c), Some(wc)) => c.waters.extend(wc.waters),
@@ -398,7 +427,9 @@ impl Simulation {
         // Initial force evaluation so F(t) is cached for the first integrator
         // half-kick.
         let mut virial = Virial::default();
+        check_setup_stop(stop)?;
         let mut pe = model.compute(&mut system, &mut virial, &mut neighbors)?;
+        check_setup_stop(stop)?;
         if let Some(cp) = &checkpoint {
             match config.run.restart_mode {
                 RestartMode::Continue => {
@@ -439,7 +470,9 @@ impl Simulation {
                         system.zero_forces();
                         virial = Virial::default();
                         neighbors.force_rebuild(&system);
+                        check_setup_stop(stop)?;
                         pe = model.compute(&mut system, &mut virial, &mut neighbors)?;
+                        check_setup_stop(stop)?;
                     }
                     if com_eligible {
                         // Constraint projection can change the imported
@@ -465,6 +498,7 @@ impl Simulation {
             IntegratorSpec::NoseHooverChain { dt, .. } => *dt,
         };
 
+        check_setup_stop(stop)?;
         let trajectory_writer = if outputs {
             open_trajectory(&config.run, base_dir)?
         } else {
@@ -496,6 +530,7 @@ impl Simulation {
             },
         };
         Ok(Self {
+            failed: false,
             provider,
             ensemble,
             energy_error_thresholds: config.run.energy_error_thresholds,
@@ -557,11 +592,14 @@ impl Simulation {
         self.current_step
     }
 
+    /// Rejects failed instances without opening the destination; a failed step
+    /// may leave partial buffers and requires construction from a good checkpoint.
     /// Atomically write v2 mechanical, identity, DOF, cached force, RNG and
     /// extended state (reduced units) to `path`. Called by the run
     /// loop every `restart_every` steps and at run end; public for tests and
     /// callers that drive stepping manually.
     pub fn write_checkpoint(&self, path: &Path) -> Result<()> {
+        self.ensure_usable()?;
         crate::io::restart::save(
             path,
             &crate::io::restart::Checkpoint {
@@ -594,6 +632,8 @@ impl Simulation {
     /// Run to completion, discarding streamed events. Equivalent to
     /// [`run_streaming`](Self::run_streaming) with no stop flag and a no-op
     /// sink. Kept as the simple blocking entry point for the CLI and tests.
+    /// Any returned run error makes this instance terminal; construct a new
+    /// simulation from a good checkpoint. Clean cancellation remains usable.
     pub fn run(&mut self) -> Result<RunSummary> {
         self.run_streaming(None, |_| {})
     }
@@ -610,6 +650,27 @@ impl Simulation {
         &mut self,
         stop: Option<&AtomicBool>,
         mut on_event: impl FnMut(&RunEvent),
+    ) -> Result<RunSummary> {
+        self.ensure_usable()?;
+        let result = self.run_streaming_inner(stop, &mut on_event);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    fn ensure_usable(&self) -> Result<()> {
+        if self.failed {
+            Err(ModenaError::Physics("simulation is unusable after a failed run; construct a new simulation from a good checkpoint".into()))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn run_streaming_inner(
+        &mut self,
+        stop: Option<&AtomicBool>,
+        on_event: &mut impl FnMut(&RunEvent),
     ) -> Result<RunSummary> {
         let dt = self.dt;
         let mut e = Energies::from(&self.system, self.current_pe, &self.current_virial);
@@ -650,9 +711,11 @@ impl Simulation {
 
         let mut executed = 0usize;
         for i in 1..=self.steps {
+            if stop.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+                break;
+            }
             // Global step label: a resumed run continues from the checkpoint.
             let step = start_step + i;
-            self.current_step = step;
             e = match self
                 .integrator
                 .step(&mut self.system, &*self.model, &mut self.neighbors, dt)
@@ -676,14 +739,20 @@ impl Simulation {
             // Pressure coupling: scales the box + positions. Only `NoneBarostat`
             // is a true no-op; any real barostat changes V (and thus the
             // pressure/KE observables), so recompute the thermo snapshot.
-            self.barostat.apply_with_model(
+            if let Err(error) = self.barostat.apply_with_model(
                 &mut self.system,
                 &*self.model,
                 &mut self.neighbors,
                 &mut self.current_pe,
                 &mut self.current_virial,
                 dt,
-            )?;
+            ) {
+                on_event(&RunEvent::Failed {
+                    step,
+                    error: error.to_string(),
+                });
+                return Err(error);
+            }
             e = Energies::from(&self.system, self.current_pe, &self.current_virial);
             if let Err(error) = monitor.observe(i as f64 * dt, e.total) {
                 on_event(&RunEvent::Failed {
@@ -693,6 +762,7 @@ impl Simulation {
                 return Err(error);
             }
 
+            self.current_step = step;
             let time_reduced = step as f64 * dt;
             let time = self.display_time(time_reduced);
             if step.is_multiple_of(self.log_every) {
@@ -1519,6 +1589,14 @@ pub fn run_from_file<P: AsRef<Path>>(path: P) -> Result<RunSummary> {
         .ok_or_else(|| ModenaError::Input("input file has no parent dir".into()))?;
     let mut sim = Simulation::from_config(&config, base_dir)?;
     sim.run()
+}
+
+fn check_setup_stop(stop: Option<&AtomicBool>) -> Result<()> {
+    if stop.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        Err(ModenaError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 /// Only the historical display-factor error may migrate, and only for real

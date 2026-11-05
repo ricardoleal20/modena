@@ -70,7 +70,8 @@ pub enum RunState {
     Running,
     /// Reached its step count cleanly.
     Completed,
-    /// Cancelled via [`RunManager::cancel_run`] (stopped within one step).
+    /// Cancelled at a safe setup or step boundary. An in-flight provider call
+    /// finishes under its configured timeout plus ordinary bookkeeping.
     Cancelled,
     /// Aborted — the error is in [`RunStatus::error`].
     Failed,
@@ -616,12 +617,13 @@ impl RunManager {
             .collect())
     }
 
-    /// `cancel_run`: request a clean stop. The run transitions to `Cancelled`
-    /// within one integration step.
+    /// `cancel_run`: request a clean stop at the next setup or step boundary.
+    /// One in-flight provider call may finish under its configured timeout;
+    /// this is not a hard global wall-time or OS-sandbox guarantee.
     pub fn cancel_run(&self, run_id: RunId) -> Result<RunStatus, McpError> {
         let runs = self.runs.lock().unwrap();
         let entry = runs.get(&run_id).ok_or(McpError::RunNotFound(run_id))?;
-        entry.stop.store(true, Ordering::Relaxed);
+        entry.stop.store(true, Ordering::Release);
         let st = entry.status.lock().unwrap();
         Ok(st.snapshot(run_id))
     }
@@ -790,12 +792,16 @@ fn run_loop(
     stop: Arc<AtomicBool>,
     status: Arc<Mutex<RunStatusInner>>,
 ) {
-    let mut sim = match Simulation::from_config(&config, &work_dir) {
+    let mut sim = match Simulation::from_config_with_stop(&config, &work_dir, &stop) {
         Ok(s) => s,
         Err(e) => {
             let mut st = status.lock().unwrap();
-            st.state = RunState::Failed;
-            st.error = Some(e.to_string());
+            if matches!(e, modena_core::ModenaError::Cancelled) {
+                st.state = RunState::Cancelled;
+            } else {
+                st.state = RunState::Failed;
+                st.error = Some(e.to_string());
+            }
             return;
         }
     };
@@ -1240,7 +1246,7 @@ pub fn capabilities() -> serde_json::Value {
             "runtime":"local Python with ASE>=3.26,<4; exact installed ASE version and EMT source SHA-256 pins required",
             "scope":"real units; fixed cell; fully periodic; unconstrained NVE/NVT; total energy, forces and configurational stress; explicit per-atom standard-metal Z and mechanical masses",
             "neighbors":"provider_managed", "transport":"one-shot Python process for every snapshot; startup latency per evaluation; no throughput claim",
-            "cancellation":"bounded by configured evaluation timeout plus normal step completion",
+            "cancellation":"safe setup/step boundaries; one in-flight provider call under its configured timeout plus ordinary bookkeeping; no hard global wall-time or OS sandbox guarantee",
             "cost_estimate":"unsupported", "material_validation":false,
             "identity":"core RunMetadata.provider in run_probe and live/final get_run_status; CLI provider-info discovers installed pins"
         }],
@@ -1281,6 +1287,22 @@ seed = 42
 "#
         );
         toml::from_str(&toml).expect("valid config")
+    }
+
+    #[test]
+    fn pre_cancelled_queued_run_is_cancelled_without_setup_failure() {
+        let stop = Arc::new(AtomicBool::new(true));
+        let status = Arc::new(Mutex::new(RunStatusInner::new(100, true)));
+        run_loop(
+            sample_config(100),
+            PathBuf::from("."),
+            stop,
+            Arc::clone(&status),
+        );
+        let status = status.lock().unwrap();
+        assert_eq!(status.state, RunState::Cancelled);
+        assert_eq!(status.step, 0);
+        assert!(status.error.is_none());
     }
 
     #[test]

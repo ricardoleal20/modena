@@ -5,9 +5,9 @@ Executed on 2026-11-05 from `/private/tmp/modena-b01`, branch
 `4214832a010281c551a31b888012a04dd0191111`. The worktree additionally contained
 the documentation/plan changes and a comment-only MCP test clarification in
 this documentation commit; production source was unchanged. Local checks below
-passed. Status: **done with concerns**. An independently identified preexisting
-pressure-unit conversion gap remains open; see below. Independent whole-branch
-review remains pending.
+passed. The four findings from subsequent whole-branch review are addressed in
+one final fix wave, including independent SI pressure evidence below. Scoped
+rereview of the combined corrections remains pending.
 
 B06 remains open as PR #53: GitHub Actions cannot start because of the account
 billing lock, and the required administrator-exception answer is pending. These
@@ -118,8 +118,8 @@ both orthorhombic and skew. Cell vectors are rows. Fixed absolute bounds:
 Actual runner tests also cover selected Z mutation, split continuation versus
 uninterrupted mechanics, changed pins/runtime identity, native signature
 compatibility, known stress-derived virial/pressure plumbing using the current
-unit factor, and failed-step events. That pressure test does not independently
-validate the physical atm conversion.
+unit factor, and failed-step events. The final-fix independent SI/ASE pressure
+regression below additionally validates the physical atm conversion.
 Subprocess fixtures exercise malformed/missing/nonfinite properties, conversion
 overflow, timeout, bounded diagnostics and accumulator atomicity without ASE.
 This is direct-model parity and bounded integration evidence; it is not
@@ -184,34 +184,67 @@ exercise NVT.
 | NVT `cu.checkpoint` | `189ee1631acee2f215ac2446e04c18fa62de1b1c75c1b711877a66c3509edb74` |
 | NVT `metadata.json` | `53f8e0e6aaace4246f1c379cb596cf6b3f7689cced35f4afe635d40abb2c15eb` |
 
-## Open pressure-unit concern
+## Corrected pressure units and final-fix evidence
 
-The controller independently identified an existing real-pressure scale error
-in `crates/modena-core/src/units.rs:61`: `KCAL_PER_A3_TO_ATM=69477.8`. From
-the thermochemical calorie (4.184 J), Å (1e-10 m), standard atmosphere
-(101325 Pa) and exact Avogadro constant, the derived factor is
-`4184 / (6.02214076e23 * 1e-30 * 101325) = 68568.42296625092` atm per
-kcal/(mol Å³). The present display factor is about **1.32623% high**. Definitions:
-[NIST SP811 Appendix B.8](https://www.nist.gov/pml/special-publication-811/nist-guide-si-appendix-b-conversion-factors/nist-guide-si-appendix-b8),
-[BIPM mole](https://www.bipm.org/en/si-base-units/mole), checked 2026-11-05.
-This calculation is an inference from those definitions and the current source.
+The final fix corrects the former 69477.8 scale once in shared units. From
+thermochemical kcal (4184 J), Angstrom, exact Avogadro constant and standard
+atmosphere (101325 Pa), the derived factor is
+`4184/(6.02214076e23*1e-30*101325) = 68568.42296625092` atm per kcal/(mol Å³).
+Definitions: [NIST SP811 Appendix B.8](https://www.nist.gov/pml/special-publication-811/nist-guide-si-appendix-b-conversion-factors/nist-guide-si-appendix-b8)
+and [BIPM mole](https://www.bipm.org/en/si-base-units/mole), checked 2026-11-05.
+This factor is calculated from those definitions; it changes real output,
+pressure-target normalization and inverse-pressure compressibility. Reduced
+configurations and real fixed-cell mechanics remain unchanged.
 
-This affects real pressure rendering, including B01; the displayed atm scale
-is not validated. It does not invalidate the provider's checked energy, force
-or stress-derived virial conversion. No production correction was made in
-Task 4. Final review must verify the gap and address unit compatibility and
-evidence together. Local `b01-evidence/pressure-unit-concern.json` retains the
-calculation. Passing regression tests and smoke do not close this concern.
+The immutable pre-fix cold-Cu evidence stays at
+`b01-evidence/controller-pressure-probe/`: old CLI -11215.5992549632 atm versus
+direct ASE/SI -11068.801164315795 atm. Corrected CLI regression gives
+-11068.8011643184 atm (CSV rounding), within 1e-7 atm of the independent
+reference, including an interpreter relative to the input directory and a
+preserved venv symlink. Unit/non-unit conversion tests use independent literal
+SI factors in both directions; MC/Berendsen target and compressibility tests do
+not reuse the production conversion helper for expected values.
 
-The controller additionally reproduced it against direct ASE on cold four-Cu
-FCC (3.6 Å, temperature 0, zero integration steps): CLI pressure labeled atm
-was `-11215.5992549632`, versus independent SI conversion
-`-11068.801164315795` atm, relative mismatch `0.0132623297201`.
-Immutable inputs/CSV/stdout/comparison are retained in local
-`b01-evidence/controller-pressure-probe/`. A correction needs an independent
-SI pressure regression and review of real-pressure/NPT normalization and
-checkpoint identity compatibility. Native reduced energy/forces/trajectories
-are separate from this pressure-unit defect.
+Fresh final-fix logs, command records, provenance, corrected cold-Cu files and
+hashes live separately under `b01-evidence/final-fix/`. New scientific smoke
+artifacts live under `b01-scientific-smoke-final-fix/`. Earlier Task 4 logs,
+manifests and binary hashes above describe their historical source epoch and
+are preserved; rebuilding does not relabel those old artifacts.
+
+Regression coverage additionally checks exact fixed-cell pressure-only v2
+migration, stochastic/extended-state continuation, unrelated-factor/provider/Z
+rejections, old pressure-coupled rejection with explicit state-only acceptance,
+terminal failed instances that preserve good checkpoints, synchronized
+setup/first-step cancellation and CLI/MCP relative interpreter handling.
+The [guide](B01_EXTERNAL_PROVIDER.md#checkpoints-and-public-api-migration)
+documents the narrow compatibility exception and public Cancelled/constructor
+API. A failed instance does not promise buffer rollback. Cancellation uses safe
+boundaries and one in-flight provider deadline plus bookkeeping, without a hard
+global wall-time guarantee. Known ASE/NumPy warnings remain visible.
+
+Final scoped rereview and B06 merge remain controller-owned and pending.
+
+Final fix checks executed from base `81414606560881ae978738e330a3ba1ee4114e4b`
+plus the recorded working patch (commit range is recorded in the local fix report):
+
+| Fresh final check | Result |
+| --- | --- |
+| Native workspace | 330 passed, 0 failed, 1 existing ignored doc example; 6 explicit optional ASE skips |
+| Actual ASE provider | 24 passed, no optional skips |
+| Actual CLI/MCP interfaces | 53 passed, no optional skips |
+| Python wrapper | 25 actual-ASE tests passed; native-only run has 24 executed + 1 explicit skip |
+| Python worker | 3 passed; known ASE/NumPy deprecation warning visible |
+| Benchmark tooling | 22 passed against rebuilt release CLI, authorized macOS timer access |
+| Scientific smoke | 67/67 observations, schema 2; no tolerances relaxed |
+| Format, default/GPU all-target clippy, Rust 1.90 default/GPU checks | All passed |
+
+Rebuilt release CLI SHA-256:
+`f1e374f87c8e6f264ad6525d9344612ddf7660d055f41c904b159d4ee1a6dea1`.
+Rebuilt scientific executable SHA-256:
+`26879a5e33913f20b88ce3a06608b33988b2d118d0b2a876e546193cfb2dbca5`.
+The retained corrected cold-Cu comparison has absolute error
+`2.6047928258776665e-9 atm`. Full logs and per-artifact hashes are under the
+separate final-fix evidence directory; earlier manifests above are unchanged.
 
 ## Local evidence locations
 

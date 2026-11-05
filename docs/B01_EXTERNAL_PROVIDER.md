@@ -99,9 +99,10 @@ rtk proxy target/release/modena run --diagnostics-json \
 
 Outputs resolve relative to `cu.toml`. `dt` is ps, initial temperature K,
 length Å, energy kcal/mol, force kcal/(mol Å), and rendered pressure atm.
-The current pressure output is labeled atm but uses a preexisting conversion
-factor about 1.32623% high; the physical atm scale remains an open
-[verification concern](B01_VERIFICATION.md#open-pressure-unit-concern).
+Pressure uses standard atmospheres with the exact-SI conversion
+`4184/(6.02214076e23*1e-30*101325) = 68568.42296625092` atm per
+kcal/(mol Å³). The earlier 69477.8 display scale is corrected; see the
+[independent pressure evidence](B01_VERIFICATION.md#corrected-pressure-units-and-final-fix-evidence).
 Checkpoint mechanics and energy diagnostics remain reduced. This two-step
 workflow exercises the interface; it is not an ensemble or stability study.
 
@@ -130,8 +131,8 @@ and energy 1 kcal/mol; the library also supports explicit `UnitFactors`.
 The exact conversion is `eV_to_kcal_mol = 1.602176634e-19 * 6.02214076e23 / 4184`.
 Scalar configurational virial is `W = -V trace(stress)`; pressure metadata is
 `unconstrained_provider_stress`, with the existing kinetic contribution.
-Virial parity is checked independently; pressure metadata does not certify the
-current real-pressure display factor.
+Cold-Cu CLI pressure is independently checked against direct official ASE stress
+using exact eV, Angstrom and standard-atmosphere SI definitions.
 
 The provider manages its own periodic neighbors. MODENA does not construct a
 classical graph or invent an external cutoff. Identity, property presence,
@@ -146,8 +147,10 @@ diagnostics at 4096 UTF-8 bytes plus short error prefixes. The child is killed
 and reaped on timeout or transport failure. Bounds are polled, so transient
 overshoot is possible; this is not an operating-system sandbox. Defaults are
 `python="python3"` and `timeout_ms=30000`. There is no retry, stale result cache
-or fallback. MCP cancellation waits for at most the evaluation timeout plus
-normal step completion. One-shot startup latency is expected; persistent
+or fallback. MCP cancellation is observed before setup, between provider calls,
+and before each integration step. One in-flight call may finish under its
+configured deadline plus ordinary bookkeeping; this is not a hard global
+wall-time guarantee or an OS sandbox. One-shot startup latency is expected; persistent
 workers/general calculator selection belong to B09. No throughput claim follows.
 
 ## Checkpoints and public API migration
@@ -161,15 +164,36 @@ before accepting cached mechanics. External signatures include runtime
 identity, PBC, task, composition and cutoff convention. Changed Z, version,
 hash, NumPy identity or convention is rejected. Interpreter location and
 timeout are transport settings and do not change physical identity. Native
-`modena-physical-v2` signatures are preserved. `restart_mode="state_only"`
-starts a new physical protocol and still validates the selected provider.
+`modena-physical-v2` identity is preserved except for the corrected real-pressure
+factor. A fixed-cell real checkpoint may migrate only when its entire signature
+matches after replacing precisely the old pressure factor at index 5 of the
+seven-entry `output_unit_factors` array. The old value must exactly equal
+`epsilon/(sigma*sigma*sigma)*69477.8`; all other factors, provider identity/Z,
+ensemble and mechanical inputs remain exact. A new checkpoint writes the
+corrected factor. Old real pressure-coupled checkpoints cannot continue:
+`restart_mode="state_only"` explicitly begins a new protocol (including updated
+pressure targets/compressibility) and still validates the selected provider.
+Reduced-unit continuation is unchanged.
 
 Rust consumers must update struct literals for the new System/continuation
 fields and `RunMetadata.provider: Option<ProviderIdentity>`. `RunMetadata` and
 `RunSummary` are `Clone`, no longer `Copy`; clone or borrow when needed.
 Exhaustive matches must handle `ModelSpec::AseEmt` and
 `PressureStatus::UnconstrainedProviderStress`. The existing by-value
-`RunEvent::Finished { summary }` contract is retained.
+`RunEvent::Finished { summary }` contract is retained. Exhaustive error matches
+must also handle `ModenaError::Cancelled`. `Simulation::from_config_with_stop`
+accepts a borrowed `AtomicBool` for cancellable setup; existing constructors
+remain available. Clean cancellation and successful repeat runs remain usable.
+Any run error makes that Simulation terminal: further runs and checkpoint
+writes return an error without touching an existing checkpoint. The buffers may
+be partially advanced; construct a fresh instance from the last good checkpoint.
+`current_step()` records completed steps; Failed events name the attempted step.
+
+Path-like relative `model.python` values (for example `./venv/bin/python`) resolve
+against the input directory or MCP `work_dir` in the shared runner. Absolute
+paths and bare PATH names remain unchanged, and executable/venv symlinks are
+preserved. Standalone `provider-info` has no input directory and uses its process
+working directory.
 
 `modena provider-info [--python EXECUTABLE] [--timeout-ms MILLISECONDS]` emits
 one JSON descriptor on success and no JSON on failure. `run --diagnostics-json`

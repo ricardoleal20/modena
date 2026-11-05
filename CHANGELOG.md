@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Breaking real-pressure correction:** use exact standard atmospheres
+  (68568.42296625092 per kcal/(mol Å³)); update real pressure targets and
+  inverse-pressure compressibility. Reduced inputs and fixed-cell integration
+  mechanics are unchanged. Fixed-cell v2 continuation accepts only the exact
+  sole legacy pressure-factor difference; old real pressure-coupled runs require
+  an explicit new protocol/state_only.
+- Make failed Simulation instances terminal: reject retries and checkpoint
+  writes, preserve the last good file, and count only completed steps.
+- Add cancellable setup via `Simulation::from_config_with_stop` and public
+  `ModenaError::Cancelled`; exhaustive error matches must handle the new variant.
+  MCP honors queued/setup cancellation at safe boundaries. Resolve path-like
+  relative interpreters against config/work_dir while preserving venv symlinks.
+
 - Add B01's optional pinned ASE EMT total provider through the real-unit runner,
   explicit atomic numbers, provider-stress virial, restart identity, CLI
   discovery, Python configuration and MCP transport. Direct snapshot/derivative

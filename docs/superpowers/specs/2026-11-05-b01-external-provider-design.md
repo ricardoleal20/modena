@@ -28,7 +28,7 @@ Wire properties use Angstrom, eV, eV/Angstrom and eV/Angstrom^3. The core remain
 
 The provider manages its own periodic neighbors; do not advertise an invented cutoff or reuse MODENA's classical half-list as an ASE graph. The runner supplies an unused compatibility list only on the explicitly declared provider-managed path. Known EMT translation invariance may opt into momentum conservation; tests must check it. Report pressure metadata as provider-stress-derived, distinct from a pair virial.
 
-Validate response identity, property presence, exact N-by-3 shape, stress shape/symmetry and finite converted values before adding any force or virial contribution. Failures leave prior accumulator contents intact. Use temporary regular files for stdin/stdout/stderr to avoid pipe deadlocks; enforce timeout and an output-size bound, kill and reap failed children, and preserve a bounded diagnostic error. No shell execution, silent retry, missing-property substitution or stale cache fallback is allowed. This transport is not an OS sandbox. Cancellation remains bounded by the configured evaluation timeout plus normal step completion.
+Validate response identity, property presence, exact N-by-3 shape, stress shape/symmetry and finite converted values before adding any force or virial contribution. Failures leave prior accumulator contents intact. Use temporary regular files for stdin/stdout/stderr to avoid pipe deadlocks; enforce timeout and an output-size bound, kill and reap failed children, and preserve a bounded diagnostic error. No shell execution, silent retry, missing-property substitution or stale cache fallback is allowed. This transport is not an OS sandbox. Cancellation is observed before setup, between discovery/evaluation calls and before every integration step. One in-flight provider call may finish under its configured timeout plus ordinary bookkeeping; no hard global wall-time or OS-sandbox guarantee is made.
 
 ## Checkpoints and compatibility
 
@@ -43,3 +43,20 @@ Keep classic pair construction/composition unchanged in its branch. Expose confi
 3. Native configuration/regression tests remain passing. A real-unit external TOML executes a short NVE run with B06 full-rate samples and correct provider metadata. Do not equate this short run with ensemble/material validation.
 4. Changed numbers, version/hash or cutoff convention reject continuation; valid split continuation reproduces uninterrupted mechanics. Missing properties, nonfinite/incorrect shape output, timeout and child failure fail explicitly without partially changing force accumulators.
 5. CLI discovery, Python rendering and MCP config transport expose the same pins and scope. Documentation gives installation, reproducible commands, limitations, executed versions and evidence.
+
+## Accepted preservation exception after whole-branch review
+
+The shared real-pressure conversion is corrected from 69477.8 to the exact-SI
+68568.42296625092 atm per kcal/(mol Angstrom³), derived from
+4184/(6.02214076e23*1e-30*101325). This explicitly supersedes native pressure
+preservation: real pressure output, targets and inverse-pressure compressibility
+change; reduced configurations and real fixed-cell integration mechanics do not.
+Old real fixed-cell v2 signatures may continue only when replacing the exact old
+pressure factor at index5 of seven output factors makes the entire signature
+exactly equal. No other factor/provider/Z/physical identity is relaxed. New
+checkpoints write the corrected factor. Old real pressure-coupled protocols must
+be reinitialized intentionally with state_only. Independent bidirectional SI,
+MC/Berendsen normalization and direct ASE cold-Cu CLI tests gate this exception.
+Failed Simulation instances are terminal and cannot retry or write checkpoints;
+completed progress excludes a failed attempted step. Relative path-like Python
+executables resolve lexically from config base_dir without dereferencing symlinks.

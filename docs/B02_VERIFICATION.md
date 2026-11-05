@@ -126,3 +126,55 @@ Task 2 added no performance samples and did not alter B09 or earlier B02
 evidence. This record describes local verification only. Task/whole-branch
 review and PR/CI state are reported separately by the controller; it makes no
 claim of current CI success or final branch approval.
+
+## Final saved-continuation guard follow-up
+
+The final whole-branch review found that the timing validator checked the
+declared physical signature but omitted actual saved identity, DOF and
+controller state. Fix `940c95b` updates only the benchmark driver and tests;
+it changes no Rust production source or force arithmetic. The earlier broad
+357/35/five-worker/34-tool/67-observation results above remain attached to
+their original `360defb` epoch and were not rerun for this tooling-only fix.
+
+The validator now independently checks N saved masses of 1, integer species
+0, integer atomic numbers 0, charges 0 and element labels `Ar`; zero
+constraints; three conserved COM degrees of freedom; and explicit null saved
+integrator, thermostat and barostat state for the fixed velocity-Verlet NVE
+deck. Native classical atomic numbers are **unspecified zeros**, not 18
+inferred from `Ar` labels. The general Rust v2 reader defaults an older
+missing atomic-number field to an empty buffer; this fixed current benchmark
+instead requires the explicit N-zero buffer written by its pinned binaries.
+The other omitted identity/DOF/control fields are required by the Rust reader.
+
+The success fixture now includes every continuation field and the normalized
+LJ signature. Before the fix, both agreeing child processes with saved mass
+1→2 or a missing `conserved_com_dof` still passed; the new regressions failed
+as expected. Afterward, **eight focused driver tests** passed in 6.861 s and
+the **full 37-test benchmark-tool suite** passed in 15.519 s, without skips.
+This includes missing fields, malformed buffers, boolean/integer confusion,
+wrong native Z, incorrect DOF/control state, and all previous subprocess,
+portability and exact-file gates. Formatting and diff checks passed.
+
+An additional focused probe used the actual immutable Rust CLI `check`
+command: it loaded the complete v2 fixture through normal continuation,
+rejected the conflicting saved mass, and rejected the missing COM-DOF field
+at v2 parsing. The probe integrated no steps and produced no performance
+sample. The fixture is synthetic test data, not a scientific trajectory.
+
+Evidence is retained separately in `target/b02-evidence/final-fix/`, including
+RED/GREEN logs, `rust-reader-proof.json`,
+`retrospective-continuation-audit.json` and `production-source-proof.json`.
+The new validator hash is
+`1f7967cac640b1f6de1b636263964138f5c6dfd51ee353b5f36745c58b86fcfc`.
+It validated all **380** original complete files and all **48** one-thread
+checkpoint/thermo hash pairs; all 1,943 original evidence-file hashes remain
+unchanged. Original loaded-driver hashes/source epochs and every timing row
+remain separate and intact. No incompatibility required weakening a gate.
+
+All 48 core/CLI production source/manifest hashes match the whole-branch
+review base `8d20fed`; this is a comparison to that base, not a new claim that
+the earlier documentation-corrected file matches measured `0cea614` source.
+The preserved and shared release CLI bytes still have SHA-256
+`1b39924b2ab9141748c49a1936df9a57cda8a70d3b879c5008da33996e0113f8`.
+No rebuild, kernel change, timing campaign or broad-validation rerun was
+needed. Final scoped rereview and publication state belong to the controller.

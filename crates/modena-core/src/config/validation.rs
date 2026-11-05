@@ -103,6 +103,9 @@ pub(crate) fn validate(c: &InputConfig) -> Result<()> {
     }
     nonnegative("run.initial_temperature", c.run.initial_temperature)?;
     nonnegative("run.neighbor_skin", c.run.neighbor_skin)?;
+    if let Some(thresholds) = c.run.energy_error_thresholds {
+        thresholds.validate()?;
+    }
     for (name, value) in [
         ("log_every", c.run.log_every),
         ("trajectory_every", c.run.trajectory_every),

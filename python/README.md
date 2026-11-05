@@ -54,14 +54,20 @@ print(check(cfg))
 result = run(cfg)
 print(result.steps_rows[-1])
 print(result.conservation)
+print(result.energy_diagnostics)
 ```
 
 This example uses Lennard-Jones reduced units. `check()` asks the engine to
 validate the rendered configuration; it does not certify the physical model.
 `run()` returns `RunResult` with thermodynamic rows as a list of dictionaries,
-the CLI conservation verdict, an optional timing string, and the rendered TOML.
-The conservation verdict is one numerical diagnostic, not a general accuracy
-or sampling guarantee.
+the scoped conservation verdict, an optional timing string, the rendered TOML
+and `energy_diagnostics` containing full-rate reduced-energy/time statistics.
+NVE is `Uncalibrated` unless `Run(energy_error_thresholds={"warning": ...,
+"drifting": ...})` selects case-specific tolerances. NVT/NPT report
+`NotApplicable`; cold NVE has an unavailable normalization. The verdict does
+not certify accuracy or sampling. Older CLIs remain supported with a legacy
+verdict and `energy_diagnostics=None`. See the repository's
+[B06 diagnostic contract](https://github.com/ricardoleal20/modena/blob/main/docs/B06_ENERGY_DIAGNOSTICS.md).
 
 Input, trajectory, and checkpoint paths resolve relative to the current
 directory, or to `base_dir=` when supplied to `check()` or `run()`. The wrapper

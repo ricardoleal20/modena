@@ -53,12 +53,39 @@ def test_run_nve_and_parse():
     assert all(isinstance(row["total"], float) for row in res.steps_rows)
     assert [row["step"] for row in res.steps_rows] == list(range(0, 101, 10))
     assert all(0.0 <= row["temperature"] < 10.0 for row in res.steps_rows)
-    # Conservation parsed and the trajectory is symplectic-consistent.
-    assert res.conservation in ("Healthy", "Warning", "Drifting", "unknown")
+    # A metric without a case-specific policy must not imply validation.
+    assert res.conservation == "Uncalibrated"
+    assert res.energy_diagnostics["applicability"] == "nve"
+    assert res.energy_diagnostics["diagnostics"]["samples"] == 101
+    assert res.energy_diagnostics["diagnostics"]["normalization"] == "initial_kinetic_energy"
     assert float(res.steps_rows[0]["total"]) != 0.0
 class ParityTests(unittest.TestCase):
     test_render_argon_style = staticmethod(test_render_argon_style)
     test_run_nve_and_parse = staticmethod(test_run_nve_and_parse)
+
+    def test_selected_energy_thresholds_reach_the_runner(self):
+        cfg = Config(
+            Fcc(2.4, [1, 1, 1]), LennardJones(2.5, 1.0, 1.0),
+            VelocityVerlet(0.001), Run(steps=4, energy_error_thresholds={"warning": 0.1, "drifting": 0.2}),
+        )
+        result = run(cfg, BINARY)
+        self.assertEqual(result.conservation, "Healthy")
+        self.assertEqual(result.energy_diagnostics["diagnostics"]["advisory_thresholds"],
+                         {"warning": 0.1, "drifting": 0.2})
+        cfg.run.energy_error_thresholds = {"warning": 0.2, "drifting": 0.1}
+        with self.assertRaises(RuntimeError):
+            check(cfg, BINARY)
+
+    def test_nvt_reports_exchange_instead_of_an_nve_verdict(self):
+        from modena.config import Langevin
+        cfg = Config(
+            Fcc(2.4, [1, 1, 1]), LennardJones(2.5, 1.0, 1.0),
+            Langevin(0.001, 1.0, 1.0), Run(steps=4, log_every=100),
+        )
+        result = run(cfg, BINARY)
+        self.assertEqual(result.conservation, "NotApplicable")
+        self.assertEqual(result.energy_diagnostics["applicability"], "energy_exchange")
+        self.assertEqual(result.energy_diagnostics["diagnostics"]["samples"], 5)
 
     def test_python_transport_matches_a_handwritten_cli_input(self):
         cfg = Config(

@@ -854,6 +854,7 @@ dependencies = [
  "clap",
  "modena-core",
  "serde",
+ "serde_json",
  "toml",
 ]
 

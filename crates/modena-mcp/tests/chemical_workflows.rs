@@ -41,6 +41,15 @@ fn actual_means_counts_and_real_units_are_exposed() {
     );
     assert_eq!(st["thermo_units"], "real");
     assert_eq!(st["metadata"]["output_units"], "real");
+    let diagnostics = &st["conservation"]["diagnostics"];
+    assert_eq!(diagnostics["samples"], 9);
+    assert_eq!(diagnostics["energy_units"], "reduced");
+    assert_eq!(diagnostics["time_units"], "reduced");
+    // The chosen epsilon is 0.5 kcal/mol. The report retains reduced energy
+    // while ordinary samples are converted for display.
+    let reduced_final = st["conservation"]["e_final"].as_f64().unwrap();
+    let displayed_final = st["latest_thermo"]["total"].as_f64().unwrap();
+    assert!((reduced_final * 0.5 - displayed_final).abs() < 1e-12);
     assert_eq!(st["sample_count"], samples.len());
     assert!((st["mean_potential_energy"].as_f64().unwrap() - expected).abs() < 1e-12);
     assert_eq!(st["sample_window"]["includes_initial"], false);
@@ -65,6 +74,7 @@ fn discovery_and_probe_surface_supported_domain() {
         "spme",
         "monte_carlo",
         "restart_mode",
+        "energy_error_thresholds",
         "model.types",
     ] {
         assert!(schema.contains(field), "missing {field}");
@@ -78,6 +88,21 @@ fn discovery_and_probe_surface_supported_domain() {
         "diagnostic_without_constraint_impulse_stress"
     );
     assert_eq!(result["thermo_units"], "reduced");
+}
+
+#[test]
+fn energy_advisory_policy_round_trips_through_the_mcp_request() {
+    let mgr = RunManager::default();
+    let mut c = config();
+    c["run"]["energy_error_thresholds"] = json!({"warning":0.1,"drifting":0.2});
+    let result = call_tool("run_probe", &json!({"config":c.clone()}), &mgr).unwrap();
+    assert_eq!(result["conservation"]["verdict"], "healthy");
+    assert_eq!(
+        result["conservation"]["diagnostics"]["advisory_thresholds"],
+        json!({"warning":0.1,"drifting":0.2})
+    );
+    c["run"]["energy_error_thresholds"] = json!({"warning":0.2,"drifting":0.1});
+    assert!(call_tool("run_probe", &json!({"config":c}), &mgr).is_err());
 }
 
 #[test]

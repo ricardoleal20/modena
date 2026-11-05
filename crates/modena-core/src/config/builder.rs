@@ -43,6 +43,7 @@ impl SimulationBuilder {
                 initial_temperature: 1.0,
                 seed: 42,
                 neighbor_skin: 0.3,
+                energy_error_thresholds: None,
                 trajectory_file: None,
                 trajectory_every: 100,
                 log_file: None,

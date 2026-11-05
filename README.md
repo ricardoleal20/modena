@@ -60,10 +60,12 @@ input file:
 | --- | --- |
 | `examples/argon_nve_traj.xyz` | Particle positions across trajectory frames |
 | `examples/argon_nve_energy.csv` | Thermodynamic values across the run |
-| CLI summary | Final energies, temperature, pressure, and NVE energy drift |
+| CLI summary | Final thermo, ensemble-aware energy errors, fluctuations and slope |
 
-Energy drift is one numerical diagnostic; it does not establish physical
-accuracy or converged sampling.
+Energy error is one numerical diagnostic; it does not establish physical
+accuracy or converged sampling. NVE metrics use initial kinetic energy as the
+reference and remain `Uncalibrated` until tolerances are selected; NVT/NPT have
+no NVE verdict. See [B06 diagnostics and sampling analysis](docs/B06_ENERGY_DIAGNOSTICS.md).
 
 To put the CLI on your Cargo binary path from this checkout:
 

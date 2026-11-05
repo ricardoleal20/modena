@@ -120,3 +120,49 @@ steps=3
     assert!(!text.contains("conservation  drift"), "{text}");
     std::fs::remove_dir_all(d).unwrap();
 }
+
+#[test]
+fn requested_diagnostics_json_is_machine_readable_and_ensemble_aware() {
+    let d = std::env::temp_dir().join(format!("modena_cli_energy_json_{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    let input = r#"
+[structure]
+type="fcc"
+lattice_constant=2.4
+replicas=[1,1,1]
+[model]
+type="lennard_jones"
+sigma=1.0
+epsilon=1.0
+cutoff=2.5
+[integrator]
+type="langevin_baoab"
+dt=0.001
+gamma=1.0
+target_temperature=1.0
+[run]
+steps=3
+log_every=100
+"#;
+    std::fs::write(d.join("in.toml"), input).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_modena"))
+        .args(["run", "--diagnostics-json", "-i"])
+        .arg(d.join("in.toml"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    let payload = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("energy diagnostics = "));
+    assert!(payload.is_some(), "{text}");
+    let report: serde_json::Value = serde_json::from_str(payload.unwrap()).unwrap();
+    assert_eq!(report["verdict"], "not_applicable");
+    assert_eq!(report["diagnostics"]["samples"], 4);
+    assert_eq!(report["diagnostics"]["energy_units"], "reduced");
+    std::fs::remove_dir_all(d).unwrap();
+}

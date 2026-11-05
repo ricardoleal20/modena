@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import json
 import os
 import re
 import subprocess
@@ -42,12 +43,13 @@ def _binary() -> str:
 
 @dataclass
 class RunResult:
-    """Result of `run()` — thermo series + the conservation verdict."""
+    """Thermo in selected units and explicitly scoped reduced-unit energy diagnostics."""
 
     steps_rows: list[dict]  # parsed energy CSV rows
-    conservation: str       # from the CLI's final line (Healthy/Warning/Drifting)
+    conservation: str       # scoped verdict; Uncalibrated until NVE tolerances are selected
     perf: Optional[str]     # e.g. "752.77 µs/step"
     toml: str               # the rendered config (reproducibility)
+    energy_diagnostics: Optional[dict] = None  # full report; energies/time are reduced
 
 
 def _resolve_paths(cfg: Config, base_dir: Optional[Path] = None) -> Config:
@@ -94,15 +96,24 @@ def run(cfg: Config, binary: Optional[str] = None, *, base_dir: Optional[Path] =
         toml_text = cfg_with_log.to_toml()
         path.write_text(toml_text, encoding="utf-8")
         r = subprocess.run(
-            [binary or _binary(), "run", "-i", str(path)],
+            [binary or _binary(), "run", "--diagnostics-json", "-i", str(path)],
             capture_output=True, text=True, timeout=3600,
         )
+        # Older CLIs reject the new flag in argument parsing, before any run or
+        # output side effects. Retry only that precise capability rejection;
+        # never retry a physics error or an already-started simulation.
+        if r.returncode == 2 and "unexpected argument '--diagnostics-json'" in r.stderr:
+            r = subprocess.run(
+                [binary or _binary(), "run", "-i", str(path)],
+                capture_output=True, text=True, timeout=3600,
+            )
         out = r.stdout + r.stderr
         if r.returncode != 0:
             raise RuntimeError(f"modena run failed (rc={r.returncode}):\n{out}")
         rows: list[dict] = []
         conservation = "unknown"
         perf = None
+        energy_diagnostics = None
         if log_path.exists():
             with log_path.open(encoding="utf-8", newline="") as lf:
                 rows = [
@@ -111,9 +122,16 @@ def run(cfg: Config, binary: Optional[str] = None, *, base_dir: Optional[Path] =
                     for row in csv.DictReader(lf)
                 ]
         for line in out.splitlines():
+            if line.strip().startswith("energy diagnostics = "):
+                energy_diagnostics = json.loads(line.strip().split(" = ", 1)[1])
             if "conservation" in line:
                 m = re.search(r"\((Healthy|Warning|Drifting)\)", line)
                 conservation = m.group(1) if m else "unknown"
             if "µs/step" in line or "us/step" in line:
                 perf = line.split("perf")[-1].strip()
-        return RunResult(rows, conservation, perf, toml_text)
+        if energy_diagnostics is not None:
+            verdicts = {"healthy": "Healthy", "warning": "Warning", "drifting": "Drifting",
+                        "not_applicable": "NotApplicable", "unavailable": "Unavailable",
+                        "insufficient_data": "InsufficientData", "uncalibrated": "Uncalibrated"}
+            conservation = verdicts.get(energy_diagnostics["verdict"], "unknown")
+        return RunResult(rows, conservation, perf, toml_text, energy_diagnostics)

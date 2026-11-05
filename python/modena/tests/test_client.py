@@ -56,6 +56,27 @@ class BinaryTests(unittest.TestCase):
 
 
 class TemporaryInputTests(unittest.TestCase):
+    def test_older_cli_that_rejects_diagnostics_flag_still_runs_once(self):
+        with tempfile.TemporaryDirectory() as td:
+            binary = Path(td) / 'old-cli'
+            counter = Path(td) / 'runs'
+            binary.write_text('#!' + sys.executable + '\n' +
+                'import sys, pathlib, tomllib\n' +
+                'if "--diagnostics-json" in sys.argv:\n' +
+                ' print("error: unexpected argument \'--diagnostics-json\' found", file=sys.stderr)\n' +
+                ' sys.exit(2)\n' +
+                f'pathlib.Path({str(counter)!r}).write_text("one simulation")\n' +
+                'cfg=tomllib.loads(pathlib.Path(sys.argv[-1]).read_text())\n' +
+                'pathlib.Path(cfg["run"]["log_file"]).write_text("step,total\\n0,1.0\\n1,1.0\\n")\n' +
+                'print("  conservation drift = 0.0 (Healthy)")\n')
+            binary.chmod(0o755)
+            cfg = Config(Fcc(2.4, [1, 1, 1]), LennardJones(2.5, 1.0, 1.0), VelocityVerlet(0.001))
+            result = run(cfg, binary=str(binary))
+            self.assertEqual(result.conservation, 'Healthy')
+            self.assertIsNone(result.energy_diagnostics)
+            self.assertEqual(counter.read_text(), 'one simulation')
+            self.assertEqual(result.steps_rows[-1]['total'], 1.0)
+
     def test_serialization_failure_leaves_no_temporary_input(self):
         cfg = Config(
             Fcc(2.4, [1, 1, 1]), LennardJones(2.5, 1.0, 1.0),

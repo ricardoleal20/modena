@@ -801,6 +801,16 @@
           "neighbor_skin": {
             "type": "number"
           },
+          "energy_error_thresholds": {
+            "type": "object",
+            "description": "Optional NVE advisory tolerances for max energy excursion / initial kinetic energy. Require 0 < warning < drifting; absent means uncalibrated.",
+            "properties": {
+              "warning": { "type": "number", "exclusiveMinimum": 0 },
+              "drifting": { "type": "number", "exclusiveMinimum": 0 }
+            },
+            "required": ["warning", "drifting"],
+            "additionalProperties": false
+          },
           "trajectory_file": {
             "type": "string"
           },

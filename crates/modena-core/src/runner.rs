@@ -15,7 +15,9 @@ use crate::barostat::{
 use crate::bonded::{Angle, Bond, BondedForceModel, BondedTopology, Dihedral, DihedralTerm};
 use crate::composite::CompositeForceModel;
 use crate::composite::LongRangeForceModel;
-use crate::conservation::ConservationReport;
+use crate::conservation::{
+    ConservationApplicability, ConservationReport, EnergyErrorThresholds, EnergyMonitor,
+};
 use crate::constraints::{Constraint, Constraints, RigidWater};
 use crate::error::{ModenaError, Result};
 use crate::ewald::EwaldForceModel;
@@ -69,6 +71,7 @@ pub struct Simulation {
     unit_factors: Option<UnitFactors>,
     physical_signature: serde_json::Value,
     ensemble: Ensemble,
+    energy_error_thresholds: Option<EnergyErrorThresholds>,
 }
 
 /// Events emitted by [`Simulation::run_streaming`]. One consumer is the MCP
@@ -83,6 +86,8 @@ pub enum RunEvent {
         step: usize,
         time: f64,
         energies: Energies,
+        /// Full-rate statistics in reduced units, independent of log cadence.
+        conservation: ConservationReport,
     },
     /// Trajectory frame at a frame step (`trajectory_every` cadence). Positions
     /// are flattened `x,y,z` per atom as `f32` for cheap cross-boundary
@@ -95,7 +100,7 @@ pub enum RunEvent {
     /// Run reached its step count (or was cancelled) and stopped cleanly.
     Finished { summary: RunSummary },
     /// Run aborted with an error.
-    Failed { error: String },
+    Failed { step: usize, error: String },
 }
 
 /// Thermodynamic interpretation shared by CLI and agent consumers.
@@ -450,6 +455,7 @@ impl Simulation {
         };
         Ok(Self {
             ensemble,
+            energy_error_thresholds: config.run.energy_error_thresholds,
             system,
             model,
             integrator,
@@ -561,7 +567,19 @@ impl Simulation {
         let dt = self.dt;
         let mut e = Energies::from(&self.system, self.current_pe, &self.current_virial);
         let e0 = e.total;
-        let mut conservation = ConservationReport::pending(e0);
+        let mut monitor = EnergyMonitor::new(
+            e0,
+            self.system.n(),
+            e.kinetic,
+            if self.ensemble == Ensemble::Nve {
+                ConservationApplicability::Nve
+            } else {
+                ConservationApplicability::EnergyExchange
+            },
+        )?;
+        if let Some(thresholds) = self.energy_error_thresholds {
+            monitor = monitor.with_thresholds(thresholds)?;
+        }
 
         // Start-of-run sample (file + events), labeled with the global step:
         // step 0 for a fresh run, the restored step for a resume (the seam
@@ -580,6 +598,7 @@ impl Simulation {
             step: start_step,
             time: start_time,
             energies: self.display_energies(&e),
+            conservation: monitor.report(),
         });
 
         let mut executed = 0usize;
@@ -609,7 +628,13 @@ impl Simulation {
                 dt,
             )?;
             e = Energies::from(&self.system, self.current_pe, &self.current_virial);
-            conservation.observe(e.total);
+            if let Err(error) = monitor.observe(i as f64 * dt, e.total) {
+                on_event(&RunEvent::Failed {
+                    step,
+                    error: error.to_string(),
+                });
+                return Err(error);
+            }
 
             let time_reduced = step as f64 * dt;
             let time = self.display_time(time_reduced);
@@ -619,6 +644,7 @@ impl Simulation {
                     step,
                     time,
                     energies: self.display_energies(&e),
+                    conservation: monitor.report(),
                 });
             }
             if step.is_multiple_of(self.trajectory_every) {
@@ -656,7 +682,7 @@ impl Simulation {
         let summary = RunSummary {
             steps: executed,
             final_energies: self.display_energies(&e),
-            conservation,
+            conservation: monitor.report(),
             metadata: self.metadata(),
         };
         on_event(&RunEvent::Finished { summary });

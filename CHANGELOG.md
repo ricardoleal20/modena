@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Implement B06: full-rate, energy-offset-invariant integration diagnostics,
+  ensemble-aware advisories with optional caller-selected tolerances, CLI/Python/
+  MCP reports, failure-step telemetry and observable sampling analysis with
+  burn-in, autocorrelation, effective samples and replica spread.
 - Refresh Cargo dependencies, workflow actions, and the optional MCP SDK;
   adapt benchmark and GPU APIs while retaining the Rust 1.90 compiler floor.
 - Group compatible Dependabot updates and check both Cargo workspaces and the

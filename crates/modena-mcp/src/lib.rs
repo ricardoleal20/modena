@@ -282,7 +282,7 @@ pub struct SweepResult {
 /// A detected anomaly in a run or sweep.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Anomaly {
-    /// `"energy_drift"` | `"divergence"` | `"possible_phase_transition"`.
+    /// `"energy_drift"` | `"divergence"` | `"run_failure"` | `"possible_phase_transition"`.
     #[serde(rename = "type")]
     pub typ: String,
     /// Human-readable location, e.g. `"run 7"` or `"T≈1.08"`.
@@ -791,7 +791,6 @@ fn run_loop(
         }
     };
     let initial_step = sim.current_step();
-    let factors = config.normalized().ok().and_then(|c| c.unit_factors);
     let sim_units = sim.metadata().output_units;
     {
         let mut st = status.lock().unwrap();
@@ -812,16 +811,17 @@ fn run_loop(
                 step,
                 time,
                 energies,
+                conservation,
                 ..
             } => {
                 let step = *step;
                 let time = *time;
                 let energies = *energies;
                 st.step = step;
-                let reduced_total = factors
-                    .map(|f| f.to_reduced_energy(energies.total))
-                    .unwrap_or(energies.total);
-                st.conservation.observe(reduced_total);
+                // The runner samples all steps and owns the initial reference.
+                // Reconstructing from sparse displayed thermo loses excursions
+                // and can mix real energies with a reduced reference.
+                st.conservation = *conservation;
                 st.latest_thermo = Some(energies);
                 if step > initial_step {
                     st.push_sample(ThermoSample {
@@ -844,7 +844,8 @@ fn run_loop(
                     RunState::Completed
                 };
             }
-            RunEvent::Failed { error } => {
+            RunEvent::Failed { step, error } => {
+                st.step = *step;
                 st.state = RunState::Failed;
                 st.error = Some(error.clone());
             }
@@ -1120,10 +1121,17 @@ fn structure_kind(s: &StructureSpec) -> &'static str {
     }
 }
 
-/// Per-run anomaly checks: drift (NVE only) + divergence (NaN/Inf).
+/// Per-run checks: caller-calibrated NVE energy error, divergence and run failure.
 fn check_run_anomalies(run_id: RunId, status: &RunStatus, out: &mut Vec<Anomaly>) {
-    // Energy drift is only a fault under NVE; under NVT the thermostat
-    // deliberately exchanges energy, so E_total drift is expected.
+    if status.state == RunState::Failed {
+        out.push(Anomaly {
+            typ: "run_failure".into(),
+            location: format!("run {run_id}"),
+            evidence: serde_json::json!({ "step": status.step, "error": status.error }),
+        });
+    }
+    // Classify only under NVE with explicit tolerances. The legacy name
+    // 'energy_drift' does not distinguish a bounded excursion from a trend.
     if status.is_nve && status.conservation.verdict == ConservationVerdict::Drifting {
         out.push(Anomaly {
             typ: "energy_drift".into(),
@@ -1131,6 +1139,8 @@ fn check_run_anomalies(run_id: RunId, status: &RunStatus, out: &mut Vec<Anomaly>
             evidence: serde_json::json!({
                 "relative_drift": status.conservation.relative_drift,
                 "verdict": status.conservation.verdict,
+                "metric": "max_abs_deviation / initial_kinetic_energy (advisory; not proof of a secular trend)",
+                "diagnostics": status.conservation.diagnostics,
                 "step": status.step,
                 "ensemble": "nve",
             }),
@@ -1283,8 +1293,9 @@ seed = 42
         let mgr = RunManager::default();
         let res = mgr.run_probe(sample_config(2000), 200).unwrap();
         assert_eq!(res.steps, 200);
-        // Short NVE at dt=0.002 must conserve energy.
-        assert!(res.conservation.verdict != ConservationVerdict::Drifting);
+        assert_eq!(res.conservation.verdict, ConservationVerdict::Uncalibrated);
+        // Preserve the historical endpoint bound separately from a policy label.
+        assert!(res.conservation.relative_drift.abs() < 1e-3);
     }
 
     #[test]
@@ -1303,7 +1314,58 @@ seed = 42
         assert_eq!(status.state, RunState::Completed);
         assert_eq!(status.step, 200);
         assert!(status.latest_thermo.is_some());
-        assert!(status.conservation.verdict != ConservationVerdict::Drifting);
+        assert_eq!(
+            status.conservation.verdict,
+            ConservationVerdict::Uncalibrated
+        );
+        assert!(status.conservation.relative_drift.abs() < 1e-3);
+    }
+
+    #[test]
+    fn nvt_status_has_full_rate_diagnostics_without_a_conservation_verdict() {
+        let mgr = RunManager::default();
+        let mut cfg = sample_config(16);
+        cfg.run.log_every = 100;
+        cfg.integrator = IntegratorSpec::LangevinBaoab {
+            dt: 0.001,
+            gamma: 1.0,
+            target_temperature: 1.0,
+            seed: 42,
+        };
+        let rid = mgr.run_async(cfg).unwrap();
+        mgr.join_run(rid).unwrap();
+        let status = mgr.get_run_status(rid).unwrap();
+        assert!(!status.is_nve);
+        assert_eq!(
+            status.conservation.verdict,
+            ConservationVerdict::NotApplicable
+        );
+        assert_eq!(status.conservation.diagnostics.unwrap().samples, 17);
+        assert!(mgr
+            .detect_anomaly(Some(rid), None)
+            .unwrap()
+            .anomalies
+            .iter()
+            .all(|a| a.typ != "energy_drift"));
+    }
+
+    #[test]
+    fn failed_nonfinite_step_remains_visible_to_anomaly_detection() {
+        let mgr = RunManager::default();
+        let mut cfg = sample_config(1);
+        cfg.run.log_every = 100;
+        cfg.integrator = IntegratorSpec::VelocityVerlet { dt: 1e160 };
+        let rid = mgr.run_async(cfg).unwrap();
+        mgr.join_run(rid).unwrap();
+        let status = mgr.get_run_status(rid).unwrap();
+        assert_eq!(status.state, RunState::Failed);
+        assert_eq!(
+            status.step, 1,
+            "a failed first step must not be reported as step zero"
+        );
+        let anomalies = mgr.detect_anomaly(Some(rid), None).unwrap();
+        assert!(anomalies.anomalies.iter().any(|a| a.typ == "run_failure"));
+        assert!(status.error.unwrap().contains("non-finite energy"));
     }
 
     #[test]
@@ -1417,6 +1479,9 @@ dt = 0.05
 steps = 400
 initial_temperature = 5.0
 seed = 1
+[run.energy_error_thresholds]
+warning = 0.0001
+drifting = 0.001
 "#;
         let cfg: InputConfig = toml::from_str(toml).unwrap();
         let mgr = RunManager::default();

@@ -2,8 +2,8 @@
 mod allocation;
 use allocation::*;
 use modena_core::{
-    CompositeForceModel, ForceModel, LennardJones, NeighborList, PairForceModel, PairPotential,
-    PairScale, System, Virial,
+    Bond, BondedForceModel, BondedTopology, CompositeForceModel, ForceModel, LennardJones,
+    NeighborList, PairForceModel, PairPotential, PairScale, System, Virial,
 };
 use std::sync::atomic::Ordering;
 
@@ -14,7 +14,14 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 fn warm_parallel_pass_reuses_force_buffers() {
     // Keep allocator-sensitive checks in one isolated integration-test process.
     let model = PairForceModel::new(LennardJones::new(1.0, 1.0, 2.5).unwrap());
-    for (threads, atoms) in [(1, 5000), (4, 5000), (8, 10000), (4, 5000), (4, 10000)] {
+    for (threads, atoms) in [
+        (1, 5000),
+        (4, 5000),
+        (8, 10000),
+        (11, 5000),
+        (4, 5000),
+        (4, 10000),
+    ] {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
             .build()
@@ -113,6 +120,8 @@ fn numerical_resize_and_composition() {
         (1, 5000),
         (4, 5000),
         (8, 10000),
+        (3, 5000),
+        (11, 10000),
         (2, 2048),
         (4, 5000),
         (8, 864),
@@ -150,6 +159,31 @@ fn numerical_resize_and_composition() {
     empty.resize(0);
     assert_eq!(evaluate(&composite, &empty, &[]), (0.0, 7.0, vec![]));
     close(&evaluate(&composite, &s, &[]), &expected, false);
+
+    // Actual two-provider composition, including preexisting F/W. Build the
+    // reference by independently summing contributions once each.
+    let topology = BondedTopology {
+        bonds: vec![Bond {
+            i: 0,
+            j: 1,
+            r0: 1.0,
+            k: 3.0,
+        }],
+        ..BondedTopology::default()
+    };
+    let bonded = evaluate(&BondedForceModel::new(topology.clone()), &s, &[]);
+    let sum = (
+        expected.0 + bonded.0,
+        expected.1 + bonded.1 - 7.0,
+        expected
+            .2
+            .iter()
+            .zip(&bonded.2)
+            .map(|(a, b)| a + b - 2.5)
+            .collect(),
+    );
+    let combined = composite.with_bonded(BondedForceModel::new(topology));
+    close(&evaluate(&combined, &s, &[]), &sum, false);
 }
 
 fn concurrent_and_reentrant_calls() {

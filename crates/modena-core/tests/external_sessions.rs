@@ -70,42 +70,68 @@ fn append_after_reply(python: &str, code: &str) {
 
 #[test]
 fn persistent_rejects_unsolicited_future_replies_before_their_request() {
+    assert_rejects_future_replies(0);
+}
+
+#[test]
+fn persistent_future_reply_fixture_is_safe_with_delayed_marker() {
+    // Deliberately widen the reviewed scheduling race. Parent/child ordering
+    // below uses explicit signals; this delay is only an adversarial fixture.
+    assert_rejects_future_replies(200);
+}
+
+fn assert_rejects_future_replies(marker_delay_ms: u64) {
     for after_id in [1, 2] {
         let (dir, python) = fixture("pass");
+        let script = std::fs::read_to_string(&python).unwrap().replace(
+            "from pathlib import Path",
+            &format!(
+                r#"from pathlib import Path
+original_touch=Path.touch
+def delayed_touch(self,*args,**kwargs):
+ if self.name=='forged-ready':time.sleep({marker_delay_ms}/1000)
+ return original_touch(self,*args,**kwargs)
+Path.touch=delayed_touch"#
+            ),
+        );
+        std::fs::write(&python, script).unwrap();
         append_after_reply(
             &python,
             &format!(
                 r#" if frame['request_id']=={after_id}:
+  while not (root/'send-forged').exists():time.sleep(0.005)
   fake={{'session_protocol':'modena-ase-emt-session-v1','request_id':frame['request_id']+1,'response':{{'protocol':'modena-ase-emt-v1','action':'evaluate','identity':identity,'evaluation':{{'energy_ev':-777.0,'forces_ev_per_angstrom':[[0.0]*3],'stress_ev_per_angstrom3':[[0.0]*3]*3}}}}}}
   if 'nonce' in frame:fake['nonce']=frame['nonce']
+  (root/'forged-ready').touch()
   send(fake)
-  (root/'forged-sent').touch()
+  while True:time.sleep(0.005)
 "#
             ),
         );
-        let result = AseEmtForceModel::new(config(&python), UnitFactors::new(1.0, 1.0, 1.0));
-        if let Ok(m) = result {
-            if after_id == 2 && m.evaluate(&system()).is_err() {
-                assert_reaped(dir.path());
-                continue;
-            }
-            let start = Instant::now();
-            while !dir.path().join("forged-sent").exists() {
-                assert!(start.elapsed() < Duration::from_secs(5));
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            let mut s = system();
-            let before = s.forces.clone();
-            let mut w = Virial { w: 7.0 };
-            assert!(
-                m.compute(&mut s, &mut w, &mut NeighborList::new(1.0))
-                    .is_err(),
-                "accepted a reply fabricated before request {}",
-                after_id + 1
-            );
-            assert_eq!(s.forces, before);
-            assert_eq!(w.w, 7.0);
+        let m = model(&python);
+        if after_id == 2 {
+            m.evaluate(&system()).unwrap();
         }
+        // The fixture cannot forge until setup/the valid evaluation returns.
+        // Its ready marker precedes send; after sending it never reads another
+        // request, so a legitimate reply cannot race ahead of the forgery.
+        std::fs::write(dir.path().join("send-forged"), "").unwrap();
+        let start = Instant::now();
+        while !dir.path().join("forged-ready").exists() {
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut s = system();
+        let before = s.forces.clone();
+        let mut w = Virial { w: 7.0 };
+        assert!(
+            m.compute(&mut s, &mut w, &mut NeighborList::new(1.0))
+                .is_err(),
+            "accepted a reply fabricated before request {}",
+            after_id + 1
+        );
+        assert_eq!(s.forces, before);
+        assert_eq!(w.w, 7.0);
         assert_reaped(dir.path());
     }
 }
@@ -121,9 +147,12 @@ fn persistent_reaps_idle_failures_without_another_request_or_drop() {
         let (dir, python) = fixture("pass");
         append_after_reply(
             &python,
-            &format!(" time.sleep(0.1)\n {failure}\n time.sleep(20)\n"),
+            &format!(" while not (root/'fail-idle').exists():time.sleep(0.005)\n {failure}\n while True:time.sleep(0.005)\n"),
         );
         let m = model(&python);
+        // Injection starts only after model() returned with a completed
+        // handshake; scheduler speed cannot move the failure into setup.
+        std::fs::write(dir.path().join("fail-idle"), "").unwrap();
         let pid = std::fs::read_to_string(dir.path().join("starts")).unwrap();
         let start = Instant::now();
         loop {

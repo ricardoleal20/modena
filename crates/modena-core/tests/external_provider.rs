@@ -687,3 +687,104 @@ fn external_runner_checks_z_count_before_process_launch_and_keeps_ff_species_sep
     assert_eq!(sim.system().elements, vec!["Ni"; 4]);
     assert_eq!(sim.system().atomic_numbers, vec![29; 4]);
 }
+
+#[test]
+fn legacy_real_fixed_cell_signature_migrates_only_exact_old_pressure_factor() {
+    use modena_core::{io::restart, InputConfig, Simulation};
+    for integrator in [
+        "type = \"velocity_verlet\"\ndt = 0.0001",
+        "type = \"langevin_baoab\"\ndt = 0.0001\ngamma = 1.0\ntarget_temperature = 10.0",
+        "type = \"nose_hoover_chain\"\ndt = 0.0001\ntarget_temperature = 10.0",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let real = format!("units = \"real\"\n{NATIVE_TOML}")
+            .replace("lattice_constant = 1.6", "lattice_constant = 3.2")
+            .replace("sigma = 1.0", "sigma = 2.0")
+            .replace("epsilon = 1.0", "epsilon = 3.0")
+            .replace("type = \"velocity_verlet\"\ndt = 0.005", integrator);
+        let mut sim = build_runner(&real, dir.path());
+        sim.run().unwrap();
+        let path = dir.path().join("old.chk");
+        sim.write_checkpoint(&path).unwrap();
+        let mut old = restart::load(&path).unwrap();
+        old.continuation.as_mut().unwrap().physical_signature["output_unit_factors"][5] =
+            serde_json::json!(3.0 / (2.0 * 2.0 * 2.0) * 69477.8);
+        restart::save(&path, &old).unwrap();
+        let resume = format!("{real}\nrestore_file = \"old.chk\"");
+        let mut resumed = build_runner(&resume, dir.path());
+        resumed
+            .write_checkpoint(&dir.path().join("new.chk"))
+            .unwrap();
+        let new = restart::load(dir.path().join("new.chk")).unwrap();
+        assert_eq!(
+            new.continuation.as_ref().unwrap().physical_signature["output_unit_factors"][5],
+            serde_json::json!(25713.158612344094)
+        );
+        resumed.run().unwrap();
+        sim.run().unwrap();
+        assert_eq!(resumed.system().positions, sim.system().positions);
+        assert_eq!(resumed.system().velocities, sim.system().velocities);
+        for (index, value) in [(5, 26054.17500000001), (0, 2.01), (4, 500.0)] {
+            let mut bad = old.clone();
+            bad.continuation.as_mut().unwrap().physical_signature["output_unit_factors"][index] =
+                serde_json::json!(value);
+            restart::save(&path, &bad).unwrap();
+            let config = InputConfig::from_str(&resume).unwrap();
+            assert!(Simulation::from_config_without_outputs(&config, dir.path()).is_err());
+        }
+        let mut bad = old.clone();
+        bad.continuation.as_mut().unwrap().physical_signature["initialization_seed"] =
+            serde_json::json!(43);
+        restart::save(&path, &bad).unwrap();
+        assert!(Simulation::from_config_without_outputs(
+            &InputConfig::from_str(&resume).unwrap(),
+            dir.path()
+        )
+        .is_err());
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.chk");
+    let coupled = format!("units = \"real\"\n{NATIVE_TOML}\n[barostat]\ntype = \"monte_carlo\"\ntarget_pressure = 1.0\ntarget_temperature = 10.0").replace("type = \"velocity_verlet\"\ndt = 0.005","type = \"langevin_baoab\"\ndt = 0.0001\ngamma = 1.0\ntarget_temperature = 10.0");
+    let sim = build_runner(&coupled, dir.path());
+    sim.write_checkpoint(&path).unwrap();
+    let mut old = restart::load(&path).unwrap();
+    old.continuation.as_mut().unwrap().physical_signature["output_unit_factors"][5] =
+        serde_json::json!(69477.8);
+    restart::save(&path, &old).unwrap();
+    let mut config = InputConfig::from_str(&coupled).unwrap();
+    config.run.restore_file = Some("old.chk".into());
+    assert!(Simulation::from_config_without_outputs(&config, dir.path()).is_err());
+    config.run.restart_mode = modena_core::io::input::RestartMode::StateOnly;
+    assert!(Simulation::from_config_without_outputs(&config, dir.path()).is_ok());
+}
+
+#[test]
+fn real_pressure_targets_and_inverse_pressure_compressibility_use_standard_atmospheres() {
+    use modena_core::io::input::BarostatSpec;
+    let text = format!("units = \"real\"\n{NATIVE_TOML}")
+        .replace("sigma = 1.0", "sigma = 2.0")
+        .replace("epsilon = 1.0", "epsilon = 3.0")
+        .replace(
+            "type = \"velocity_verlet\"\ndt = 0.005",
+            "type = \"langevin_baoab\"\ndt = 0.0001\ngamma = 1.0\ntarget_temperature = 10.0",
+        );
+    let mc=modena_core::InputConfig::from_str(&format!("{text}\n[barostat]\ntype = \"monte_carlo\"\ntarget_pressure = 25713.158612344094\ntarget_temperature = 10.0")).unwrap();
+    let Some(BarostatSpec::MonteCarlo {
+        target_pressure, ..
+    }) = mc.barostat
+    else {
+        panic!()
+    };
+    assert!((target_pressure - 1.0).abs() < 1e-14);
+    let ber=modena_core::InputConfig::from_str(&format!("{text}\n[barostat]\ntype = \"berendsen\"\ntarget_pressure = 25713.158612344094\ncompressibility = 0.000038890593531357555")).unwrap();
+    let Some(BarostatSpec::Berendsen {
+        target_pressure,
+        compressibility,
+        ..
+    }) = ber.barostat
+    else {
+        panic!()
+    };
+    assert!((target_pressure - 1.0).abs() < 1e-14);
+    assert!((compressibility - 1.0).abs() < 1e-12, "{compressibility}");
+}

@@ -404,8 +404,11 @@ impl Simulation {
                 RestartMode::Continue => {
                     let state=cp.continuation.as_ref().ok_or_else(||ModenaError::Config(
                         "legacy/mechanical checkpoint requires explicit restart_mode = \"state_only\"; full continuation state is absent".into()))?;
-                    if state.physical_signature != physical_signature
-                        || state.masses != system.masses
+                    if !checkpoint_signature_matches(
+                        config,
+                        &state.physical_signature,
+                        &physical_signature,
+                    ) || state.masses != system.masses
                         || state.species != system.species
                         || !(state.atomic_numbers == system.atomic_numbers
                             || (state.atomic_numbers.is_empty()
@@ -1516,4 +1519,40 @@ pub fn run_from_file<P: AsRef<Path>>(path: P) -> Result<RunSummary> {
         .ok_or_else(|| ModenaError::Input("input file has no parent dir".into()))?;
     let mut sim = Simulation::from_config(&config, base_dir)?;
     sim.run()
+}
+
+/// Only the historical display-factor error may migrate, and only for real
+/// fixed-cell protocols. All chemistry/provider/ensemble/RNG identity remains exact.
+fn checkpoint_signature_matches(
+    config: &InputConfig,
+    saved: &serde_json::Value,
+    current: &serde_json::Value,
+) -> bool {
+    if saved == current {
+        return true;
+    }
+    if config.units != UnitSystem::Real || config.barostat.is_some() {
+        return false;
+    }
+    let Some(f) = config.unit_factors else {
+        return false;
+    };
+    let Some(old) = saved.get("output_unit_factors").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    let Some(new) = current
+        .get("output_unit_factors")
+        .and_then(|v| v.as_array())
+    else {
+        return false;
+    };
+    if old.len() != 7
+        || new.len() != 7
+        || old[5].as_f64() != Some(f.epsilon / (f.sigma * f.sigma * f.sigma) * 69477.8)
+    {
+        return false;
+    }
+    let mut migrated = saved.clone();
+    migrated["output_unit_factors"][5] = new[5].clone();
+    migrated == *current
 }

@@ -213,3 +213,103 @@ print(-sum(a.get_stress()[:3])/3 * 1.602176634e-19 / 1e-30 / 101325)
     eprintln!("EXECUTED cold Cu CLI/SI pressure: actual={pressure:.12} expected={expected:.12} atm; relative venv symlink preserved");
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn dotted_bare_interpreter_uses_child_path_and_never_input_directory_decoy() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::temp_dir().join(format!("modena_dotted_path_{}", std::process::id()));
+    let bin = root.join("bin");
+    let input = root.join("input");
+    let cwd = root.join("other-cwd");
+    for dir in [&bin, &input, &cwd] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let marker = root.join("path-provider.calls");
+    let decoy_marker = root.join("decoy.calls");
+    let provider = bin.join(".emt-python");
+    let script = format!(
+        r#"#!/usr/bin/env python3
+import sys,json
+with open({marker:?},'a') as f:f.write('path-provider\n')
+r=json.load(sys.stdin)
+id={{"protocol":"modena-ase-emt-v1","provider":"ase_emt","model":"EMT","task":"energy_forces_stress","composition":"total","units":{{"positions":"angstrom","energy":"eV","forces":"eV/angstrom","stress":"eV/angstrom^3"}},"capabilities":["energy","forces","stress","full_pbc","provider_neighbors","conservative","total_momentum"],"ase_version":"3.29.0","numpy_version":"2.5.4","model_sha256":"{hash}","asap_cutoff":False}}
+out={{'protocol':'modena-ase-emt-v1','action':r['action'],'identity':id}}
+if r['action']=='evaluate':out['evaluation']={{'energy_ev':0.0,'forces_ev_per_angstrom':[[0.0]*3]*4,'stress_ev_per_angstrom3':[[0.0]*3]*3}}
+print(json.dumps(out))
+"#,
+        marker = marker.to_str().unwrap(),
+        hash = "a".repeat(64)
+    );
+    std::fs::write(&provider, script).unwrap();
+    std::fs::set_permissions(&provider, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let decoy = input.join(".emt-python");
+    std::fs::write(&decoy,format!("#!/usr/bin/env python3\nwith open({:?},'a') as f:f.write('wrong executable')\nraise SystemExit(7)\n",decoy_marker.to_str().unwrap())).unwrap();
+    std::fs::set_permissions(decoy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let path = std::env::join_paths(paths).unwrap();
+    let info = Command::new(env!("CARGO_BIN_EXE_modena"))
+        .current_dir(&cwd)
+        .env("PATH", &path)
+        .args(["provider-info", "--python", ".emt-python"])
+        .output()
+        .unwrap();
+    assert!(
+        info.status.success(),
+        "{}",
+        String::from_utf8_lossy(&info.stderr)
+    );
+    let identity: serde_json::Value = serde_json::from_slice(&info.stdout).unwrap();
+    let config = format!(
+        r#"units="real"
+[structure]
+type="fcc"
+lattice_constant=3.6
+replicas=[1,1,1]
+mass=63.546
+[model]
+type="ase_emt"
+python=".emt-python"
+ase_version="3.29.0"
+model_sha256="{}"
+atomic_numbers=[29,29,29,29]
+composition="total"
+[integrator]
+type="velocity_verlet"
+dt=0.0001
+[run]
+steps=0
+initial_temperature=0.0
+"#,
+        "a".repeat(64)
+    );
+    std::fs::write(input.join("in.toml"), config).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_modena"))
+        .current_dir(&cwd)
+        .env("PATH", &path)
+        .args(["run", "--diagnostics-json", "-i"])
+        .arg(input.join("in.toml"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let metadata = stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("run metadata = "))
+        .unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(metadata).unwrap();
+    assert_eq!(metadata["provider"], identity);
+    assert_eq!(std::fs::read_to_string(marker).unwrap().lines().count(), 3);
+    assert!(
+        !decoy_marker.exists(),
+        "selected the same-named config-directory decoy"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

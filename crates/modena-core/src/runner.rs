@@ -209,15 +209,7 @@ impl Simulation {
         let (model, provider, mut neighbors, water_constraints): (Box<dyn ForceModel>, _, _, _) =
             if let ModelSpec::AseEmt(spec) = &config.model {
                 let mut spec = spec.clone();
-                let python = Path::new(&spec.python);
-                if python.is_relative()
-                    && (python.components().count() > 1 || spec.python.starts_with('.'))
-                {
-                    // Lexical absolute paths preserve venv executable symlinks.
-                    spec.python = std::path::absolute(base_dir.join(python))?
-                        .to_string_lossy()
-                        .into_owned();
-                }
+                spec.python = resolve_provider_python(&spec.python, base_dir)?;
                 let model = AseEmtForceModel::new(
                     spec,
                     config.unit_factors.expect("validated real units"),
@@ -1633,4 +1625,59 @@ fn checkpoint_signature_matches(
     let mut migrated = saved.clone();
     migrated["output_unit_factors"][5] = new[5].clone();
     migrated == *current
+}
+
+/// Resolve explicit relative paths without changing PATH basenames or symlinks.
+fn resolve_provider_python(python: &str, base_dir: &Path) -> Result<String> {
+    let path = Path::new(python);
+    if path.is_relative() && python.chars().any(std::path::is_separator) {
+        let resolved = std::path::absolute(base_dir.join(path))?;
+        resolved.into_os_string().into_string().map_err(|_| {
+            ModenaError::Config("resolved model.python path is not valid UTF-8; select a UTF-8 executable path or a bare PATH name".into())
+        })
+    } else {
+        Ok(python.to_owned())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod interpreter_path_tests {
+    use super::resolve_provider_python;
+    use crate::ModenaError;
+    use std::path::Path;
+
+    #[test]
+    fn bare_names_remain_on_path_and_explicit_paths_resolve_lexically() {
+        for name in ["python3", ".emt-python"] {
+            assert_eq!(
+                resolve_provider_python(name, Path::new("/config")).unwrap(),
+                name
+            );
+        }
+        assert_eq!(
+            resolve_provider_python("./venv/bin/python", Path::new("/config")).unwrap(),
+            "/config/venv/bin/python"
+        );
+        assert_eq!(
+            resolve_provider_python("/venv/bin/python", Path::new("/config")).unwrap(),
+            "/venv/bin/python"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_base_is_explicitly_rejected_only_when_a_path_is_resolved() {
+        use std::os::unix::ffi::OsStringExt;
+        let base =
+            std::path::PathBuf::from(std::ffi::OsString::from_vec(b"/tmp/modena-\xff".to_vec()));
+        let error = resolve_provider_python("./venv/bin/python", &base).unwrap_err();
+        assert!(
+            matches!(error,ModenaError::Config(ref message) if message.contains("UTF-8")),
+            "{error}"
+        );
+        assert_eq!(
+            resolve_provider_python(".emt-python", &base).unwrap(),
+            ".emt-python"
+        );
+    }
 }

@@ -222,7 +222,17 @@ API. A failed instance does not promise buffer rollback. Cancellation uses safe
 boundaries and one in-flight provider deadline plus bookkeeping, without a hard
 global wall-time guarantee. Known ASE/NumPy warnings remain visible.
 
-Final scoped rereview and B06 merge remain controller-owned and pending.
+Scoped review closed the pressure migration, terminal failure and cancellation
+findings. A narrow subsequent transport correction preserves dotted bare PATH
+names (such as `.emt-python`) instead of selecting a same-named input-directory
+decoy, and explicitly rejects unrepresentable resolved UTF-8 interpreter paths.
+Its private-helper/non-UTF8 and actual CLI PATH/decoy regressions passed, with
+focused actual core/CLI/MCP and Python symlink coverage plus format, default
+all-target clippy and Rust 1.90 checks recorded separately under
+`b01-evidence/path-closure/`. The numerical campaign and binary hashes below
+remain evidence of the earlier final-fix source epoch; only interpreter transport
+classification changed afterward. No unchanged numerical campaign was rerun.
+Scoped closure review of this narrow correction and B06 merge remain pending.
 
 Final fix checks executed from base `81414606560881ae978738e330a3ba1ee4114e4b`
 plus the recorded working patch (commit range is recorded in the local fix report):

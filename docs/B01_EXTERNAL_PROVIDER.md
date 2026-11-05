@@ -191,8 +191,11 @@ be partially advanced; construct a fresh instance from the last good checkpoint.
 
 Path-like relative `model.python` values (for example `./venv/bin/python`) resolve
 against the input directory or MCP `work_dir` in the shared runner. Absolute
-paths and bare PATH names remain unchanged, and executable/venv symlinks are
-preserved. Standalone `provider-info` has no input directory and uses its process
+paths and bare PATH names (including `.emt-python`) remain unchanged, and
+executable/venv symlinks are preserved. A leading dot alone does not make a
+basename a relative path. Because the configured interpreter is a String, a
+resolved path that cannot be represented as UTF-8 is rejected with a Config
+error before launch; it is never converted lossily. Standalone `provider-info` has no input directory and uses its process
 working directory.
 
 `modena provider-info [--python EXECUTABLE] [--timeout-ms MILLISECONDS]` emits

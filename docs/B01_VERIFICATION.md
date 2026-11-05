@@ -12,10 +12,22 @@ related UTF-8 issue at `05b5642`. See [review closure and decisions](B01_REVIEW.
 The results below retain their explicit source epochs; this closure update is
 documentation only.
 
-B06 remains open as PR #53: GitHub Actions cannot start because of the account
-billing lock, and the required administrator-exception answer is pending. These
-local results do not establish remote CI success or a merge. [B06's record](B06_VERIFICATION.md)
-retains its historical revision and measurements.
+## Shipping provenance
+
+On 2026-11-05 the owner authorized administrator merges for B06, then B01.
+[B06 PR #53](https://github.com/ricardoleal20/modena/pull/53) was squash-merged
+as `38955ef367596ce4167c826be93603ee837fd174`. GitHub Actions could not start
+because of the account billing lock; this exception does not establish remote
+CI success. No protection settings or successful check statuses were fabricated.
+[B06's record](B06_VERIFICATION.md) retains its historical revision and measurements.
+
+The unpublished B01 branch was renamed to `ricardo/b01-ase-emt-provider` and
+its nine commits rebased onto that merged main without conflicts. Before and
+after the rebase, the complete tree was exactly
+`1ef6e0cfa5602f6bb6c9e610abc619a17fc1eafc` (`e7c8571` before; `e31771a` after).
+Thus the original source-epoch results below remain attributable to unchanged
+content, not to a newly executed campaign. Subsequent shipping edits only
+update documentation. The old branch name and hashes below are historical.
 
 ## Environment and installed identity
 
@@ -236,7 +248,7 @@ all-target clippy and Rust 1.90 checks recorded separately under
 remain evidence of the earlier final-fix source epoch; only interpreter transport
 classification changed afterward. No unchanged numerical campaign was rerun.
 The scoped closure review approved this correction at `05b5642` without new
-breakage. B06 integration remains a separate pending GitHub action.
+breakage. See shipping provenance above for the subsequent B06 integration.
 
 Final fix checks executed from base `81414606560881ae978738e330a3ba1ee4114e4b`
 plus the recorded working patch (commit range is recorded in the local fix report):

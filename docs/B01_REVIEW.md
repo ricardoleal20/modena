@@ -75,5 +75,8 @@ supported inputs, installation and migration.
    PATH/decoy and UTF-8 correction and one scoped closure review. Its cost was
    one additional focused patch/review, without reopening closed physics work.
 
-GitHub shipping of B06 is separate from this local B01 closure. No remote CI
-success or B06 merge follows from these local checks.
+GitHub shipping is separate from local review closure. B06 was subsequently
+merged as PR #53 with the owner's explicit administrator exception; B01 was
+rebased without content changes onto that main. See
+[shipping provenance](B01_VERIFICATION.md#shipping-provenance). Local checks
+and the administrator exception do not establish remote CI success.

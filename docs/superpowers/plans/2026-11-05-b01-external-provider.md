@@ -1,6 +1,6 @@
 # B01 External Provider Implementation Plan
 
-> **For agentic workers:** use subagent-driven development with test-driven implementation, one reviewed unit at a time. Preserve unrelated working-tree files. B06 integration remains dependent on the user's administrator-exception answer.
+> **For agentic workers:** use subagent-driven development with test-driven implementation, one reviewed unit at a time. Preserve unrelated working-tree files. The owner authorized administrator merges for B06, then B01, on 2026-11-05; new branches use the `ricardo/` prefix.
 
 **Goal:** Run pinned ASE EMT as MODENA's first concrete external total force provider and demonstrate snapshot parity through the actual runner.
 
@@ -61,5 +61,8 @@ the documented ASE EMT scope. The discovered pressure factor, failed-instance
 safety, cancellation and interpreter-resolution defects were corrected and
 reviewed. [B01 verification](../../B01_VERIFICATION.md) records source-specific
 evidence; [review closure](../../B01_REVIEW.md) records decisions and limitations.
-Integration of B06 PR #53 remains separately blocked by GitHub CI and the
-unanswered administrator-exception request.
+B06 PR #53 was subsequently squash-merged with the owner's administrator
+exception. B01 is prepared on `ricardo/b01-ase-emt-provider`; its rebase onto
+merged main preserved the reviewed tree exactly. See the verification record's
+shipping provenance. GitHub's account billing lock prevents remote CI from
+starting, so local verification is not described as remote CI success.

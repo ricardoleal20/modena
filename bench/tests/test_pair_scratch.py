@@ -23,9 +23,11 @@ mode={mode!r}
 if mode=='exit': sys.exit(7)
 if mode=='physics': sig['model']['epsilon']=2.0
 if mode=='incomplete': steps-=1
-state=dict(step=steps,atoms=n,positions=[0.0]*(3*n),velocities=[0.0]*(3*n),
+state=dict(step=steps,atoms=n,time=steps*.005,box_edges=[1.6796*r for r in d['structure']['replicas']],box_vectors=None,positions=[0.0]*(3*n),velocities=[0.0]*(3*n),
  continuation=dict(forces=[0.0]*(3*n),potential_energy=-1.0,virial=2.0,physical_signature=sig))
 if mode=='nan': state['continuation']['forces'][0]=float('nan')
+if mode=='box': state['box_edges'][0]*=2
+if mode=='time': state['time']+=1
 Path('final.checkpoint').write_text('MODENA_RESTART 2\\n'+json.dumps(state))
 with Path('thermo.csv').open('w') as f:
  w=csv.writer(f); w.writerow(['step','time','kinetic','potential','total','temperature','pressure','virial'])
@@ -72,7 +74,7 @@ class DriverTests(unittest.TestCase):
             self.assertEqual(original, (root / 'evidence/pair_scratch.json').read_bytes())
 
     def test_failures_are_nonzero_with_raw_evidence(self):
-        for mode in ['exit', 'physics', 'incomplete', 'nan']:
+        for mode in ['exit', 'physics', 'incomplete', 'nan', 'box', 'time']:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 result, artifact, _ = self.run_driver(root, after_mode=mode)

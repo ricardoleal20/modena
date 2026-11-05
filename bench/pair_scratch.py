@@ -74,6 +74,14 @@ def verify_run(directory, stdout, atoms, steps):
     state = json.loads(payload, parse_constant=reject)
     if header != 'MODENA_RESTART 2' or state['step'] != steps or state['atoms'] != atoms:
         raise ValueError('checkpoint version/steps/atoms mismatch')
+    expected_edges = [1.6796 * r for r in REPLICAS[atoms]]
+    edges = state.get('box_edges')
+    if (not isinstance(edges, list) or len(edges) != 3 or state.get('box_vectors') is not None
+            or any(not finite_number(x) or not math.isclose(x, y, rel_tol=0, abs_tol=1e-12)
+                   for x, y in zip(edges, expected_edges))):
+        raise ValueError('checkpoint FCC box mismatch')
+    if not finite_number(state.get('time')) or not math.isclose(state['time'], steps*0.005, rel_tol=1e-12, abs_tol=1e-10):
+        raise ValueError('checkpoint integration time mismatch')
     continuation = state['continuation']
     for values in [state['positions'], state['velocities'], continuation['forces']]:
         if len(values) != 3 * atoms or not all(finite_number(x) for x in values):

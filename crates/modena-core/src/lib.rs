@@ -40,6 +40,7 @@ pub mod nose_hoover;
 pub mod potential;
 pub mod replica_exchange;
 pub mod runner;
+pub mod snapshot;
 pub mod spme;
 pub mod system;
 pub mod thermo;

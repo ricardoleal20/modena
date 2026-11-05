@@ -1,5 +1,6 @@
 //! `modena` — command-line interface for the MODENA MD engine.
 
+use std::io::Read;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -22,6 +23,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Evaluate one strict Angstrom/eV native LJ JSON snapshot from stdin.
+    Snapshot,
     /// Discover the installed optional ASE EMT provider as one JSON descriptor.
     ProviderInfo {
         #[arg(long, default_value = "python3")]
@@ -49,6 +52,22 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Snapshot => {
+            use modena_core::snapshot::{evaluate_lj_snapshot, LjSnapshot, MAX_SNAPSHOT_BYTES};
+            let mut bytes = Vec::new();
+            std::io::stdin()
+                .lock()
+                .take((MAX_SNAPSHOT_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)?;
+            anyhow::ensure!(
+                bytes.len() <= MAX_SNAPSHOT_BYTES,
+                "snapshot input exceeds 8 MiB"
+            );
+            let input: LjSnapshot =
+                serde_json::from_slice(&bytes).context("invalid snapshot JSON")?;
+            let result = evaluate_lj_snapshot(&input).context("snapshot evaluation failed")?;
+            println!("{}", serde_json::to_string(&result)?);
+        }
         Command::ProviderInfo { python, timeout_ms } => {
             let identity = modena_core::describe_ase_emt(&python, timeout_ms)
                 .context("failed to discover ASE EMT provider")?;

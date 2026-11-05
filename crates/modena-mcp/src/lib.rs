@@ -432,7 +432,7 @@ impl RunManager {
     ) -> Result<EstimateRunCostResult, McpError> {
         if matches!(config.model, ModelSpec::AseEmt(_)) {
             return Err(McpError::InvalidInput(
-                "unsupported cost estimate for ase_emt: the native pair-kernel model cannot estimate one-shot Python/EMT runtime or memory; run_probe and run_async remain available".into(),
+                "unsupported cost estimate for ase_emt: the native pair-kernel model cannot estimate Python/EMT runtime or memory for either transport; run_probe and run_async remain available".into(),
             ));
         }
         let config = config
@@ -1245,7 +1245,7 @@ pub fn capabilities() -> serde_json::Value {
             "runtime_available":null, "runtime_probe":"not_performed",
             "runtime":"local Python with ASE>=3.26,<4; exact installed ASE version and EMT source SHA-256 pins required",
             "scope":"real units; fixed cell; fully periodic; unconstrained NVE/NVT; total energy, forces and configurational stress; explicit per-atom standard-metal Z and mechanical masses",
-            "neighbors":"provider_managed", "transport":"one-shot Python process for every snapshot; startup latency per evaluation; no throughput claim",
+            "neighbors":"provider_managed", "transport":"one_shot (default): Python process per snapshot; persistent (opt-in): one process/calculator per provider lifetime, terminal on failure; no throughput claim",
             "cancellation":"safe setup/step boundaries; one in-flight provider call under its configured timeout plus ordinary bookkeeping; no hard global wall-time or OS sandbox guarantee",
             "cost_estimate":"unsupported", "material_validation":false,
             "identity":"core RunMetadata.provider in run_probe and live/final get_run_status; CLI provider-info discovers installed pins"

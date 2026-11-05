@@ -128,14 +128,22 @@ that ever crossed a periodic face and force a rebuild every step. On the
 periodicity. Triclinic boxes are supported at the `SimBox` seam level; the
 parallel decomposition (§5) and barostats are orthorhombic-only.
 
-## 4. Half-list force evaluation (serial)
+## 4. Half-list force evaluation (native CPU)
 
 `PairForceModel` evaluates the `PairPotential` over a **half neighbor list**:
 each pair `(i, j)` is stored once, and Newton's third law writes both
 `f_i += f_over_r·r_ij` and `f_j −= f_over_r·r_ij`. This halves the pair work
-relative to a full list. The loop is parallelized with rayon: each thread folds
-into its own `3N` force accumulator, and the per-thread accumulators are summed
-by a reduce. This keeps the pair loop race-free without atomics. The scalar
+relative to a full list. Below 100,000 half pairs or in a one-thread pool, the
+unchanged serial loop applies. Larger passes attempt a nonblocking lease of
+model-owned scratch; contention or a poisoned lease takes the serial path.
+Each useful contiguous pair partition owns a reusable `3N` force accumulator,
+cleared on every pass, with local energy/virial sums. Disjoint output blocks
+reduce partitions in fixed order at a fixed leased pool size, without atomics.
+Pool size changes or contention fallback can change summation order. Parallel
+pool shrinkage drops excess partitions; remaining atom capacities retain their
+high water until model drop, so idle scratch retains O(TN) memory. See
+[B02 migration, measurements and limits](docs/B02_PAIR_SCRATCH.md) and
+[fresh verification](docs/B02_VERIFICATION.md). The scalar
 pressure virial is accumulated as `W = Σ_ij r_ij·F_ij` (each pair once);
 pressure (reduced) = `(2·KE + W)/(3V)`.
 

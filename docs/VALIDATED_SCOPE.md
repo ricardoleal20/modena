@@ -10,6 +10,7 @@ converged material properties.
 | Area | Implementation and evidence |
 | --- | --- |
 | Pair interactions | Lennard-Jones, Buckingham, Morse, soft-sphere, and tabulated models. Force/energy and cutoff checks cover selected parameters. Tabulated energy and force share cubic Hermite interpolation, including the lower endpoint tangent extension; the legacy selector is still named `linear`. |
+| Native CPU pair scratch | Model-owned dense O(TN) partitions, unchanged serial threshold/order, nonblocking serial fallback and bounded prebuilt snapshot lists. Warm allocation, E/F/W, resizing, composition and nested/shared-model tests; [B02 verification](B02_VERIFICATION.md) and [migration/performance limits](B02_PAIR_SCRATCH.md). |
 | Optional ASE EMT | Pinned total energy/forces/stress, seven standard EMT metals with explicit Z/masses, real units and full PBC, unconstrained fixed-cell NVE/NVT. Default one-shot and opt-in persistent sessions share physical identity/checkpoints. Displaced orthorhombic/skew Cu parity, derivatives, translation, restart and session failure/cleanup checks against installed EMT; [B01 reference](B01_VERIFICATION.md), [B09 transport evidence](B09_VERIFICATION.md). |
 | MODENA as ASE calculator | Optional native shifted-force single-species LJ energy/forces through the strict snapshot CLI; full PBC and positive diagonal orthorhombic cells only. Independent analytic pair/finite-difference checks and cache/failure/input validation; no tensor stress, charge/spin, constraints or general calculator selection. [B09 scope](B09_VERIFICATION.md). |
 | NVE | Velocity-Verlet, with short energy/momentum tests and a timestep convergence check. Pair and direct-Ewald paths support orthorhombic and triclinic periodic cells. |
@@ -30,6 +31,11 @@ Representative tests are
 
 ## Limits that affect interpretation
 
+- **Pair scratch trades retained memory for reuse.** Warm force-sized
+  allocations fall to zero, while O(TN) high-water capacity remains idle and
+  process RSS can increase. A repeated local N5000/four-thread full-CLI benefit
+  supports that declared case; larger/default-pool performance is uncertain,
+  with regressing series retained. See [B02 evidence](B02_PAIR_SCRATCH.md).
 - **External EMT checks are bounded reference checks.** They establish interface,
   conversion and derivative agreement with the same installed model, not Cu
   material accuracy, converged sampling or independent-engine parity. B09's

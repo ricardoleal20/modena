@@ -42,7 +42,8 @@ evidence. It records actual pair counts, force-sized allocation/reallocation
 counts and bytes, live allocated bytes/high water, released model bytes and
 fixed static numerical gates. The allocator only exists in the test/example.
 Large static E/W gates are `atol=1e-8, rtol=1e-12`; every force component uses
-`atol=1e-10, rtol=1e-12`. One-thread results require exact equality.
+`atol=1e-10, rtol=1e-12`. One-thread E/F/W uses `to_bits` equality, including
+the sign of zero; CLI checkpoint/thermo comparisons use actual file hashes.
 
 Build ordinary baseline and candidate release CLIs with the same compiler,
 flags and checkout, and preserve both before rebuilding either:
@@ -54,7 +55,9 @@ rtk proxy "$PY" bench/pair_scratch.py --before "$BASELINE" --after "$CANDIDATE" 
   --repetitions 5 --output "$FRESH_EVIDENCE"
 ```
 
-The stdlib-only POSIX Python >=3.11 driver alternates AB/BA pairs after separate
+The stdlib-only POSIX Python >=3.11 driver invokes `git`, `rustc` and macOS
+`sysctl` directly for provenance; it does not require RTK. The RTK prefixes in
+these examples are the agent shell convention. It alternates AB/BA pairs after separate
 discarded fresh-process warmups. It retains every input, stdout/stderr, full
 checkpoint, thermo log and wall/user/system CPU/RSS/load row, plus source and
 binary hashes. It rejects existing output directories, failed subprocesses,
@@ -141,11 +144,19 @@ allocated-byte peak fell 14.538→12.618 MB, while full-CLI median OS RSS in the
 complete matrix rose 29.098→33.915 MB. RSS was mixed across cases; neither a
 general RSS reduction nor bounded memory independent of T/N is claimed.
 
-Baseline source `7c7fa34` and accepted production source `0cea614` were clean
+Baseline source `7c7fa34` and measured production source `0cea614` were clean
 builds in the same worktree using rustc 1.97.1/aarch64-apple-darwin and identical
-unset Rust flags. Test-only follow-up `a03dab0` leaves all 48 measured core/CLI
-production source/manifest hashes and the retained CLI bytes identical. Raw
-untracked local artifacts under `target/b02-evidence/` are unavailable in a
+unset Rust flags. At pre-review follow-up `a03dab0`, all 48 measured core/CLI
+production source/manifest hashes and retained CLI bytes were identical.
+Review fix `3ec0e69` corrects four documentation lines in `force_model.rs`:
+47 source/manifest hashes remain identical; that file's hash changes solely
+because of the same-line-count comment correction. The ordinary CLI rebuilt
+from this clean review-fix commit is **byte-identical** to the immutable
+`0cea614` CLI (SHA256
+`1b39924b2ab9141748c49a1936df9a57cda8a70d3b879c5008da33996e0113f8`).
+The comment now distinguishes fixed chunk/reduction order at a fixed leased
+pool from order changes with pool size or serial contention fallback.
+Raw untracked local artifacts under `target/b02-evidence/` are unavailable in a
 fresh clone; rebuild/rerun to reproduce:
 
 - `baseline/`, `dense/`, `block/`: immutable CLI/profile binaries, compiler,
@@ -157,7 +168,12 @@ fresh clone; rebuild/rerun to reproduce:
   `block-long-n10000/`: each separate raw series, every input/log/checkpoint,
   wall/user/system/RSS/load row, paired ratios and source/binary provenance.
 - `default11-profiles.json`, `production-equivalence.json`: non-power-of-two
-  static/allocation checks and final test-only production-equivalence proof.
+  static/allocation checks and historical pre-review test-only equivalence.
+- `fix-round-1/`: RTK-absent/signed-zero RED/GREEN, rebuilt CLI equivalence,
+  fresh 14-case bit-gated profiles, and retrospective validation of all 380
+  retained rows and 48 one-thread byte-exact file pairs. Original loaded
+  driver/source hashes and timing files remain unchanged; the new validator
+  hash is recorded separately. No performance retiming was required.
 
 The separate B02 verification campaign is responsible for broad workspace,
 optional Python/ASE, GPU compile/lint, MSRV, standalone harness and scientific

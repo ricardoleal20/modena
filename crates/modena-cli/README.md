@@ -28,6 +28,50 @@ whole report and a separate `run metadata = {JSON}` line (core ensemble, DOF,
 pressure convention and optional provider identity). The energy diagnostics line
 retains its existing format. See the [B06 metric definitions](https://github.com/ricardoleal20/modena/blob/main/docs/B06_ENERGY_DIAGNOSTICS.md).
 
+## Native LJ snapshot
+
+`modena snapshot` reads exactly one strict JSON request from stdin and writes
+one JSON response to stdout. It computes energy and forces through the existing
+native shifted-force LJ pair model, without integration, velocities, simulation
+configuration or output files. Errors have nonzero status and diagnostics on
+stderr, without a partial response on stdout.
+
+```sh
+modena snapshot <<'JSON'
+{
+  "protocol": "modena-native-lj-v1",
+  "units": {"length": "angstrom", "energy": "eV", "force": "eV/angstrom"},
+  "atomic_numbers": [18, 18],
+  "positions_angstrom": [[0, 0, 0], [4, 0, 0]],
+  "cell_angstrom": [[20, 0, 0], [0, 20, 0], [0, 0, 20]],
+  "pbc": [true, true, true],
+  "sigma_angstrom": 3.4,
+  "epsilon_ev": 0.0103,
+  "cutoff_angstrom": 8.5,
+  "skin_angstrom": 0.3
+}
+JSON
+```
+
+The response has exactly `protocol`, `units`, `energy_ev` and
+`forces_ev_per_angstrom` (N rows of three values). Units/protocol match the
+request; no stress property is exposed. The example returns energy about
+-0.00897848103 eV and first-atom x force about +0.00560861341 eV/Angstrom.
+The pair convention is U_sf(r) = U(r) - U(rc) + (r-rc) F(rc), with
+F(r) = -dU/dr and zero interaction at/above rc.
+
+All fields are required; unknown fields and trailing JSON are rejected.
+Only homogeneous atomic numbers 1..118, finite N×3 positions, full PBC and
+positive finite diagonal orthorhombic cells are supported. Sigma/cutoff must be
+positive, epsilon/skin nonnegative, all finite. Cutoff plus skin must be at
+most half each box length. Minimum-image neighbor pairs with squared distance
+below 1e-14 Angstrom² are rejected rather than silently skipped. Input is
+limited to 8 MiB, 100000 atoms and a dense native neighbor grid of 1000000 cells;
+overflow/nonfinite evaluation fails explicitly. There are no optional ASE or
+NumPy dependencies for this command. The optional
+[`modena.ase.ModenaCalculator`](../../python/README.md#modena-as-an-optional-ase-calculator)
+consumes this protocol.
+
 ## Optional ASE EMT provider
 
 Install the optional calculator in a local environment and discover its exact pins:

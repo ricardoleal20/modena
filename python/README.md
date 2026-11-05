@@ -5,6 +5,51 @@ MODENA molecular dynamics CLI through a subprocess. The base package needs
 Python 3.11 or newer and has no runtime dependencies. The Rust engine is a
 separate executable and is not included in the Python distribution.
 
+## MODENA as an optional ASE calculator
+
+Install the optional dependency with `python -m pip install './python[ase]'`
+from a source checkout, and build/install the matching CLI. Import this adapter
+explicitly; base `import modena` does not import ASE or NumPy.
+
+```python
+from ase import Atoms
+from modena.ase import ModenaCalculator
+
+atoms = Atoms("Ar2", positions=[[0, 0, 0], [4, 0, 0]], cell=[20, 20, 20], pbc=True)
+atoms.calc = ModenaCalculator(
+    sigma_angstrom=3.4, epsilon_ev=0.0103, cutoff_angstrom=8.5,
+    skin_angstrom=0.3, binary="/absolute/path/to/modena", timeout=30.0,
+)
+print(atoms.get_potential_energy())  # eV; about -0.00897848103
+print(atoms.get_forces())           # eV/Angstrom; first x about +0.00560861341
+atoms.calc.set(epsilon_ev=0.02)     # invalidates cached properties
+```
+
+This evaluates the native **shifted-force** LJ model using one CLI process per
+snapshot. Both potential and radial force go to zero at the cutoff. It supports
+homogeneous atomic numbers 1..118 (one species), full periodicity, finite
+positions and positive diagonal orthorhombic cells. Atomic numbers specify
+identity; explicit sigma/epsilon specify the interaction without a parameter
+database. Sigma/cutoff must be positive, epsilon/skin nonnegative and all values
+finite. Cutoff plus skin must fit within half every cell length. Constraints,
+nonzero initial charges or magnetic moments, mixed species, skew/rotated cells
+and partial PBC are rejected. Coincident or singular minimum-image pairs
+(squared distance below 1e-14 Angstrom² in the neighbor list) are rejected.
+
+Only `energy` and `forces` are implemented. Stress requests raise ASE's
+`PropertyNotImplementedError`; no tensor stress is inferred from scalar virial.
+Atom positions/numbers/cell/PBC and calculator parameter changes invalidate the
+cache; constraints/charge/spin are checked even on cached accesses. Failures
+clear results. Use `calc.set(...)` for changes to model parameters, `binary`
+or `timeout` (seconds, positive and finite). The executable is a single path or
+PATH name, passed without a shell; spaces within an executable path work.
+With `binary=None`, the existing wrapper's PATH/local build discovery is used.
+
+The [snapshot CLI protocol](../crates/modena-cli/README.md#native-lj-snapshot)
+caps input at 8 MiB, atom count at 100000 and dense neighbor grid at 1000000
+cells. This initial adapter is a scientific interchange path; it does not
+establish bulk material accuracy or claim efficient large-scale ASE dynamics.
+
 MODENA is in early development. See the
 [validated scope and known limitations](https://github.com/ricardoleal20/modena/blob/main/docs/VALIDATED_SCOPE.md)
 before interpreting simulation results. Short examples demonstrate workflows;

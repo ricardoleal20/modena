@@ -1,11 +1,11 @@
 use modena_mcp::{call_tool, RunManager};
 use serde_json::json;
 #[test]
-fn discovery_request_lists_every_production_pair_family_with_schema_parameters() {
+fn discovery_request_lists_every_model_with_schema_parameters() {
     let mgr = RunManager::default();
     let result = call_tool("list_potentials", &json!({}), &mgr).unwrap();
     let entries = result.as_array().unwrap();
-    assert_eq!(entries.len(), 5);
+    assert_eq!(entries.len(), 6);
     for (name, params) in [
         (
             "lennard_jones",
@@ -24,6 +24,19 @@ fn discovery_request_lists_every_production_pair_family_with_schema_parameters()
             vec!["sigma", "epsilon", "n", "cutoff", "types", "overrides"],
         ),
         ("tabulated", vec!["file", "interpolation"]),
+        (
+            "ase_emt",
+            vec![
+                "python",
+                "ase_version",
+                "model_sha256",
+                "atomic_numbers",
+                "composition",
+                "pbc",
+                "asap_cutoff",
+                "timeout_ms",
+            ],
+        ),
     ] {
         let entry = entries
             .iter()

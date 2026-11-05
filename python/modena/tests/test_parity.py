@@ -55,6 +55,8 @@ def test_run_nve_and_parse():
     assert all(0.0 <= row["temperature"] < 10.0 for row in res.steps_rows)
     # A metric without a case-specific policy must not imply validation.
     assert res.conservation == "Uncalibrated"
+    assert res.metadata["ensemble"] == "nve"
+    assert res.metadata["provider"] is None
     assert res.energy_diagnostics["applicability"] == "nve"
     assert res.energy_diagnostics["diagnostics"]["samples"] == 101
     assert res.energy_diagnostics["diagnostics"]["normalization"] == "initial_kinetic_energy"

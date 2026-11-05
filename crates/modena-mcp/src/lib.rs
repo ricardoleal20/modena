@@ -35,8 +35,8 @@ use std::thread::{self, JoinHandle};
 
 use modena_core::{
     lattice, read_xyz, ConservationReport, ConservationVerdict, Energies, InputConfig,
-    IntegratorSpec, RunEvent, RunMetadata, RunSummary, SimBox, Simulation, StructureSpec,
-    ThermostatSpec,
+    IntegratorSpec, ModelSpec, RunEvent, RunMetadata, RunSummary, SimBox, Simulation,
+    StructureSpec, ThermostatSpec,
 };
 
 pub mod protocol;
@@ -363,7 +363,7 @@ impl RunManager {
 
     // ---- discovery ----
 
-    /// `list_potentials`: the registered pair potentials.
+    /// `list_potentials`: registered native pair and optional external models.
     pub fn list_potentials(&self) -> Vec<PotentialInfo> {
         // Derive the inventory from the same model alternatives used by the
         // request schema, so production families/field names cannot drift.
@@ -429,6 +429,11 @@ impl RunManager {
         &self,
         config: &InputConfig,
     ) -> Result<EstimateRunCostResult, McpError> {
+        if matches!(config.model, ModelSpec::AseEmt(_)) {
+            return Err(McpError::InvalidInput(
+                "unsupported cost estimate for ase_emt: the native pair-kernel model cannot estimate one-shot Python/EMT runtime or memory; run_probe and run_async remain available".into(),
+            ));
+        }
         let config = config
             .normalized()
             .map_err(|e| McpError::InvalidInput(e.to_string()))?;
@@ -1229,8 +1234,18 @@ pub fn capabilities() -> serde_json::Value {
             {"name":"wgpu_gpu","present_in_core_source":true,"optional_build_feature":"gpu","runtime_available":null,"production_config":false,"runtime_probe":"not_performed"},
             {"name":"mpi","present_in_core_source":true,"optional_build_feature":"mpi","runtime_available":null,"production_config":false,"runtime_probe":"not_performed"}
         ],
+        "external_providers": [{
+            "name":"ase_emt", "model":"ASE EMT", "optional":true,
+            "runtime_available":null, "runtime_probe":"not_performed",
+            "runtime":"local Python with ASE>=3.26,<4; exact installed ASE version and EMT source SHA-256 pins required",
+            "scope":"real units; fixed cell; fully periodic; unconstrained NVE/NVT; total energy, forces and configurational stress; explicit per-atom standard-metal Z and mechanical masses",
+            "neighbors":"provider_managed", "transport":"one-shot Python process for every snapshot; startup latency per evaluation; no throughput claim",
+            "cancellation":"bounded by configured evaluation timeout plus normal step completion",
+            "cost_estimate":"unsupported", "material_validation":false,
+            "identity":"core RunMetadata.provider in run_probe and live/final get_run_status; CLI provider-info discovers installed pins"
+        }],
         "supported": ["shifted-force pair potentials and reduced-unit tables", "typed XYZ numeric model types, masses and charges", "shortest bond graph 1-2/1-3/1-4 LJ/Coulomb scales with explicit precedence", "Ewald/SPME periodic ions", "fixed-volume constrained molecules and rigid water", "CSVR/Langevin/NHC NVT", "unconstrained isotropic MC NPT with matching canonical thermal control", "identity-checked v2 continuation and explicit state_only import"],
-        "limitations": ["constraint pressure omits validated impulse stress and is diagnostic", "constrained or anisotropic NPT and legacy piston rejected", "Berendsen is equilibration only", "GPU/MPI library backends are not production config engines", "no electronic-structure, reactive or many-body models", "transition finite-difference heuristic includes equilibration and is not proof of a phase transition"],
+        "limitations": ["constraint pressure omits validated impulse stress and is diagnostic", "constrained or anisotropic NPT and legacy piston rejected", "Berendsen is equilibration only", "GPU/MPI library backends are not production config engines", "no electronic-structure or reactive models; optional EMT scope is limited to standard metals and is not material validation", "transition finite-difference heuristic includes equilibration and is not proof of a phase transition"],
         "units": {"real":"Angstrom, ps, amu, e, kcal/mol, K, atm", "reduced_charge":"q*=q_e sqrt(332.06371/(sigma_Angstrom epsilon_kcal/mol))", "typed_xyz_reference_mass":"1 amu; global XYZ mass/charge overrides require plain XYZ", "thermo":"already converted runner output", "conservation":"internal reduced energy", "checkpoint":"internal reduced mechanics"},
         "sweeps": {"initial_temperature":"initial draw only; does not change canonical target", "langevin_target_temperature":"Langevin only; rejects MC coupling", "thermostat_target_temperature":"CSVR/Berendsen thermostat only; rejects MC coupling; NHC target sweep not implemented", "density":"FCC only"}
     })

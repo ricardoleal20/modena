@@ -74,6 +74,7 @@ class TemporaryInputTests(unittest.TestCase):
             result = run(cfg, binary=str(binary))
             self.assertEqual(result.conservation, 'Healthy')
             self.assertIsNone(result.energy_diagnostics)
+            self.assertIsNone(result.metadata)
             self.assertEqual(counter.read_text(), 'one simulation')
             self.assertEqual(result.steps_rows[-1]['total'], 1.0)
 

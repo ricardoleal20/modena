@@ -164,5 +164,13 @@ log_every=100
     assert_eq!(report["verdict"], "not_applicable");
     assert_eq!(report["diagnostics"]["samples"], 4);
     assert_eq!(report["diagnostics"]["energy_units"], "reduced");
+    let metadata = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("run metadata = "))
+        .expect("machine-readable run metadata");
+    let metadata: serde_json::Value = serde_json::from_str(metadata).unwrap();
+    assert_eq!(metadata["ensemble"], "nvt");
+    assert!(metadata.as_object().unwrap().contains_key("provider"));
+    assert!(metadata["provider"].is_null());
     std::fs::remove_dir_all(d).unwrap();
 }

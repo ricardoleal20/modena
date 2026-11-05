@@ -62,6 +62,9 @@ validate the rendered configuration; it does not certify the physical model.
 `run()` returns `RunResult` with thermodynamic rows as a list of dictionaries,
 the scoped conservation verdict, an optional timing string, the rendered TOML
 and `energy_diagnostics` containing full-rate reduced-energy/time statistics.
+The appended optional `metadata` dictionary contains the core ensemble, DOF,
+pressure convention and `provider` descriptor (`None` for native models).
+Older CLIs without the metadata line return `metadata=None`.
 NVE is `Uncalibrated` unless `Run(energy_error_thresholds={"warning": ...,
 "drifting": ...})` selects case-specific tolerances. NVT/NPT report
 `NotApplicable`; cold NVE has an unavailable normalization. The verdict does
@@ -82,6 +85,55 @@ switch their transport. The separate Rust MCP executable and server interface
 are described in the
 [main repository](https://github.com/ricardoleal20/modena).
 
+## Optional ASE EMT
+
+The default package remains dependency-free. Install the extra into your local
+Python environment with `python -m pip install './python[ase]'` from the checkout;
+it selects `ase>=3.26,<4`. Discover exact installed pins for each run:
+
+```python
+import sys
+from pathlib import Path
+from modena import AseEmt, Config, Fcc, Run, VelocityVerlet, check, provider_info, run
+
+# Keep the venv executable path: resolving its symlink can select base Python.
+python = sys.executable
+identity = provider_info(python, timeout_ms=30000)
+cfg = Config(
+    structure=Fcc(3.61, [1, 1, 1], element="Cu", mass=63.546),
+    model=AseEmt(
+        ase_version=identity["ase_version"],
+        model_sha256=identity["model_sha256"],
+        atomic_numbers=[29, 29, 29, 29], composition="total", python=python,
+    ),
+    integrator=VelocityVerlet(0.0001),
+    run=Run(steps=2, initial_temperature=10.0, log_every=1), units="real",
+)
+Path("cu_emt.toml").write_text(cfg.to_toml())
+print(check(cfg))
+result = run(cfg)
+assert result.metadata["provider"] == identity
+```
+
+All three functions accept `binary=` for an explicit CLI. `provider_info()`
+returns the unmodified core JSON from `modena provider-info`; exact version and
+source-hash pins, explicit per-atom Z and `composition="total"` are required.
+The hash identifies installed EMT source/model data, not learned weights.
+`AseEmt` defaults to `python="python3"`, `pbc=[True,True,True]`,
+`asap_cutoff=False` and `timeout_ms=30000`. The engine enforces seven standard
+metals (Al, Ni, Cu, Pd, Ag, Pt, Au), real units, full PBC, unconstrained fixed-cell
+NVE/NVT and total composition. Charges, topology/electrostatics additions,
+constraints and all barostats are rejected. Masses remain explicit mechanical
+inputs; labels and force-field types never infer Z or mass.
+
+`check()` and `run()` resolve a `model.python` path containing a separator
+against `base_dir=` (default cwd), preserving virtual-environment symlinks.
+Bare executable names remain PATH lookups. Other input/output path behavior is
+unchanged. Each snapshot launches a fresh Python process; the provider manages
+its own neighbors. Cancellation in streaming MCP runs waits up to the evaluation
+timeout plus normal step completion. This short Cu workflow is an interface
+reference, not material validation or a throughput benchmark.
+
 ## Development and support
 
 From the repository root, after building the CLI:
@@ -90,6 +142,8 @@ From the repository root, after building the CLI:
 MODENA_BINARY="$PWD/target/release/modena" python3 -m unittest discover -s python/modena/tests -v
 ```
 
+Set `MODENA_ASE_PYTHON=/absolute/path/to/venv/bin/python` to execute the optional
+actual ASE transport tests; absent this variable they explicitly report skips.
 `MODENA_BINARY` selects the executable for this test suite. For application
 code, use `binary=` or put the CLI on `PATH`. Use the
 [issue tracker](https://github.com/ricardoleal20/modena/issues) for reports and

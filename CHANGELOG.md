@@ -7,7 +7,8 @@
   Preserve serial arithmetic and bounded snapshot neighbors; retain O(TN)
   high-water scratch memory.
   **Breaking Rust API:** replace `PairForceModel { potential }` literals with
-  `new` or `from_boxed`. See [B02 migration and limits](docs/B02_PAIR_SCRATCH.md).
+  `new` or `from_boxed`. See [B02 migration and limits](docs/B02_PAIR_SCRATCH.md)
+  and [fresh local verification](docs/B02_VERIFICATION.md).
 
 - Add B09's opt-in persistent pinned ASE EMT sessions while retaining the
   one-shot default and unchanged physical/checkpoint identity. Session errors

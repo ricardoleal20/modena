@@ -175,6 +175,11 @@ fresh clone; rebuild/rerun to reproduce:
   driver/source hashes and timing files remain unchanged; the new validator
   hash is recorded separately. No performance retiming was required.
 
-The separate B02 verification campaign is responsible for broad workspace,
-optional Python/ASE, GPU compile/lint, MSRV, standalone harness and scientific
-checks. GPU runtime/MPI and other-engine performance are outside this result.
+The [fresh B02 verification campaign](B02_VERIFICATION.md) passed 357 Rust
+tests (one existing ignored doctest), 35 Python tests with actual ASE, five
+worker tests, 34 benchmark-tool tests and the 67-observation scientific smoke.
+The supported base interpreter executed 26 tests with nine explicit optional
+skips. Default/GPU lint and Rust 1.90 workspace/harness checks passed. The fresh
+release CLI remained byte-identical to the accepted measured block binary.
+GPU compilation/lint provides no GPU runtime evidence; MPI and other-engine
+performance are outside this result.

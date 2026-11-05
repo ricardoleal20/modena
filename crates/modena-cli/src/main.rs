@@ -31,6 +31,9 @@ enum Command {
     Run {
         #[arg(short, long)]
         input: PathBuf,
+        /// Emit a machine-readable energy diagnostics line (reduced energy/time).
+        #[arg(long)]
+        diagnostics_json: bool,
     },
 }
 
@@ -51,7 +54,10 @@ fn main() -> Result<()> {
                 config.run.steps,
             );
         }
-        Command::Run { input } => {
+        Command::Run {
+            input,
+            diagnostics_json,
+        } => {
             println!("MODENA: loading {}", input.display());
             let start = Instant::now();
             let summary = run_from_file(&input).context("simulation failed")?;
@@ -81,13 +87,35 @@ fn main() -> Result<()> {
             let c = &summary.conservation;
             if summary.metadata.ensemble == Ensemble::Nve {
                 println!(
-                    "  conservation  drift = {:.3e}  ({:?})",
-                    c.relative_drift, c.verdict
+                    "  conservation  drift = {:.3e}  (legacy relative change; not the verdict basis)",
+                    c.relative_drift
                 );
             } else {
                 println!(
-                    "  energy exchanged  relative change = {:.3e}",
+                    "  energy exchanged  relative change = {:.3e}  (legacy; NVE verdict not applicable)",
                     c.relative_drift
+                );
+            }
+            if let Some(d) = &c.diagnostics {
+                let normalized = d
+                    .normalized_max_abs_deviation
+                    .map(|x| format!("{x:.3e}"))
+                    .unwrap_or_else(|| "unavailable (no finite normalized metric)".into());
+                println!(
+                    "  energy-error advisory  max|delta E| / initial KE = {normalized}  ({:?})",
+                    c.verdict
+                );
+                let slope = d
+                    .slope
+                    .map(|x| format!("{x:.3e}"))
+                    .unwrap_or_else(|| "unavailable".into());
+                println!("  energy statistics (reduced energy/time): delta/N={:.3e}  range={:.3e}  RMS={:.3e}  slope={slope}  samples={}",
+                    d.delta_per_atom, d.energy_range, d.rms_fluctuation, d.samples);
+            }
+            if diagnostics_json {
+                println!(
+                    "  energy diagnostics = {}",
+                    serde_json::to_string(c).context("failed to serialize energy diagnostics")?
                 );
             }
             let per_step_us = elapsed.as_secs_f64() / summary.steps.max(1) as f64 * 1e6;

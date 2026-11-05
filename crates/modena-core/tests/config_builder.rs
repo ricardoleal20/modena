@@ -15,11 +15,14 @@ fn builder_runs_nve_and_conserves() {
         .build()
         .expect("builder config is valid");
     let out = sim.run().expect("run completes");
-    assert_ne!(
+    assert_eq!(
         out.conservation.verdict,
-        ConservationVerdict::Drifting,
-        "NVE conserved"
+        ConservationVerdict::Uncalibrated,
+        "no advisory policy was selected"
     );
+    // Preserve this fixture's historical endpoint tolerance independently of
+    // the new excursion metric. Neither bound establishes ensemble sampling.
+    assert!(out.conservation.relative_drift.abs() < 1e-3);
     assert!(out.final_energies.potential.is_finite());
 }
 

@@ -18,6 +18,13 @@ process runs with your filesystem permissions and is not a sandbox; use
 operating-system isolation for untrusted jobs. Cost estimates are rough
 heuristics, not resource guarantees.
 
+Live conservation reports contain statistics from every integration step in
+reduced energy/time, regardless of log cadence. NVE is `uncalibrated` until
+`run.energy_error_thresholds` are selected; NVT/NPT are `not_applicable`.
+Anomaly findings retain failures that occur between logged samples. Ordinary
+sample means have no burn-in or autocorrelation correction. See the
+[B06 diagnostic contract](https://github.com/ricardoleal20/modena/blob/main/docs/B06_ENERGY_DIAGNOSTICS.md).
+
 MODENA is in early development. Read the
 [validation scope](https://github.com/ricardoleal20/modena/blob/main/docs/VALIDATED_SCOPE.md)
 and [security policy](https://github.com/ricardoleal20/modena/blob/main/SECURITY.md).

@@ -55,6 +55,13 @@ runs, system total energy changes through energy exchange; it is not the
 conserved quantity. Small drift cannot establish correct ensemble sampling,
 a correct force law, or converged observables.
 
+[B06 diagnostics](B06_ENERGY_DIAGNOSTICS.md) report energy changes, maximum
+excursion, range, RMS and slope at every integration step in reduced units.
+The normalized excursion uses initial kinetic energy, independently of the
+potential-energy zero. NVE classification requires explicit tolerances;
+NVT/NPT receive `not_applicable`. The legacy endpoint-relative number is
+retained for compatibility, without selecting the runner's verdict.
+
 ## Units and restart compatibility
 
 Real inputs use Å, ps, kcal/mol, amu, K, elementary charge, and atm. Thermodynamic
@@ -81,8 +88,10 @@ python3 bench/validate.py --output target/scientific-smoke
 ```
 
 The harness needs Python 3.11 or newer. Its output records expected values,
-tolerances, and independent bases. Correlated samples and bounded checks are
-not formal uncertainty estimates.
+tolerances, and independent bases. Selected observable series additionally
+report explicit burn-in, estimated autocorrelation/effective samples,
+conditional approximate mean bands and spread between replicas. These
+finite-series estimates and bounded checks do not validate the ensemble.
 
 [Scientific results](scientific-hardening/RESULTS.md) and
 [verification records](scientific-hardening/VERIFY.md) preserve earlier

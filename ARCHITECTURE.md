@@ -47,10 +47,11 @@ dU/dr = −F(r),   where F(r) = f_over_r · r
 This is enforced at the `PairPotential` trait level and verified for every
 registered potential by property-based tests (`tests/property_consistency.rs`:
 force = −∇U by finite differences, no NaN/Inf, continuity at the cutoff). The
-consequence is that the NVE Hamiltonian `H = KE + PE` is the *true* conserved
-quantity under the symplectic integrator — energy drift is a genuine numerical
-signal, not a truncation artifact. This is the conservation contract (Feature B;
-see §7).
+consequence is that the reported NVE Hamiltonian `H = KE + PE` is consistent
+with the continuous equations of motion. A finite-step symplectic integrator
+has discretization error; it does not conserve that Hamiltonian exactly.
+Inspect the energy-error band and its timestep convergence separately from a
+secular trend. This is the conservation contract (Feature B; see §7).
 
 ### 2.1 Shifted-force form
 
@@ -235,13 +236,17 @@ blocking `run()` is `run_streaming` with no stop flag and a no-op sink.
 
 The force/energy consistency invariant (§2) is encoded as a trait-level
 contract and verified by property-based tests for every potential, not just the
-production LJ. The `ConservationReport` classifies a run's energy drift
-(`Healthy` / `Warning` / `Drifting`, thresholds 10⁻⁴ / 10⁻³) with explicit
-thresholds, so a drift signal is surfaced as a first-class verdict rather than
-buried in a log. The contract is what makes the parallel decomposition's
-"equal up to FP summation order" claim meaningful: if the decomposed forces
-were not conservative, NVE conservation would break even though the one-shot
-force match passed.
+production LJ. `EnergyMonitor` records every integration step in reduced
+energy/time, independently of output cadence, using centered online moments.
+`ConservationReport` carries endpoint change, maximum excursion, range, RMS and
+OLS slope. Its new normalization uses initial kinetic energy and is invariant
+to a constant potential-energy offset within floating-point precision. NVE
+advisories require selected `run.energy_error_thresholds`; otherwise the metric
+is `Uncalibrated`. Thermal/pressure coupling gets `NotApplicable`, and zero
+initial kinetic energy leaves normalization unavailable. The legacy endpoint
+number and legacy constructors retain their historical semantics; they do not
+drive the runner's verdict. See [B06](docs/B06_ENERGY_DIAGNOSTICS.md) for the
+metric definitions, API changes and separate observable sampling analysis.
 
 ## 8. Reproducibility
 

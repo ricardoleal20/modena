@@ -1,9 +1,9 @@
 //! Bounded numerical validation. Independent expectations are recorded beside observations.
 use modena_core::thermostat::{Thermostat, VelocityRescaling};
 use modena_core::{
-    Constraint, Constraints, EwaldForceModel, ForceModel, Integrator, LangevinBAOAB, LennardJones,
-    NeighborList, PairForceModel, PairPotential, Result, SimBox, SpmeForceModel, System, Vec3,
-    VelocityVerlet, Virial,
+    ConservationApplicability, Constraint, Constraints, EnergyMonitor, EwaldForceModel, ForceModel,
+    Integrator, LangevinBAOAB, LennardJones, NeighborList, PairForceModel, PairPotential, Result,
+    SimBox, SpmeForceModel, System, Vec3, VelocityVerlet, Virial,
 };
 use serde_json::{json, Value};
 
@@ -50,13 +50,22 @@ fn strain(s: &System, factor: f64) -> System {
 fn main() {
     let extended = std::env::args().any(|x| x == "--extended");
     let samples = if extended { 400_000 } else { 40_000 };
+    // Keep raw analysis output bounded while recording the actual sampling
+    // interval. Scalar regression moments still use every production step.
+    let stride = (samples + 1000_usize).div_ceil(20_000);
+    let mut timeseries = Vec::new();
+    let mut energy_diagnostics = Vec::new();
     let mut rows = Vec::new();
     for seed in [7, 42, 91] {
         let mut s = gas(4);
         let mut thermostat = VelocityRescaling::new(1.0, 1.0, seed);
+        let mut kinetic_series = Vec::new();
         let (mut sum, mut sum2) = (0.0, 0.0);
         for step in 0..samples + 1000 {
             thermostat.apply(&mut s, 1.0);
+            if step % stride == 0 {
+                kinetic_series.push(s.kinetic_energy());
+            }
             if step >= 1000 {
                 let k = s.kinetic_energy();
                 sum += k;
@@ -65,6 +74,10 @@ fn main() {
         }
         let mean = sum / samples as f64;
         let variance = sum2 / samples as f64 - mean * mean;
+        timeseries.push(json!({"name":"csvr_kinetic", "seed":seed, "ensemble":"nvt",
+            "sample_interval":stride as f64, "sample_stride":stride, "first_step":1,
+            "discard":1000_usize.div_ceil(stride), "equilibration_steps":1000,
+            "energy_units":"reduced", "time_units":"reduced", "values":kinetic_series}));
         observation(
             &mut rows,
             format!("csvr_seed{seed}_mean"),
@@ -146,9 +159,14 @@ fn main() {
         let mut integrator = LangevinBAOAB::with_constraints(2.0, 1.0, seed, c.clone());
         let mut nl = NeighborList::new(2.5);
         let (mut sum, mut sum2) = (0.0, 0.0);
+        let mut rotation_series = Vec::new();
         let mut residual = 0.0_f64;
         for step in 0..samples + 1000 {
             integrator.step(&mut s, &ZeroForce, &mut nl, 0.01).unwrap();
+            if step % stride == 0 {
+                let com = s.total_momentum() * (1.0 / 3.0);
+                rotation_series.push((0..3).map(|i| 0.5 * (s.vel(i) - com).norm2()).sum::<f64>());
+            }
             if step >= 1000 {
                 let com = s.total_momentum() * (1.0 / 3.0);
                 let k = (0..3).map(|i| 0.5 * (s.vel(i) - com).norm2()).sum::<f64>();
@@ -159,6 +177,12 @@ fn main() {
         }
         let mean = sum / samples as f64;
         let var = sum2 / samples as f64 - mean * mean;
+        timeseries.push(
+            json!({"name":"rigid_rotation_kinetic", "seed":seed, "ensemble":"nvt",
+            "sample_interval":0.01*stride as f64, "sample_stride":stride, "first_step":1,
+            "discard":1000_usize.div_ceil(stride), "equilibration_steps":1000,
+            "energy_units":"reduced", "time_units":"reduced", "values":rotation_series}),
+        );
         let corr = (-0.04_f64).exp();
         let inflation = (1.0 + corr) / (1.0 - corr);
         observation(
@@ -215,11 +239,19 @@ fn main() {
         let mut v = Virial::default();
         let mut nl = NeighborList::with_skin(4.2, 0.3);
         let e0 = model.compute(&mut s, &mut v, &mut nl).unwrap() + s.kinetic_energy();
+        let mut monitor = EnergyMonitor::new(
+            e0,
+            s.n(),
+            s.kinetic_energy(),
+            ConservationApplicability::Nve,
+        )
+        .unwrap();
         let mut vv = VelocityVerlet::new();
         let mut band = 0.0_f64;
-        for _ in 0..(2.0 / dt).round() as usize {
+        for step in 1..=(2.0 / dt).round() as usize {
             let e = vv.step(&mut s, &model, &mut nl, dt).unwrap();
             band = band.max((e.total - e0).abs());
+            monitor.observe(step as f64 * dt, e.total).unwrap();
         }
         observation(
             &mut rows,
@@ -230,6 +262,7 @@ fn main() {
             "Two-body smooth LJ Hamiltonian; bounded energy error",
         );
         bands.push(band);
+        energy_diagnostics.push(json!({"dt":dt,"report":monitor.report()}));
     }
     for i in 0..2 {
         observation(
@@ -342,6 +375,6 @@ fn main() {
     );
     println!(
         "{}",
-        json!({"schema_version":1,"campaign":if extended {"extended"}else{"smoke"},"samples_per_seed":samples,"seeds":[7,42,91],"electrostatics":{"box":9.0,"kappa":0.8,"real_cutoff":4.2,"kcuts":[4.8,6.4],"meshes":[modena_core::spme::mesh_for_box(&s.box_size,4.8),modena_core::spme::mesh_for_box(&s.box_size,6.4)],"precision":"f64","reference":"direct Ewald kcut6.4"},"sampling_note":"Correlated moments with fixed regression tolerances; no claim of formal uncertainty or converged liquid observables","observations":rows})
+        json!({"schema_version":2,"campaign":if extended {"extended"}else{"smoke"},"samples_per_seed":samples,"seeds":[7,42,91],"electrostatics":{"box":9.0,"kappa":0.8,"real_cutoff":4.2,"kcuts":[4.8,6.4],"meshes":[modena_core::spme::mesh_for_box(&s.box_size,4.8),modena_core::spme::mesh_for_box(&s.box_size,6.4)],"precision":"f64","reference":"direct Ewald kcut6.4"},"sampling_note":"Scalar regression moments use all post-burn-in samples with fixed tolerances. Diagnostic series are uniformly thinned with recorded interval and discard; estimated uncertainty does not establish ensemble validity or converged liquid observables.","timeseries":timeseries,"energy_diagnostics":energy_diagnostics,"observations":rows})
     );
 }

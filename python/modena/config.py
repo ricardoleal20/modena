@@ -138,6 +138,7 @@ class Run:
     restart_mode: str = "continue"
     restart_file: Optional[str] = None
     restart_every: int = 500
+    energy_error_thresholds: Optional[dict[str, float]] = None
 
 
 @dataclass

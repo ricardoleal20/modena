@@ -51,7 +51,10 @@ pub use barostat::{
 };
 pub use bonded::{Angle, Bond, BondedForceModel, BondedTopology, Dihedral, DihedralTerm};
 pub use composite::{CompositeForceModel, LongRangeForceModel};
-pub use conservation::{ConservationReport, ConservationVerdict};
+pub use conservation::{
+    ConservationApplicability, ConservationReport, ConservationVerdict, EnergyDiagnostics,
+    EnergyErrorThresholds, EnergyMonitor, EnergyNormalization,
+};
 pub use constraints::{Constraint, Constraints};
 pub use decomp::{
     Communicator, DomainDecomposition, DomainForceModel, LocalCommunicator, RankGrid,

@@ -632,6 +632,10 @@ pub struct RunSpec {
     /// Default `0.3` (LAMMPS's default skin).
     #[serde(default = "default_neighbor_skin")]
     pub neighbor_skin: f64,
+    /// Optional dimensionless policy for max|E(t)-E0| / initial KE. Omission
+    /// reports Uncalibrated under NVE; does not change the physical protocol.
+    #[serde(default)]
+    pub energy_error_thresholds: Option<crate::conservation::EnergyErrorThresholds>,
     #[serde(default)]
     pub trajectory_file: Option<String>,
     #[serde(default = "default_traj_every")]
@@ -679,6 +683,7 @@ impl Default for RunSpec {
             initial_temperature: 1.0,
             seed: 42,
             neighbor_skin: 0.3,
+            energy_error_thresholds: None,
             trajectory_file: None,
             trajectory_every: 100,
             log_file: None,

@@ -84,7 +84,7 @@ pub fn tool_list() -> Vec<Tool> {
         },
         Tool {
             name: "get_run_status",
-            description: "Snapshot state, latest thermo, metadata and accumulated finite post-initial sample mean/count/window. Thermo uses advertised units; conservation uses reduced units.",
+            description: "Snapshot state, latest thermo, metadata and accumulated finite post-initial sample mean/count/window. Thermo uses advertised units. Conservation includes every integration step in reduced energy/time; NVE is uncalibrated without selected energy_error_thresholds, NVT/NPT not_applicable. Sample means do not include burn-in or autocorrelation correction.",
             input_schema: schema!({
                 "type": "object",
                 "properties": {
@@ -152,7 +152,7 @@ pub fn tool_list() -> Vec<Tool> {
         },
         Tool {
             name: "detect_anomaly",
-            description: "Run engine-side anomaly heuristics over a run and/or a sweep: energy drift (verdict 'drifting'), divergence (NaN/Inf), and basic phase-transition detection (largest |d<PE>/d(param)| across a sweep). Returns structured findings.",
+            description: "Run engine-side anomaly heuristics over a run and/or a sweep: NVE energy excursion above explicitly selected tolerances (legacy name energy_drift; not proof of a trend), divergence (NaN/Inf), run failures, and basic phase-transition detection (largest |d<PE>/d(param)| across a sweep). Returns structured findings; absence does not certify accuracy or sampling.",
             input_schema: schema!({
                 "type": "object",
                 "properties": {

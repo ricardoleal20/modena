@@ -41,6 +41,8 @@ def capture(command, env=None):
 
 
 def validate_identity(identity):
+    if not isinstance(identity, dict):
+        raise ValueError('provider metadata must be an object')
     expected = dict(protocol='modena-ase-emt-v1', provider='ase_emt', model='EMT',
                     task='energy_forces_stress', composition='total', asap_cutoff=False)
     if any(identity.get(k) != v for k, v in expected.items()):
@@ -98,7 +100,10 @@ def json_line(stdout, label):
             if line.strip().startswith(label)]
     if len(rows) != 1:
         raise ValueError(f'expected one {label} line')
-    return strict_json(rows[0])
+    value = strict_json(rows[0])
+    if not isinstance(value, dict):
+        raise ValueError(f'{label} metadata must be an object')
+    return value
 
 
 def verify_run(directory, stdout, identity, atoms, steps):
@@ -109,7 +114,8 @@ def verify_run(directory, stdout, identity, atoms, steps):
     if metadata.get('provider') != identity or metadata.get('pressure_status') != 'unconstrained_provider_stress':
         raise ValueError('run metadata/provider identity mismatch')
     diagnostics = json_line(stdout, 'energy diagnostics = ')
-    if diagnostics.get('diagnostics', {}).get('samples') != steps + 1:
+    samples = diagnostics.get('diagnostics')
+    if not isinstance(samples, dict) or samples.get('samples') != steps + 1:
         raise ValueError('full-rate diagnostic sample count mismatch')
     header, payload = (directory / 'final.checkpoint').read_text().split('\n', 1)
     checkpoint = strict_json(payload)

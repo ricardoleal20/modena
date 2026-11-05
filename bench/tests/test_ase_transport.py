@@ -17,6 +17,7 @@ identity = dict(protocol="modena-ase-emt-v1", provider="ase_emt", model="EMT",
  capabilities=["energy","forces","stress","full_pbc","provider_neighbors","conservative","total_momentum"],
  ase_version="3.29.0", numpy_version="2.5.4", model_sha256="a"*64, asap_cutoff=False)
 if sys.argv[1] == 'provider-info':
+ if os.environ.get('ASE_BENCH_FAULT')=='metadata': print('[]'); sys.exit(0)
  print(json.dumps(identity)); sys.exit(0)
 deck=pathlib.Path(sys.argv[-1]); config=tomllib.loads(deck.read_text())
 run=config['run']; mode=config['model']['transport']; n=len(config['model']['atomic_numbers'])
@@ -84,6 +85,16 @@ class AseTransportTests(unittest.TestCase):
             self.assertFalse(data['passed'])
             self.assertEqual(data['runs'][0]['returncode'], 17)
             self.assertIn('fixture stderr', (out / data['runs'][0]['directory'] / 'stderr').read_text())
+
+    def test_malformed_discovery_metadata_retains_a_recorded_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result, out = self.invoke(tmp, 'metadata')
+            self.assertEqual(result.returncode, 1, result.stderr)
+            data = json.loads((out / 'ase_transport.json').read_text())
+            self.assertFalse(data['passed'])
+            self.assertIn('metadata', data['error'])
+            self.assertEqual((out / 'provider-info.stdout').read_text().strip(), '[]')
+            self.assertEqual(data['runs'], [])
 
     def test_physics_identity_and_incomplete_step_failures_cannot_be_benchmarks(self):
         for fault in ['checkpoint', 'thermo', 'identity', 'steps']:

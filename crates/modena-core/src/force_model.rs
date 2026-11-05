@@ -47,7 +47,9 @@ pub trait ForceModel: Send + Sync {
         false
     }
     /// Maximum real-space neighbor radius required by this model. Drivers
-    /// must reject an absent radius when they need to construct a list.
+    /// must reject an absent radius when they need to construct a list,
+    /// unless `uses_provider_neighbors()` explicitly opts into an unused
+    /// compatibility list. Such a list implies no physical provider cutoff.
     fn neighbor_cutoff(&self) -> Option<f64> {
         None
     }

@@ -354,6 +354,8 @@ pub struct OverrideSpec {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelSpec {
+    /// Pinned ASE EMT total energy, forces and stress (real units only).
+    AseEmt(crate::external::AseEmtSpec),
     /// Lennard-Jones 12-6. Single-species (`sigma`/`epsilon`) or multi-species
     /// (`types` + optional `overrides`). If `types` is present it takes
     /// precedence; the single-pair fields are the backward-compatible default.
@@ -978,6 +980,7 @@ impl ModelSpec {
     /// models, the first type's parameters are the reference.
     fn reference_sigma_epsilon(&self) -> Result<(f64, f64)> {
         match self {
+            ModelSpec::AseEmt(_) => Ok((1.0, 1.0)),
             ModelSpec::LennardJones {
                 sigma,
                 epsilon,
@@ -1130,6 +1133,7 @@ impl ModelSpec {
                     o.epsilon = f.to_reduced_energy(o.epsilon);
                 }
             }
+            ModelSpec::AseEmt(_) => {} // Provider pins/parameters are already physical.
             ModelSpec::Tabulated { .. } => {
                 // The table file is read in reduced units (caller's responsibility
                 // to supply a reduced-unit table when using real units, since the

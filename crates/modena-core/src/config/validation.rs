@@ -66,6 +66,88 @@ fn lattice_count(replicas: [u32; 3], per_cell: usize) -> Result<()> {
 }
 
 pub(crate) fn validate(c: &InputConfig) -> Result<()> {
+    if let ModelSpec::AseEmt(spec) = &c.model {
+        if c.units != UnitSystem::Real {
+            return Err(error("ase_emt requires units = real"));
+        }
+        if spec.composition != "total" {
+            return Err(error("ase_emt composition must be total"));
+        }
+        if spec.pbc != [true; 3] {
+            return Err(error("ase_emt pbc must be fully periodic"));
+        }
+        if spec.asap_cutoff {
+            return Err(error("ase_emt asap_cutoff must be false"));
+        }
+        if spec.ase_version.trim().is_empty() {
+            return Err(error("ase_version pin is required"));
+        }
+        if spec.model_sha256.len() != 64
+            || !spec
+                .model_sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(error("model_sha256 must be 64 lowercase hex digits"));
+        }
+        if spec.timeout_ms == 0 {
+            return Err(error("timeout_ms must be positive"));
+        }
+        if spec.atomic_numbers.is_empty()
+            || spec
+                .atomic_numbers
+                .iter()
+                .any(|z| ![13, 28, 29, 46, 47, 78, 79].contains(z))
+        {
+            return Err(error("atomic_numbers require supported standard metals"));
+        }
+        if c.topology.is_some() {
+            return Err(error("ase_emt does not support added topology"));
+        }
+        if c.electrostatics.is_some() {
+            return Err(error("ase_emt does not support electrostatics"));
+        }
+        if c.constraints.is_some() {
+            return Err(error("ase_emt does not support constraints"));
+        }
+        if c.barostat.is_some() {
+            return Err(error("ase_emt does not support any barostat"));
+        }
+        let (explicit_mass, charged) = match &c.structure {
+            StructureSpec::Fcc { mass, charge, .. } | StructureSpec::Xyz { mass, charge, .. } => {
+                (mass.is_some(), charge.is_some_and(|q| q != 0.0))
+            }
+            StructureSpec::RandomAlloy { species, .. } => {
+                (!species.is_empty(), species.iter().any(|s| s.charge != 0.0))
+            }
+            StructureSpec::RockSalt {
+                cation_mass,
+                anion_mass,
+                cation_charge,
+                anion_charge,
+                ..
+            } => (
+                cation_mass.is_some() && anion_mass.is_some(),
+                *cation_charge != 0.0 || *anion_charge != 0.0,
+            ),
+            StructureSpec::Water { .. } => {
+                return Err(error("ase_emt does not support water constraints"))
+            }
+        };
+        if !explicit_mass {
+            return Err(error("ase_emt requires explicit structure mass"));
+        }
+        if charged {
+            return Err(error("ase_emt does not support charges"));
+        }
+        if c.unit_factors
+            .is_some_and(|f| f.sigma != 1.0 || f.epsilon != 1.0)
+        {
+            return Err(error(
+                "ase_emt requires 1 Angstrom / 1 kcal/mol model reference",
+            ));
+        }
+    }
     // TOML's inspection value has signed integers; stochastic seeds remain
     // full u64 on JSON/Rust paths. They carry no floats needing this scan.
     let mut numeric_view = c.clone();
@@ -363,6 +445,16 @@ pub(crate) fn validate(c: &InputConfig) -> Result<()> {
 
 pub(crate) fn validate_system(c: &InputConfig, s: &System) -> Result<()> {
     let n = s.n();
+    if let ModelSpec::AseEmt(spec) = &c.model {
+        if spec.atomic_numbers.len() != n || s.atomic_numbers != spec.atomic_numbers {
+            return Err(error(
+                "ase_emt atomic_numbers must match structure atom count and identity",
+            ));
+        }
+        if s.charges.iter().any(|q| *q != 0.0) {
+            return Err(error("ase_emt does not support charges"));
+        }
+    }
     if n == 0 {
         return Err(error("structure must contain atoms"));
     }

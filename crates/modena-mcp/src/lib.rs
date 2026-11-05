@@ -159,8 +159,12 @@ impl RunStatusInner {
             step: self.step,
             total_steps: self.total_steps,
             latest_thermo: self.latest_thermo,
-            metadata: self.metadata,
-            thermo_units: self.metadata.map(|m| m.output_units).unwrap_or_default(),
+            metadata: self.metadata.clone(),
+            thermo_units: self
+                .metadata
+                .as_ref()
+                .map(|m| m.output_units)
+                .unwrap_or_default(),
             conservation_units: "reduced",
             mean_potential_energy: self.mean_potential_energy,
             sample_count: self.sample_count,
@@ -490,7 +494,7 @@ impl RunManager {
             metadata,
         } = sim.run().map_err(|e| McpError::Simulation(e.to_string()))?;
         Ok(ProbeResult {
-            metadata,
+            metadata: metadata.clone(),
             thermo_units: metadata.output_units,
             conservation_units: "reduced",
             steps,
@@ -834,7 +838,7 @@ fn run_loop(
             }
             RunEvent::Frame { step, .. } => st.step = *step,
             RunEvent::Finished { summary } => {
-                let summary = *summary;
+                let summary = summary.clone();
                 st.step = initial_step + summary.steps;
                 st.conservation = summary.conservation;
                 st.latest_thermo = Some(summary.final_energies);

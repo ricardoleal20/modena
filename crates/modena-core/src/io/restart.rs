@@ -43,6 +43,10 @@ pub struct ContinuationState {
     pub forces: Vec<f64>,
     pub masses: Vec<f64>,
     pub species: Vec<u32>,
+    /// Explicit atomic identity; absent in older v2 checkpoints. Empty may
+    /// match only an unspecified native system during continuation.
+    #[serde(default)]
+    pub atomic_numbers: Vec<u8>,
     pub charges: Vec<f64>,
     pub elements: Vec<String>,
     pub constraint_count: usize,
@@ -162,6 +166,7 @@ fn validate(cp: &Checkpoint) -> Result<()> {
         if c.forces.len() != count
             || c.masses.len() != cp.atoms
             || c.species.len() != cp.atoms
+            || (!c.atomic_numbers.is_empty() && c.atomic_numbers.len() != cp.atoms)
             || c.charges.len() != cp.atoms
             || c.elements.len() != cp.atoms
         {

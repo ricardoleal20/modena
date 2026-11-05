@@ -15,7 +15,7 @@ fn spec(python: &str) -> AseEmtSpec {
         composition: "total".into(),
         pbc: [true; 3],
         asap_cutoff: false,
-        timeout_ms: 2000,
+        timeout_ms: 5000,
     }
 }
 fn fixture(evaluate: &str) -> (tempfile::TempDir, String) {
@@ -85,7 +85,7 @@ fn rejects_unsupported_specs_before_launch() {
 #[test]
 fn discovery_and_pins_are_checked() {
     let (_d, p) = fixture(VALID);
-    let id = describe_ase_emt(&p, 2000).unwrap();
+    let id = describe_ase_emt(&p, 5000).unwrap();
     assert_eq!(id.ase_version, "3.29.0");
     let mut s = spec(&p);
     s.model_sha256 = "b".repeat(64);
@@ -114,13 +114,32 @@ fn valid_evaluation_converts_and_accumulates_without_neighbor_cutoff() {
 }
 #[test]
 fn failed_results_leave_accumulators_unchanged() {
-    for body in ["sys.exit(7)","time.sleep(3)","print('not json')",
+    for body in [
+        "sys.exit(7)", "time.sleep(30)", "print('not json')",
         "print('x'*65537, file=sys.stderr)", "print('x'*17000000)",
-      "print(json.dumps({'protocol':'modena-ase-emt-v1','action':'evaluate','identity':identity,'evaluation':{'energy_ev':1.0}}))",
-      "identity changed"] {
-        let body=if body.starts_with("identity") {format!("identity['numpy_version']='changed'; {VALID}")} else {body.into()};
-        let (_d,p)=fixture(&body);let mut spec=spec(&p); spec.timeout_ms=1000;let model=AseEmtForceModel::new(spec,UnitFactors::new(1.0,1.0,1.0)).unwrap();
-        let mut s=system();let before=s.forces.clone();let mut w=Virial{w:7.0};assert!(model.compute(&mut s,&mut w,&mut NeighborList::new(1.0)).is_err(),"{body}");assert_eq!(s.forces,before);assert_eq!(w.w,7.0);
+        "print(json.dumps({'protocol':'modena-ase-emt-v1','action':'evaluate','identity':identity,'evaluation':{'energy_ev':1.0}}))",
+        "identity changed",
+    ] {
+        let body = if body.starts_with("identity") {
+            format!("identity['numpy_version']='changed'; {VALID}")
+        } else { body.into() };
+        let (_dir, python) = fixture(&body);
+        let mut spec = spec(&python);
+        // Discovery starts another interpreter before evaluation. Leave startup
+        // margin under concurrent suites; the blocking actor is six times longer.
+        spec.timeout_ms = 5000;
+        let model = AseEmtForceModel::new(spec, UnitFactors::new(1.0, 1.0, 1.0)).unwrap();
+        let mut system = system();
+        let before = system.forces.clone();
+        let mut virial = Virial { w: 7.0 };
+        let start = std::time::Instant::now();
+        let error = model.compute(&mut system, &mut virial, &mut NeighborList::new(1.0)).unwrap_err();
+        if body == "time.sleep(30)" {
+            assert!(error.to_string().contains("timeout after 5000 ms"), "{error}");
+            assert!(start.elapsed() < std::time::Duration::from_secs(15), "blocking child was not stopped promptly");
+        }
+        assert_eq!(system.forces, before);
+        assert_eq!(virial.w, 7.0);
     }
 }
 #[test]
@@ -339,4 +358,332 @@ fn malformed_json_diagnostics_are_bounded() {
         "unbounded diagnostic length {}",
         error.len()
     );
+}
+
+fn runner_toml(python: &str, hash: &str, version: &str) -> String {
+    format!(
+        r#"units = "real"
+[structure]
+type = "fcc"
+lattice_constant = 3.6
+replicas = [1, 1, 1]
+element = "Cu"
+mass = 63.546
+[model]
+type = "ase_emt"
+python = {python:?}
+ase_version = {version:?}
+model_sha256 = {hash:?}
+atomic_numbers = [29, 29, 29, 29]
+composition = "total"
+[integrator]
+type = "velocity_verlet"
+dt = 0.0001
+[run]
+steps = 2
+initial_temperature = 20.0
+log_every = 100
+"#
+    )
+}
+
+#[test]
+fn external_toml_runs_total_provider_and_reports_real_stress_metadata() {
+    use modena_core::{io::input::InputConfig, runner::Simulation};
+    let (_dir, python) = fixture(RUNNER_VALID);
+    let config = InputConfig::from_str(&runner_toml(&python, &"a".repeat(64), "3.29.0")).unwrap();
+    let mut sim =
+        Simulation::from_config_without_outputs(&config, std::path::Path::new(".")).unwrap();
+    assert_eq!(sim.system().atomic_numbers, vec![29; 4]);
+    let metadata = serde_json::to_value(sim.metadata()).unwrap();
+    assert_eq!(metadata["pressure_status"], "unconstrained_provider_stress");
+    assert_eq!(metadata["provider"]["provider"], "ase_emt");
+    let summary = sim.run().unwrap();
+    assert_eq!(summary.conservation.diagnostics.unwrap().samples, 3);
+    assert!(
+        (summary.final_energies.potential - 2.0 * modena_core::external::EV_TO_KCAL_MOL).abs()
+            < 1e-10
+    );
+    let expected_w = -3.6_f64.powi(3) * 0.6 * modena_core::external::EV_TO_KCAL_MOL;
+    assert!((summary.final_energies.virial - expected_w).abs() < 1e-10);
+    let expected_pressure = (2.0 * summary.final_energies.kinetic + expected_w)
+        / (3.0 * 3.6_f64.powi(3))
+        * config.unit_factors.unwrap().pressure;
+    assert!((summary.final_energies.pressure - expected_pressure).abs() < 1e-9);
+}
+
+#[test]
+fn external_toml_rejects_unsupported_coupling_before_launch() {
+    use modena_core::io::input::InputConfig;
+    let valid = runner_toml("/must/not/launch", &"a".repeat(64), "3.29.0");
+    for (text, expected) in [
+        (
+            valid.replace("units = \"real\"", "units = \"reduced\""),
+            "real",
+        ),
+        (
+            valid.replace("composition = \"total\"", "composition = \"residual\""),
+            "composition",
+        ),
+        (
+            valid.replace("mass = 63.546", "mass = 63.546\ncharge = 1.0"),
+            "charges",
+        ),
+        (format!("{valid}\n[constraints]\nbonds = []"), "constraints"),
+        (
+            format!(
+                "{valid}\n[electrostatics]\nkappa = 0.3\nreal_cutoff = 3.0\nkspace_cutoff = 2.0"
+            ),
+            "electrostatics",
+        ),
+        (valid.replace("mass = 63.546\n", ""), "mass"),
+        (
+            valid.replace("[29, 29, 29, 29]", "[0, 29, 29, 29]"),
+            "atomic_numbers",
+        ),
+        (format!("{valid}\n[topology]\nbonds = []"), "topology"),
+        (
+            format!("{valid}\n[barostat]\ntype = \"berendsen\"\ntarget_pressure = 1.0"),
+            "barostat",
+        ),
+        (
+            valid.replace(
+                "composition = \"total\"",
+                "composition = \"total\"\npbc = [true, false, true]",
+            ),
+            "pbc",
+        ),
+    ] {
+        let error = InputConfig::from_str(&text).unwrap_err().to_string();
+        assert!(error.contains(expected), "expected {expected}: {error}");
+    }
+}
+
+const RUNNER_VALID: &str = "n=len(request['atomic_numbers']); print(json.dumps({'protocol':'modena-ase-emt-v1','action':'evaluate','identity':identity,'evaluation':{'energy_ev':2.0,'forces_ev_per_angstrom':[[0.0,0.0,0.0]]*n,'stress_ev_per_angstrom3':[[0.1,0.0,0.0],[0.0,0.2,0.0],[0.0,0.0,0.3]]}}))";
+
+fn build_runner(text: &str, dir: &std::path::Path) -> modena_core::Simulation {
+    let config = modena_core::InputConfig::from_str(text).unwrap();
+    modena_core::Simulation::from_config_without_outputs(&config, dir).unwrap()
+}
+
+#[test]
+fn provider_evaluation_error_emits_failed_at_unlogged_integration_step() {
+    let (dir, python) = fixture(RUNNER_VALID);
+    let mut sim = build_runner(&runner_toml(&python, &"a".repeat(64), "3.29.0"), dir.path());
+    // A working real subprocess during setup becomes an actual child failure.
+    std::fs::write(&python, "#!/usr/bin/env python3\nimport sys\nsys.exit(7)\n").unwrap();
+    let mut events = Vec::new();
+    let error = sim
+        .run_streaming(None, |event| events.push(event.clone()))
+        .unwrap_err();
+    assert!(error.to_string().contains("7"), "{error}");
+    assert!(
+        matches!(events.last(), Some(modena_core::RunEvent::Failed { step: 1, error }) if error.contains("7")),
+        "{events:?}"
+    );
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, modena_core::RunEvent::Finished { .. })));
+}
+
+#[test]
+fn external_checkpoint_checks_atomic_numbers_runtime_identity_and_transport_independence() {
+    use modena_core::{io::restart, InputConfig, Simulation};
+    let (dir, python) = fixture(RUNNER_VALID);
+    let text = runner_toml(&python, &"a".repeat(64), "3.29.0");
+    let mut sim = build_runner(&text, dir.path());
+    sim.run().unwrap();
+    let path = dir.path().join("state.chk");
+    sim.write_checkpoint(&path).unwrap();
+    let cp = restart::load(&path).unwrap();
+    assert_eq!(
+        cp.continuation.as_ref().unwrap().atomic_numbers,
+        vec![29; 4]
+    );
+    let resume = format!("{text}\nrestore_file = \"state.chk\"\n");
+    let restored = build_runner(&resume, dir.path());
+    assert_eq!(restored.system().positions, sim.system().positions);
+    assert_eq!(restored.system().velocities, sim.system().velocities);
+    assert_eq!(restored.system().forces, sim.system().forces);
+    assert_eq!(restored.current_step(), 2);
+    // Executable location and timeout have no physical meaning.
+    let alternate = dir.path().join("alternate-python");
+    std::fs::copy(&python, &alternate).unwrap();
+    let transport_only = resume
+        .replace(&python, alternate.to_str().unwrap())
+        .replace(
+            "composition = \"total\"",
+            "composition = \"total\"\ntimeout_ms = 10000",
+        );
+    assert_eq!(
+        build_runner(&transport_only, dir.path()).system().forces,
+        sim.system().forces
+    );
+    for changed in [
+        resume.replace("[29, 29, 29, 29]", "[28, 29, 29, 29]"),
+        resume.replace(&"a".repeat(64), &"b".repeat(64)),
+        resume.replace("3.29.0", "3.28.0"),
+        resume.replace(
+            "composition = \"total\"",
+            "composition = \"total\"\nasap_cutoff = true",
+        ),
+    ] {
+        let result = InputConfig::from_str(&changed)
+            .and_then(|c| Simulation::from_config_without_outputs(&c, dir.path()));
+        let error = result
+            .err()
+            .expect("changed physical identity accepted")
+            .to_string();
+        assert!(
+            error.contains("physical identity")
+                || error.contains("pin mismatch")
+                || error.contains("asap_cutoff"),
+            "{error}"
+        );
+    }
+    // A valid newly discovered runtime identity (same source/version pins,
+    // different NumPy) must not restore old mechanics.
+    let script = std::fs::read_to_string(&python).unwrap();
+    std::fs::write(&python, script.replace("2.5.4", "2.5.5")).unwrap();
+    let c = InputConfig::from_str(&resume).unwrap();
+    let error = Simulation::from_config_without_outputs(&c, dir.path())
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("physical identity"), "{error}");
+    std::fs::write(&python, script).unwrap();
+    // An external checkpoint cannot use the legacy native unspecified-Z default.
+    let mut cp = cp;
+    cp.continuation.as_mut().unwrap().atomic_numbers.clear();
+    restart::save(&path, &cp).unwrap();
+    assert!(Simulation::from_config_without_outputs(&c, dir.path()).is_err());
+}
+
+const NATIVE_TOML: &str = r#"[structure]
+type = "fcc"
+lattice_constant = 1.6
+replicas = [1,1,1]
+[model]
+type = "lennard_jones"
+sigma = 1.0
+epsilon = 1.0
+cutoff = 2.5
+[integrator]
+type = "velocity_verlet"
+dt = 0.005
+[run]
+steps = 1
+initial_temperature = 1.0
+"#;
+
+#[test]
+fn older_native_v2_checkpoint_keeps_signature_and_unspecified_z_compatibility() {
+    use modena_core::io::restart;
+    let dir = tempfile::tempdir().unwrap();
+    let mut sim = build_runner(NATIVE_TOML, dir.path());
+    sim.run().unwrap();
+    let path = dir.path().join("state.chk");
+    sim.write_checkpoint(&path).unwrap();
+    let cp = restart::load(&path).unwrap();
+    let state = cp.continuation.unwrap();
+    // Hand-written legacy physical-v2 identity: no atomic-number/provider keys.
+    let expected = serde_json::json!({"schema":"modena-physical-v2","model":{"type":"lennard_jones","sigma":1.0,"epsilon":1.0,"cutoff":2.5,"types":[],"overrides":[],"mixing":"lorentz_berthelot"},"integrator":{"type":"velocity_verlet","dt":0.005},"thermostat":null,"barostat":null,"electrostatics":null,"topology":null,"constraints":null,"water_geometry":null,"initialization_seed":42,"initial_temperature":1.0,"masses":[1.0,1.0,1.0,1.0],"species":[0,0,0,0],"charges":[0.0,0.0,0.0,0.0],"elements":["X","X","X","X"],"output_unit_factors":null});
+    assert_eq!(state.physical_signature, expected);
+    let text = std::fs::read_to_string(&path).unwrap();
+    let (header, payload) = text.split_once('\n').unwrap();
+    let mut payload: serde_json::Value = serde_json::from_str(payload).unwrap();
+    payload["continuation"]
+        .as_object_mut()
+        .unwrap()
+        .remove("atomic_numbers");
+    std::fs::write(
+        &path,
+        format!("{header}\n{}\n", serde_json::to_string(&payload).unwrap()),
+    )
+    .unwrap();
+    let restored = build_runner(
+        &format!("{NATIVE_TOML}\nrestore_file = \"state.chk\"\n"),
+        dir.path(),
+    );
+    assert_eq!(restored.system().positions, sim.system().positions);
+    assert_eq!(restored.system().forces, sim.system().forces);
+    assert!(restored.metadata().provider.is_none());
+}
+
+#[test]
+fn checkpoint_rejects_nonempty_atomic_number_buffer_with_wrong_length() {
+    let dir = tempfile::tempdir().unwrap();
+    let sim = build_runner(NATIVE_TOML, dir.path());
+    let path = dir.path().join("state.chk");
+    sim.write_checkpoint(&path).unwrap();
+    let mut cp = modena_core::io::restart::load(&path).unwrap();
+    cp.continuation.as_mut().unwrap().atomic_numbers = vec![29];
+    assert!(modena_core::io::restart::save(&path, &cp).is_err());
+}
+
+#[test]
+fn real_ase_runner_split_continuation_and_selected_z_mutation() {
+    let Ok(python) = std::env::var("MODENA_ASE_PYTHON") else {
+        eprintln!("SKIP ASE runner/restart/selected-Z: set MODENA_ASE_PYTHON");
+        return;
+    };
+    let id = describe_ase_emt(&python, 30000).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let text = runner_toml(&python, &id.model_sha256, &id.ase_version);
+    let mut first = build_runner(&text, dir.path());
+    let a = first.run().unwrap();
+    assert_eq!(a.conservation.diagnostics.unwrap().samples, 3);
+    assert_eq!(a.metadata.provider.as_ref(), Some(&id));
+    first.write_checkpoint(&dir.path().join("ase.chk")).unwrap();
+    let mut resumed = build_runner(&format!("{text}\nrestore_file = \"ase.chk\""), dir.path());
+    let b = resumed.run().unwrap();
+    let mut full = build_runner(&text.replace("steps = 2", "steps = 4"), dir.path());
+    let c = full.run().unwrap();
+    assert_eq!(resumed.current_step(), 4);
+    assert_eq!(resumed.system().positions, full.system().positions);
+    assert_eq!(resumed.system().velocities, full.system().velocities);
+    assert_eq!(resumed.system().forces, full.system().forces);
+    assert_eq!(b.final_energies.total, c.final_energies.total);
+    assert_eq!(b.final_energies.virial, c.final_energies.virial);
+    // Z is explicit model input, independent of the cosmetic Cu label/species.
+    let mut changed = build_runner(
+        &text.replace("[29, 29, 29, 29]", "[28, 29, 29, 29]"),
+        dir.path(),
+    );
+    let changed_summary = changed.run().unwrap();
+    assert!((changed_summary.conservation.e0 - a.conservation.e0).abs() > 1e-6);
+    assert_eq!(changed.system().species, vec![0; 4]);
+    assert_eq!(changed.system().elements, vec!["Cu"; 4]);
+    let resumed_changed = format!(
+        "{}\nrestore_file = \"ase.chk\"",
+        text.replace("[29, 29, 29, 29]", "[28, 29, 29, 29]")
+    );
+    let c = modena_core::InputConfig::from_str(&resumed_changed).unwrap();
+    assert!(modena_core::Simulation::from_config_without_outputs(&c, dir.path()).is_err());
+    eprintln!(
+        "EXECUTED ASE {} runner, split restart and selected-Z mutation",
+        id.ase_version
+    );
+}
+
+#[test]
+fn external_runner_checks_z_count_before_process_launch_and_keeps_ff_species_separate() {
+    let invalid = runner_toml("/must/not/launch", &"a".repeat(64), "3.29.0")
+        .replace("[29, 29, 29, 29]", "[29]");
+    let config = modena_core::InputConfig::from_str(&invalid).unwrap();
+    let error =
+        modena_core::Simulation::from_config_without_outputs(&config, std::path::Path::new("."))
+            .err()
+            .unwrap()
+            .to_string();
+    assert!(error.contains("atomic_numbers"), "{error}");
+    let (dir, python) = fixture(RUNNER_VALID);
+    let text = runner_toml(&python, &"a".repeat(64), "3.29.0").replace(
+        "type = \"fcc\"\nlattice_constant = 3.6\nreplicas = [1, 1, 1]\nelement = \"Cu\"\nmass = 63.546",
+        "type = \"random_alloy\"\nlattice_constant = 3.6\nreplicas = [1,1,1]\n[[structure.species]]\nelement = \"Cu\"\nmass = 63.546\nconcentration = 0.0\n[[structure.species]]\nelement = \"Ni\"\nmass = 58.6934\nconcentration = 1.0"
+    );
+    let sim = build_runner(&text, dir.path());
+    assert_eq!(sim.system().species, vec![1; 4]);
+    assert_eq!(sim.system().elements, vec!["Ni"; 4]);
+    assert_eq!(sim.system().atomic_numbers, vec![29; 4]);
 }

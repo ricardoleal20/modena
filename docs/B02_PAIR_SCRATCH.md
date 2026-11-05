@@ -16,6 +16,9 @@ simulations is supported for correctness, not promised to scale in throughput.
 Each useful partition owns a `3N` f64 force vector plus energy and scalar
 virial. Every pass resets all used force/scalar elements. Partitions cover
 contiguous half-pair chunks, with at most the current pool's worker count.
+Local scalar sums are written back once per partition. Disjoint force output
+blocks reduce the dense partitions in parallel; this remains a dense O(TN)
+workspace, not a sparse/touched-atom accumulator.
 Parallel pool shrinkage drops excess partitions. Remaining vectors retain
 their largest atom-count capacity; serial/empty calls leave the idle cache
 untouched. Drop releases the whole workspace. Thus retained memory is O(TN),
@@ -51,7 +54,7 @@ rtk proxy "$PY" bench/pair_scratch.py --before "$BASELINE" --after "$CANDIDATE" 
   --repetitions 5 --output "$FRESH_EVIDENCE"
 ```
 
-The stdlib-only Python >=3.11 driver alternates AB/BA pairs after separate
+The stdlib-only POSIX Python >=3.11 driver alternates AB/BA pairs after separate
 discarded fresh-process warmups. It retains every input, stdout/stderr, full
 checkpoint, thermo log and wall/user/system CPU/RSS/load row, plus source and
 binary hashes. It rejects existing output directories, failed subprocesses,
@@ -66,5 +69,96 @@ replicas [6,6,6], [8,8,8], [10,5,25], [10,10,25], respectively. Perturbed
 static profiling yields 33,696 / 79,872 / 195,000 / 390,000 half pairs;
 N=864/2048 are serial controls even in larger pools.
 
-Measured acceptance and limitations will be recorded after paired ordinary
-release measurements; this description alone makes no runtime claim.
+## Measured acceptance and limits
+
+The retained block variant has a reproducible scoped full-CLI benefit at
+N=5000, four threads on this shared Apple M3 Pro (11 logical CPUs). Two separate
+1000-step series gave before/after median ratios 1.108× (three pairs) and
+1.086× (five pairs): 1.356→1.248 seconds in the complete matrix. All eight paired
+ratios favored the candidate. This supports retaining the variant for that
+case; it does not establish a general speedup for all systems, pools or hosts.
+
+The initial dense variant used a serial force reduction. It allocated no warm
+force buffers but regressed the four large parallel cases by about 20–30%,
+with higher median RSS. It was rejected. The final variant combines local
+energy/virial scalars and parallel output blocks; their individual performance
+contributions were not isolated. Both variants and all negative rows remain.
+
+Ordinary-release full-CLI results, 1000 steps and five AB/BA pairs per case:
+
+| N | threads | before median s | block median s | before/block |
+|---:|---:|---:|---:|---:|
+| 864 | 1 | 0.626840 | 0.638524 | 0.982× |
+| 864 | 4 | 0.619774 | 0.615893 | 1.006× |
+| 864 | 8 | 0.611273 | 0.611487 | 1.000× |
+| 2048 | 1 | 1.784583 | 1.820879 | 0.980× |
+| 2048 | 4 | 1.846600 | 1.854466 | 0.996× |
+| 2048 | 8 | 1.774144 | 1.761625 | 1.007× |
+| 5000 | 1 | 4.094979 | 4.072741 | 1.005× |
+| 5000 | 4 | 1.355683 | 1.248346 | 1.086× |
+| 5000 | 8 | 1.060009 | 1.024522 | 1.035× |
+| 10000 | 1 | 8.487229 | 8.619399 | 0.985× |
+| 10000 | 4 | 2.739052 | 2.695475 | 1.016× |
+| 10000 | 8 | 2.032944 | 1.944128 | 1.046× |
+
+Serial controls varied by roughly 2%; no serial performance benefit is claimed.
+N5000/8T's separate pilot ratio was 1.033×. Larger N results were noisier:
+separate 3000-step/five-pair N10000 repeats gave ratios 1.052× at 4T and 1.027×
+at 8T, with regressing individual pairs. These durations/series are kept
+separate; their samples are not pooled into the table above.
+
+The normal host pool count is 11. A separate 11T/1000-step series gave 1.069×
+at N5000 (all five paired ratios positive), but **0.791× at N10000**, as both
+binaries slowed sharply during rising host load. A separate 11T/3000-step
+N10000 repeat gave 1.029×, with one regressing pair. Default-pool large-N wall
+performance therefore remains uncertain. No uniform default/large-N speedup
+is claimed, and the negative series is retained in full.
+
+Child CPU and wall time are distinct. For N5000/4T in the complete matrix,
+median child user time fell 4.367→4.100 s while system time rose 0.124→0.143 s.
+At N5000/11T, wall time fell while user/system CPU rose 5.591/1.115→5.854/1.585 s.
+N10000/11T's long repeat also used more child CPU. Thus a wall improvement does
+not imply lower CPU consumption or energy use. Recorded one-minute loads
+ranged 3.45–8.63 in the complete block matrix, 6.22–22.07 in the default-count
+series, and 12.43–24.51 in the long repeats. Our other build/test jobs were idle;
+unrelated host work remained active. These are local shared-host experiments.
+
+Allocation/static profiles confirm zero warmed force-sized allocations at
+parallel N5000/10000 and T4/8/11; baseline allocated 8 buffers per pass at 4T,
+16 at 8T and 16 at 11T. All static gates passed, with maximum force-component
+error 5.67e-15. All ordinary CLI samples passed complete finite matched-physics
+checks; all one-thread full checkpoint/thermo comparisons were exact.
+
+Fresh-model retained scratch bytes (including partition metadata) are:
+
+| N | 4T | 8T | 11T |
+|---:|---:|---:|---:|
+| 5000 | 480,224 | 960,384 | 1,320,504 |
+| 10000 | 960,224 | 1,920,384 | 2,640,504 |
+
+This increases idle live memory. At N10000/8T, the isolated Rust-requested
+allocated-byte peak fell 14.538→12.618 MB, while full-CLI median OS RSS in the
+complete matrix rose 29.098→33.915 MB. RSS was mixed across cases; neither a
+general RSS reduction nor bounded memory independent of T/N is claimed.
+
+Baseline source `7c7fa34` and accepted production source `0cea614` were clean
+builds in the same worktree using rustc 1.97.1/aarch64-apple-darwin and identical
+unset Rust flags. Test-only follow-up `a03dab0` leaves all 48 measured core/CLI
+production source/manifest hashes and the retained CLI bytes identical. Raw
+untracked local artifacts under `target/b02-evidence/` are unavailable in a
+fresh clone; rebuild/rerun to reproduce:
+
+- `baseline/`, `dense/`, `block/`: immutable CLI/profile binaries, compiler,
+  clean-source epochs, binary hashes and all allocation/static profile rows.
+- `dense-full-cli/`: rejected 144-run series and retrospective box/time guard
+  audit. The loaded driver hash/initial source are distinct from the later
+  guard committed as `0248372`; no timing rows were replaced.
+- `block-pilot/`, `block-full-cli/`, `block-default11/`,
+  `block-long-n10000/`: each separate raw series, every input/log/checkpoint,
+  wall/user/system/RSS/load row, paired ratios and source/binary provenance.
+- `default11-profiles.json`, `production-equivalence.json`: non-power-of-two
+  static/allocation checks and final test-only production-equivalence proof.
+
+The separate B02 verification campaign is responsible for broad workspace,
+optional Python/ASE, GPU compile/lint, MSRV, standalone harness and scientific
+checks. GPU runtime/MPI and other-engine performance are outside this result.

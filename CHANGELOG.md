@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- Add B02's model-owned dense native CPU pair workspace with a nonblocking
-  serial fallback for shared/nested calls. Preserve serial arithmetic and
-  bounded snapshot neighbors; retain O(TN) high-water scratch memory.
+- Add B02's model-owned dense native CPU pair workspace and parallel output
+  block reduction, with a nonblocking serial fallback for shared/nested calls.
+  Preserve serial arithmetic and bounded snapshot neighbors; retain O(TN)
+  high-water scratch memory.
   **Breaking Rust API:** replace `PairForceModel { potential }` literals with
   `new` or `from_boxed`. See [B02 migration and limits](docs/B02_PAIR_SCRATCH.md).
 

@@ -1,0 +1,32 @@
+{
+  "timestamp_utc": "2026-11-05T05:51:19.042659+00:00",
+  "base_commit": "f166399070b2d6ebfd91f51e5934c132f04d46c0",
+  "markdown_documents": 25,
+  "local_links_checked": 296,
+  "missing_local_links": [],
+  "unbalanced_code_fences": [],
+  "report_words": 4253,
+  "report_body_words": 3760,
+  "abstract_words": 185,
+  "improvement_areas": 8,
+  "backlog_ids": [
+    "B01",
+    "B02",
+    "B03",
+    "B04",
+    "B05",
+    "B06",
+    "B07",
+    "B08",
+    "B09",
+    "B10",
+    "B11",
+    "B12"
+  ],
+  "missing_phase_deliverables": [],
+  "tracked_core_python_bench_changes": [],
+  "external_urls_rechecked_in_this_validation": false,
+  "new_numerical_campaign": false,
+  "baseline_workspace_tests": "284 passed, 1 ignored; recorded in phase1_scope/VERIFICATION.md; not rerun for documentation-only changes",
+  "passed": true
+}

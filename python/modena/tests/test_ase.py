@@ -43,6 +43,22 @@ class CalculatorTests(unittest.TestCase):
         minus = self.atoms.get_potential_energy()
         self.assertAlmostEqual(force, -(plus-minus)/2e-5, places=9)
 
+    def test_sub_tolerance_motion_across_singularity_invalidates_cache(self):
+        from ase.calculators.calculator import CalculationFailed
+        self.atoms.positions[1, 0] = 1e-7 + 3e-16
+        self.atoms.get_potential_energy()
+        self.atoms.positions[1, 0] = 1e-7 - 3e-16
+        with self.assertRaisesRegex(CalculationFailed, "singular"):
+            self.atoms.get_potential_energy()
+        self.assertEqual(self.calc.results, {})
+
+    def test_noncalculating_probe_returns_none_without_launch(self):
+        # A missing executable makes any accidental evaluation observable.
+        self.calc.set(binary="/nonexistent/modena")
+        self.assertIsNone(self.calc.get_property("energy", allow_calculation=False))
+        self.assertIsNone(self.calc.get_property("energy", self.atoms, allow_calculation=False))
+        self.assertEqual(self.calc.results, {})
+
     def test_changes_invalidate_and_parameter_changes_reset(self):
         from ase.calculators.calculator import CalculatorSetupError
         e = self.atoms.get_potential_energy()

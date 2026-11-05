@@ -4,13 +4,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ForceModel, LennardJones, ModenaError, NeighborList, PairForceModel, Result, SimBox, System,
-    Vec3, Virial,
+    LennardJones, ModenaError, NeighborList, PairForceModel, Result, SimBox, System, Vec3, Virial,
 };
 
 pub const SNAPSHOT_PROTOCOL: &str = "modena-native-lj-v1";
 pub const MAX_SNAPSHOT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_SNAPSHOT_ATOMS: usize = 100_000;
+const MAX_SNAPSHOT_PAIRS: usize = 1_000_000;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -60,6 +60,10 @@ fn invalid(message: &str) -> ModenaError {
 /// Evaluate through the existing native pair path. All lengths are Angstrom,
 /// all energies eV; dimensional consistency gives forces in eV/Angstrom.
 pub fn evaluate_lj_snapshot(input: &LjSnapshot) -> Result<SnapshotEvaluation> {
+    evaluate_with_pair_budget(input, MAX_SNAPSHOT_PAIRS)
+}
+
+fn evaluate_with_pair_budget(input: &LjSnapshot, max_pairs: usize) -> Result<SnapshotEvaluation> {
     if input.protocol != SNAPSHOT_PROTOCOL || input.units != SnapshotUnits::default() {
         return Err(invalid("unsupported snapshot protocol or units"));
     }
@@ -134,14 +138,15 @@ pub fn evaluate_lj_snapshot(input: &LjSnapshot) -> Result<SnapshotEvaluation> {
     let mut system = System::new(SimBox::from_array(lengths));
     system.resize(n);
     for (i, p) in input.positions_angstrom.iter().enumerate() {
-        system.set_pos(i, Vec3(*p));
-    }
-    system.wrap_positions();
-    if system.positions.iter().any(|v| !v.is_finite()) {
-        return Err(invalid("snapshot position wrapping overflow"));
+        // Quotient-times-length subtraction can round away a remainder
+        // that is still representable, even on an exactly integral input.
+        system.set_pos(
+            i,
+            Vec3(std::array::from_fn(|k| p[k].rem_euclid(lengths[k]))),
+        );
     }
     let mut neighbors = NeighborList::with_skin(input.cutoff_angstrom, input.skin_angstrom);
-    neighbors.build(&system);
+    neighbors.rebuild_bounded(&system, max_pairs)?;
     for &(i, j) in neighbors.pairs() {
         if system
             .box_size
@@ -157,7 +162,8 @@ pub fn evaluate_lj_snapshot(input: &LjSnapshot) -> Result<SnapshotEvaluation> {
         input.epsilon_ev,
         input.cutoff_angstrom,
     )?);
-    let energy = model.compute(&mut system, &mut Virial::default(), &mut neighbors)?;
+    let energy =
+        model.compute_with_built_neighbors(&mut system, &mut Virial::default(), &neighbors)?;
     if !energy.is_finite() || system.forces.iter().any(|v| !v.is_finite()) {
         return Err(ModenaError::Physics(
             "nonfinite native LJ snapshot output".into(),
@@ -173,4 +179,36 @@ pub fn evaluate_lj_snapshot(input: &LjSnapshot) -> Result<SnapshotEvaluation> {
             .map(|f| [f[0], f[1], f[2]])
             .collect(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tiny_snapshot_budget_rejects_dense_inputs_before_force_or_overlap_check() {
+        let mut input = LjSnapshot {
+            protocol: SNAPSHOT_PROTOCOL.into(),
+            units: SnapshotUnits::default(),
+            atomic_numbers: vec![18; 4],
+            positions_angstrom: vec![[0., 0., 0.], [1., 0., 0.], [2., 0., 0.], [3., 0., 0.]],
+            cell_angstrom: [[20., 0., 0.], [0., 20., 0.], [0., 0., 20.]],
+            pbc: [true; 3],
+            sigma_angstrom: 1.,
+            epsilon_ev: 1.,
+            cutoff_angstrom: 4.,
+            skin_angstrom: 0.,
+        };
+        assert!(evaluate_with_pair_budget(&input, 6)
+            .unwrap()
+            .energy_ev
+            .is_finite());
+        for coincident in [false, true] {
+            if coincident {
+                input.positions_angstrom.fill([0.; 3]);
+            }
+            let err = evaluate_with_pair_budget(&input, 5).unwrap_err();
+            assert!(err.to_string().contains("5 neighbor pairs"), "{err}");
+        }
+    }
 }

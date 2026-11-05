@@ -30,11 +30,24 @@ print('fixture stdout'); print('fixture stderr',file=sys.stderr)
 if fault=='exit': sys.exit(17)
 steps=run['steps']-(fault=='steps')
 value=2.0 if fault in ['checkpoint','thermo'] and mode=='persistent' else 1.0
+signature=dict(schema="modena-physical-v2", model=dict(type="ase_emt", provider=identity,
+ atomic_numbers=[29]*n, composition="total", pbc=[True]*3, asap_cutoff=False),
+ masses=[1.0]*n, elements=["Cu"]*n, charges=[0.0]*n, species=[0]*n,
+ initial_temperature=0.01987204259, initialization_seed=42, integrator=dict(type="velocity_verlet",dt=0.00025659715885743687),
+ output_unit_factors=[1.,1.,63.546,0.38971592844314823,503.2195334078136,68568.42296625092,18.222615344675418],
+ barostat=None, constraints=None, electrostatics=None, thermostat=None, topology=None, water_geometry=None)
 cp=dict(atoms=n,step=steps,time=steps*0.0001,box_edges=[3.61]*3,box_vectors=None,
  positions=[0.0]*(3*n),velocities=[0.0]*(3*n),continuation=dict(forces=[value if fault=='checkpoint' else 1.0]*(3*n),
- potential_energy=1.0,virial=1.0,physical_signature=dict(provider=identity)))
+ potential_energy=1.0,virial=1.0,physical_signature=signature))
+if fault=='missing-signature': del cp['continuation']['physical_signature']
+if fault=='empty-signature': cp['continuation']['physical_signature']={}
+if fault=='malformed-model': signature['model']['provider']={}
+if fault=='missing-dt': del signature['integrator']['dt']
 (deck.parent/run['restart_file']).write_text('MODENA_RESTART 2\n'+json.dumps(cp)+'\n')
-(deck.parent/run['log_file']).write_text('step,potential\n'+''.join(f'{i},{value if fault=="thermo" else 1.0}\n' for i in range(run['steps']+1)))
+columns=['step','time','kinetic','potential','total','temperature','pressure','virial']
+if fault=='step-only': columns=['step']
+if fault=='duplicate-column': columns[-1]='pressure'
+(deck.parent/run['log_file']).write_text(','.join(columns)+'\n'+''.join(','.join(map(str,([i,i*0.0001,1.,value if fault=="thermo" else 1.,2.,1.,1.,1.][:len(columns)])))+'\n' for i in range(run['steps']+1)))
 if fault=='identity' and mode=='persistent': identity['numpy_version']='wrong'
 print(f'MODENA: finished {steps} steps in 1s')
 print('  run metadata = '+json.dumps(dict(provider=identity,pressure_status='unconstrained_provider_stress')))
@@ -106,6 +119,17 @@ class AseTransportTests(unittest.TestCase):
                 self.assertTrue(data['error'])
                 self.assertTrue(list(out.glob('*/stdout')))
                 self.assertFalse(data.get('summary'))
+
+    def test_shared_omissions_or_malformed_evidence_fail_before_parity(self):
+        for fault in ['missing-signature', 'empty-signature', 'malformed-model',
+                      'missing-dt', 'step-only', 'duplicate-column']:
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                result, out = self.invoke(tmp, fault)
+                data = json.loads((out / 'ase_transport.json').read_text())
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertFalse(data['passed'])
+                self.assertFalse(data['runs'][0]['parity'])
+                self.assertFalse(data['summary'])
 
     def test_existing_directory_is_never_overwritten(self):
         with tempfile.TemporaryDirectory() as tmp:

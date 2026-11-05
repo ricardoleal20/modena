@@ -66,7 +66,13 @@ positive finite diagonal orthorhombic cells are supported. Sigma/cutoff must be
 positive, epsilon/skin nonnegative, all finite. Cutoff plus skin must be at
 most half each box length. Minimum-image neighbor pairs with squared distance
 below 1e-14 Angstrom² are rejected rather than silently skipped. Input is
-limited to 8 MiB, 100000 atoms and a dense native neighbor grid of 1000000 cells;
+limited to 8 MiB, 100000 atoms and a dense native neighbor grid of 1000000 cells.
+The snapshot streams candidates and stores at most 1000000 distinct half-pairs
+within cutoff plus skin. Its single pair vector requests at most 16 MB on a
+64-bit host (1000000 pairs of indices); this is not a total memory or CPU limit.
+Neighbor construction fails before appending pair 1000001. Ordinary MD uses
+its existing unrestricted neighbor list. Large periodic positions are reduced
+with remainder arithmetic before binning;
 overflow/nonfinite evaluation fails explicitly. There are no optional ASE or
 NumPy dependencies for this command. The optional
 [`modena.ase.ModenaCalculator`](../../python/README.md#modena-as-an-optional-ase-calculator)

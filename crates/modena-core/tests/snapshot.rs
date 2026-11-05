@@ -39,6 +39,27 @@ fn native_snapshot_is_dimensionally_consistent_and_has_no_mass_dependence() {
 }
 
 #[test]
+fn large_signed_periodic_translations_preserve_energy_and_force() {
+    let mut input = pair();
+    input.sigma_angstrom = 1.;
+    input.epsilon_ev = 1.;
+    for (large, wrapped, other) in [
+        (100_000_000_000_000_016., 16., 17.),
+        (-100_000_000_000_000_016., 4., 5.),
+    ] {
+        input.positions_angstrom = vec![[wrapped, 0., 0.], [other, 0., 0.]];
+        let reference = evaluate_lj_snapshot(&input).unwrap();
+        input.positions_angstrom[0][0] = large;
+        let translated = evaluate_lj_snapshot(&input).unwrap();
+        assert_eq!(
+            translated.forces_ev_per_angstrom,
+            reference.forces_ev_per_angstrom
+        );
+        assert_eq!(translated.energy_ev, reference.energy_ev);
+    }
+}
+
+#[test]
 fn native_snapshot_rejects_nonfinite_direct_rust_inputs_and_resource_overflow() {
     for v in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         for field in 0..6 {

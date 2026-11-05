@@ -96,13 +96,21 @@ class ModenaCalculator(Calculator):
                     positions_angstrom=atoms.positions.tolist(), cell_angstrom=cell.tolist(),
                     pbc=atoms.pbc.tolist(), **{k: values[k] for k in _MODEL_KEYS})
 
+    def check_state(self, atoms, tol=0.0):
+        # Distinct representable coordinates may straddle the singularity
+        # threshold even when closer than ASE's default cache tolerance.
+        return super().check_state(atoms, tol=tol)
+
     def get_property(self, name, atoms=None, allow_calculation=True):
         # ASE's ordinary cache compares positions/numbers/cell/PBC/charge/spin,
         # but not constraints. Validate on every access, including cache hits.
         try:
             if name not in self.implemented_properties:
                 raise PropertyNotImplementedError(f"{name} is not available from ModenaCalculator")
-            self._request(atoms if atoms is not None else self.atoms)
+            snapshot = atoms if atoms is not None else self.atoms
+            if snapshot is None and not allow_calculation:
+                return None
+            self._request(snapshot)
             return super().get_property(name, atoms, allow_calculation)
         except Exception:
             self.reset()

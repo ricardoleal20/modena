@@ -108,7 +108,19 @@ impl ForceModel for PairForceModel {
         // Skin-aware rebuild: cheap no-op when no atom has crossed the skin.
         neighbors.validate_pair_scales(system.n())?;
         neighbors.build(system);
+        self.compute_with_built_neighbors(system, virial, neighbors)
+    }
+}
 
+impl PairForceModel {
+    /// Shared pair pass. Caller has built the list for this exact system;
+    /// snapshots must consume their bounded list even with zero Verlet skin.
+    pub(crate) fn compute_with_built_neighbors(
+        &self,
+        system: &mut System,
+        virial: &mut Virial,
+        neighbors: &NeighborList,
+    ) -> Result<f64> {
         let cutoff2 = self.potential.cutoff2();
         let n = system.n();
         let box_size = system.box_size;

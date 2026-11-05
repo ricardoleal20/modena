@@ -127,9 +127,29 @@ def verify_run(directory, stdout, identity, atoms, steps):
     for key in ['potential_energy', 'virial']:
         if not math.isfinite(checkpoint['continuation'][key]):
             raise ValueError('invalid checkpoint energy/virial')
+    signature = checkpoint['continuation'].get('physical_signature')
+    # Validate the pinned deck's checkpoint contract before cross-run equality:
+    # the same missing physics in both transports is not evidence.
+    expected = dict(schema='modena-physical-v2', initialization_seed=42,
+                    masses=[1.0]*atoms, species=[0]*atoms, charges=[0.0]*atoms,
+                    elements=['Cu']*atoms, barostat=None, constraints=None,
+                    electrostatics=None, thermostat=None, topology=None, water_geometry=None,
+                    model=dict(type='ase_emt', provider=identity, atomic_numbers=[29]*atoms,
+                               pbc=[True]*3, composition='total', asap_cutoff=False))
+    if not isinstance(signature, dict) or any(k not in signature or signature[k] != v
+                                               for k, v in expected.items()):
+        raise ValueError('invalid checkpoint physical signature')
+    integ = signature.get('integrator')
+    factors = signature.get('output_unit_factors')
+    if (not isinstance(integ, dict) or integ.get('type') != 'velocity_verlet'
+            or not isinstance(factors, list) or len(factors) != 7
+            or any(type(v) not in (int, float) or not math.isfinite(v) or v <= 0
+                   for v in [integ.get('dt'), signature.get('initial_temperature'), *factors])):
+        raise ValueError('invalid checkpoint integrator, temperature or unit factors')
     with (directory / 'thermo.csv').open() as stream:
         thermo = list(csv.reader(stream))
-    if len(thermo) != steps + 2 or thermo[0][0] != 'step':
+    columns = ['step', 'time', 'kinetic', 'potential', 'total', 'temperature', 'pressure', 'virial']
+    if len(thermo) != steps + 2 or thermo[0] != columns:
         raise ValueError('thermo cadence/header mismatch')
     for index, row in enumerate(thermo[1:]):
         if int(row[0]) != index or len(row) != len(thermo[0]) or not all(math.isfinite(float(x)) for x in row):

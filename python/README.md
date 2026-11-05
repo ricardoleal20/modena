@@ -39,15 +39,18 @@ and partial PBC are rejected. Coincident or singular minimum-image pairs
 Only `energy` and `forces` are implemented. Stress requests raise ASE's
 `PropertyNotImplementedError`; no tensor stress is inferred from scalar virial.
 Atom positions/numbers/cell/PBC and calculator parameter changes invalidate the
-cache; constraints/charge/spin are checked even on cached accesses. Failures
+cache, including position changes below ASE's usual tolerance. Constraints,
+charge and spin are checked even on cached accesses. Failures
 clear results. Use `calc.set(...)` for changes to model parameters, `binary`
 or `timeout` (seconds, positive and finite). The executable is a single path or
 PATH name, passed without a shell; spaces within an executable path work.
 With `binary=None`, the existing wrapper's PATH/local build discovery is used.
 
 The [snapshot CLI protocol](../crates/modena-cli/README.md#native-lj-snapshot)
-caps input at 8 MiB, atom count at 100000 and dense neighbor grid at 1000000
-cells. This initial adapter is a scientific interchange path; it does not
+caps input at 8 MiB, atom count at 100000, the grid at 1000000 cells, and
+retained pairs within cutoff plus skin at 1000000 (up to 16 MB of requested
+pair storage on a 64-bit host). Sparse inputs are limited by their actual
+neighbor count. This initial adapter is a scientific interchange path; it does not
 establish bulk material accuracy or claim efficient large-scale ASE dynamics.
 
 MODENA is in early development. See the

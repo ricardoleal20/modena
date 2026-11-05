@@ -16,6 +16,7 @@
 //! their contributions. Empty systems do not erase previous contributions.
 
 use rayon::prelude::*;
+use std::sync::Mutex;
 
 use crate::error::Result;
 use crate::neighbor::NeighborList;
@@ -71,24 +72,41 @@ pub trait ForceModel: Send + Sync {
 ///
 /// Uses a *half* list (each pair `(i, j)` stored once) and applies Newton's
 /// third law — `f_i += fv`, `f_j -= fv` — so each pair is evaluated exactly
-/// once (half the pair work of the Phase-1 full list). Each rayon thread folds
-/// into its own `3N` force accumulator, then the per-thread accumulators are
-/// summed; this keeps the pair loop race-free without atomics.
+/// once. Parallel passes reuse at most one `3N` accumulator per useful worker.
+/// Concurrent callers use serial arithmetic when the workspace is leased;
+/// no Rayon worker blocks on another caller's fork/join work.
 pub struct PairForceModel {
     pub potential: Box<dyn PairPotential>,
+    scratch: Mutex<PairScratch>,
+}
+
+#[derive(Default)]
+struct PairScratch {
+    partitions: Vec<PairPartition>,
+}
+
+#[derive(Default)]
+struct PairPartition {
+    forces: Vec<f64>,
+    pe: f64,
+    w: f64,
 }
 
 impl PairForceModel {
     pub fn new(potential: impl PairPotential + 'static) -> Self {
         Self {
             potential: Box::new(potential),
+            scratch: Mutex::default(),
         }
     }
 
     /// Construct from an already-boxed potential (used by the config dispatch,
     /// which builds the potential dynamically from `ModelSpec`).
     pub fn from_boxed(potential: Box<dyn PairPotential>) -> Self {
-        Self { potential }
+        Self {
+            potential,
+            scratch: Mutex::default(),
+        }
     }
 }
 
@@ -150,6 +168,7 @@ impl PairForceModel {
                 cutoff2,
                 serial,
                 &mut system.forces,
+                &self.scratch,
             )
         } else {
             pair_pass(
@@ -163,6 +182,7 @@ impl PairForceModel {
                 cutoff2,
                 serial,
                 &mut system.forces,
+                &self.scratch,
             )
         };
 
@@ -210,6 +230,7 @@ impl PairForceModel {
                 cutoff2,
                 true, // serial
                 &mut system.forces,
+                &self.scratch,
             )
         } else {
             pair_pass(
@@ -223,6 +244,7 @@ impl PairForceModel {
                 cutoff2,
                 true, // serial
                 &mut system.forces,
+                &self.scratch,
             )
         };
         virial.w += w;
@@ -240,8 +262,7 @@ const SERIAL_PAIR_THRESHOLD: usize = 100_000;
 
 /// Evaluate the half pair list: accumulate forces directly into `forces_out`
 /// (serial; bit-identical to the former single-worker fold) or via bounded
-/// per-chunk scratch (parallel, `with_min_len` limits allocations to ~thread
-/// count per step). Returns `(PE, virial)`.
+/// model-owned per-chunk scratch (parallel). Returns `(PE, virial)`.
 ///
 /// Generic over the potential so the `LennardJones` fast path monomorphizes
 /// `energy_force` (inline + constant folding); the dyn path is unchanged.
@@ -257,90 +278,139 @@ fn pair_pass<P: PairPotential + ?Sized>(
     cutoff2: f64,
     serial: bool,
     forces_out: &mut [f64],
+    scratch: &Mutex<PairScratch>,
 ) -> (f64, f64) {
-    if serial {
-        // Accumulate straight into the caller-zeroed forces array: the
-        // addition sequence per pair is identical to the former single-worker
-        // rayon fold (0.0 + … per component), so 1-thread trajectories stay
-        // byte-identical — the G1 gate.
-        let mut pe = 0.0f64;
-        let mut w = 0.0f64;
-        for &(i, j) in pairs {
-            let ri = Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
-            let rj = Vec3::new(positions[3 * j], positions[3 * j + 1], positions[3 * j + 2]);
-            let d = box_size.min_image(ri - rj);
-            let r2 = d.norm2();
-            if r2 >= cutoff2 || r2 < 1e-14 {
-                continue;
-            }
-            let scale = scales.scale(i, j).0;
-            if scale == 0.0 {
-                continue;
-            }
-            let (u, f_over_r) = potential.energy_force(r2, species[i], species[j]);
-            let (u, f_over_r) = (u * scale, f_over_r * scale);
-            let fv = d * f_over_r;
-            for k in 0..3 {
-                forces_out[3 * i + k] += fv.0[k];
-                forces_out[3 * j + k] -= fv.0[k];
-            }
-            pe += u;
-            w += d.dot(fv);
-        }
-        (pe, w)
+    // A nonblocking lease is essential: a caller may reenter this shared
+    // model while the owner waits on work in the same Rayon pool. Poisoned
+    // scratch also falls back to the safe, unchanged serial arithmetic.
+    let workspace = if serial {
+        None
     } else {
-        // Parallel with bounded splits: each thread folds into its own 3N
-        // accumulator; `with_min_len` caps the split count ~ thread count, so
-        // the per-split `vec![0.0; 3n]` allocations no longer dominate (they
-        // were ~35 s of system time per 5000 steps at N=2048, default pool).
-        let chunk = (pairs.len() / rayon::current_num_threads()).max(1);
-        let (forces, pe, w) = pairs
-            .par_iter()
-            .with_min_len(chunk)
-            .fold(
-                || (vec![0.0f64; 3 * n], 0.0f64, 0.0f64),
-                |mut acc, &(i, j)| {
-                    let ri =
-                        Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
-                    let rj =
-                        Vec3::new(positions[3 * j], positions[3 * j + 1], positions[3 * j + 2]);
-                    let d = box_size.min_image(ri - rj);
-                    let r2 = d.norm2();
-                    if r2 >= cutoff2 || r2 < 1e-14 {
-                        return acc;
-                    }
-                    let scale = scales.scale(i, j).0;
-                    if scale == 0.0 {
-                        return acc;
-                    }
-                    let (u, f_over_r) = potential.energy_force(r2, species[i], species[j]);
-                    let (u, f_over_r) = (u * scale, f_over_r * scale);
-                    let fv = d * f_over_r;
-                    for k in 0..3 {
-                        acc.0[3 * i + k] += fv.0[k];
-                        acc.0[3 * j + k] -= fv.0[k];
-                    }
-                    acc.1 += u;
-                    acc.2 += d.dot(fv);
-                    acc
-                },
-            )
-            .reduce(
-                || (vec![0.0f64; 3 * n], 0.0f64, 0.0f64),
-                |mut a, b| {
-                    for k in 0..3 * n {
-                        a.0[k] += b.0[k];
-                    }
-                    a.1 += b.1;
-                    a.2 += b.2;
-                    a
-                },
-            );
-        // M3 accumulate: add the per-thread-reduced forces into the caller's
-        // array (which the caller zeroed once).
-        for (dst, &src) in forces_out.iter_mut().zip(forces.iter()).take(3 * n) {
-            *dst += src;
+        scratch.try_lock().ok()
+    };
+    match workspace {
+        None => {
+            // Accumulate straight into the caller-zeroed forces array: the
+            // addition sequence per pair is identical to the former single-worker
+            // rayon fold (0.0 + … per component), so 1-thread trajectories stay
+            // byte-identical — the G1 gate.
+            let mut pe = 0.0f64;
+            let mut w = 0.0f64;
+            for &(i, j) in pairs {
+                let ri = Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
+                let rj = Vec3::new(positions[3 * j], positions[3 * j + 1], positions[3 * j + 2]);
+                let d = box_size.min_image(ri - rj);
+                let r2 = d.norm2();
+                if r2 >= cutoff2 || r2 < 1e-14 {
+                    continue;
+                }
+                let scale = scales.scale(i, j).0;
+                if scale == 0.0 {
+                    continue;
+                }
+                let (u, f_over_r) = potential.energy_force(r2, species[i], species[j]);
+                let (u, f_over_r) = (u * scale, f_over_r * scale);
+                let fv = d * f_over_r;
+                for k in 0..3 {
+                    forces_out[3 * i + k] += fv.0[k];
+                    forces_out[3 * j + k] -= fv.0[k];
+                }
+                pe += u;
+                w += d.dot(fv);
+            }
+            (pe, w)
         }
-        (pe, w)
+        Some(mut workspace) => {
+            let useful = rayon::current_num_threads().min(pairs.len()).max(1);
+            let chunk = pairs.len().div_ceil(useful).max(1);
+            let count = pairs.len().div_ceil(chunk);
+            // Dropping excess partitions bounds retained buffers after pool
+            // shrinkage; each remaining Vec retains its atom-count high water.
+            workspace
+                .partitions
+                .resize_with(count, PairPartition::default);
+            for partition in &mut workspace.partitions {
+                partition.forces.resize(3 * n, 0.0);
+            }
+            workspace
+                .partitions
+                .par_iter_mut()
+                .zip(pairs.par_chunks(chunk))
+                .for_each(|(acc, pairs)| {
+                    acc.forces.fill(0.0);
+                    acc.pe = 0.0;
+                    acc.w = 0.0;
+                    for &(i, j) in pairs {
+                        let ri =
+                            Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
+                        let rj =
+                            Vec3::new(positions[3 * j], positions[3 * j + 1], positions[3 * j + 2]);
+                        let d = box_size.min_image(ri - rj);
+                        let r2 = d.norm2();
+                        if r2 >= cutoff2 || r2 < 1e-14 {
+                            continue;
+                        }
+                        let scale = scales.scale(i, j).0;
+                        if scale == 0.0 {
+                            continue;
+                        }
+                        let (u, f_over_r) = potential.energy_force(r2, species[i], species[j]);
+                        let (u, f_over_r) = (u * scale, f_over_r * scale);
+                        let fv = d * f_over_r;
+                        for k in 0..3 {
+                            acc.forces[3 * i + k] += fv.0[k];
+                            acc.forces[3 * j + k] -= fv.0[k];
+                        }
+                        acc.pe += u;
+                        acc.w += d.dot(fv);
+                    }
+                });
+            let (mut pe, mut w) = (0.0, 0.0);
+            for partition in &workspace.partitions {
+                for (dst, &src) in forces_out.iter_mut().zip(&partition.forces) {
+                    *dst += src;
+                }
+                pe += partition.pe;
+                w += partition.w;
+            }
+            (pe, w)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prebuilt_bounded_zero_skin_list_reaches_the_parallel_pair_pass() {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .unwrap();
+        let model = PairForceModel::new(LennardJones::new(1.0, 1.0, 2.5).unwrap());
+        let mut s = crate::lattice::fcc(1.6796, [10, 5, 25], "Ar");
+        let mut list = NeighborList::with_skin(2.5, 0.0);
+        list.rebuild_bounded(&s, 200_000).unwrap();
+        let count = list.n_pairs();
+        assert!(count >= SERIAL_PAIR_THRESHOLD);
+        let mut reference = s.clone();
+        let mut v = Virial::default();
+        let mut rv = Virial::default();
+        // This immutable-list seam cannot perform an unrestricted rebuild.
+        let u = pool.install(|| {
+            model
+                .compute_with_built_neighbors(&mut s, &mut v, &list)
+                .unwrap()
+        });
+        let ru = model
+            .compute_deterministic(&mut reference, &mut rv, &mut list)
+            .unwrap();
+        assert_eq!(list.n_pairs(), count);
+        assert!((u - ru).abs() <= 1e-8 + 1e-12 * ru.abs());
+        assert!((v.w - rv.w).abs() <= 1e-8 + 1e-12 * rv.w.abs());
+        for (a, b) in s.forces.iter().zip(&reference.forces) {
+            assert!((a - b).abs() <= 1e-10 + 1e-12 * b.abs());
+        }
     }
 }

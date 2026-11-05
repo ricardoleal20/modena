@@ -5,9 +5,12 @@ Executed on 2026-11-05 from `/private/tmp/modena-b01`, branch
 `4214832a010281c551a31b888012a04dd0191111`. The worktree additionally contained
 the documentation/plan changes and a comment-only MCP test clarification in
 this documentation commit; production source was unchanged. Local checks below
-passed. The four findings from subsequent whole-branch review are addressed in
-one final fix wave, including independent SI pressure evidence below. Scoped
-rereview of the combined corrections remains pending.
+passed. The four findings from subsequent whole-branch review were corrected in
+`65ec427`/`119a221`, followed by the narrowly scoped interpreter correction
+`05b5642`. The independent scoped reviews closed all four findings and the
+related UTF-8 issue at `05b5642`. See [review closure and decisions](B01_REVIEW.md).
+The results below retain their explicit source epochs; this closure update is
+documentation only.
 
 B06 remains open as PR #53: GitHub Actions cannot start because of the account
 billing lock, and the required administrator-exception answer is pending. These
@@ -232,7 +235,8 @@ all-target clippy and Rust 1.90 checks recorded separately under
 `b01-evidence/path-closure/`. The numerical campaign and binary hashes below
 remain evidence of the earlier final-fix source epoch; only interpreter transport
 classification changed afterward. No unchanged numerical campaign was rerun.
-Scoped closure review of this narrow correction and B06 merge remain pending.
+The scoped closure review approved this correction at `05b5642` without new
+breakage. B06 integration remains a separate pending GitHub action.
 
 Final fix checks executed from base `81414606560881ae978738e330a3ba1ee4114e4b`
 plus the recorded working patch (commit range is recorded in the local fix report):

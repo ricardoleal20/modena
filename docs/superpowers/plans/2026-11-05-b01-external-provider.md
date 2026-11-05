@@ -54,9 +54,12 @@ Files: create `docs/B01_EXTERNAL_PROVIDER.md`, `docs/B01_VERIFICATION.md`; updat
 - [x] Record exact installed versions/model hash, snapshot/finite-difference tolerances and executable commands. Distinguish direct-EMT parity from physical material validation and one-shot transport from B09 persistence.
 - [x] Run `cargo fmt --all -- --check`, default/GPU all-targets Clippy with `-D warnings`, default/GPU Rust 1.90 checks and complete workspace tests.
 - [x] Run complete Python/benchmark-tool tests, existing 67-observation smoke and optional real-ASE tests. Record skips as skips, not reference passes.
-- [ ] Controller: request independent whole-branch code review under the requesting-code-review skill, dispatch any actual findings test-first, and finish review of B01 on its separate branch. Local implementation/task reviews and Task 4 verification/documentation are complete; whole-branch final review remains pending. Do not claim B06 merged until GitHub confirms the merge.
+- [x] Controller: independent whole-branch review, test-first corrections and scoped closure review completed. All four final findings and related UTF-8 issue are closed at `05b5642`. B01 remains on its separate branch; B06 merge is not implied.
 
-Task 4 status: done with concerns. The preexisting real-pressure factor labeled
-atm is about 1.32623% high; [B01 verification](../../B01_VERIFICATION.md#open-pressure-unit-concern)
-records the independent calculation. Production correction and compatibility/
-evidence review remain controller-owned; pressure atm accuracy is not validated.
+Final B01 status: implementation and local verification/review complete within
+the documented ASE EMT scope. The discovered pressure factor, failed-instance
+safety, cancellation and interpreter-resolution defects were corrected and
+reviewed. [B01 verification](../../B01_VERIFICATION.md) records source-specific
+evidence; [review closure](../../B01_REVIEW.md) records decisions and limitations.
+Integration of B06 PR #53 remains separately blocked by GitHub CI and the
+unanswered administrator-exception request.

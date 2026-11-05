@@ -20,37 +20,41 @@ parity or GPU hardware speed.
 
 ## Source and retained evidence
 
-The driver and process-boundary tests were committed **before** measurement as
-`146c097bb79bf5d82b6e581bc6f2cad970d95e54`. The source tree was clean during
-both release builds, the transport campaign and scientific smoke. Native and
-adapter production source is unchanged from `e547758`; this later revision
-adds the benchmark driver/tests and prior progress documentation.
+The driver/tests were committed before measurement (`146c097`), then hardened
+to record malformed metadata failures (`2781f44`). Final measurement used
+clean source **`ce22be15367423480fd7f53b585a4eff4e24f503`**, including that fix
+and the initial scope/evidence documentation. The source tree was clean during
+both release build invocations, the final campaign and scientific smoke.
+Native and adapter production source is unchanged from `e547758`.
 
 Local raw evidence is retained under the ignored shared target directory:
-`target/b09-evidence/task3-146c097/`. It includes preserved executable copies,
+`target/b09-evidence/task3-ce22be1/`. It includes preserved executable copies,
 build commands/logs, `transport/ase_transport.json`, every input deck, stdout,
 stderr, thermo CSV and final checkpoint, and `scientific-smoke/validation.*`.
 Generated binaries and large raw series are not committed. The timing artifact
 contains all tracked source-file SHA-256 hashes, input hashes, commands,
 thread environment, return codes, completed steps, per-run loads and timings.
+The earlier complete campaign remains unchanged under
+`target/b09-evidence/task3-146c097/`; the tables below use the complete final
+campaign, without selecting runs from either campaign.
 
 | Artifact | SHA-256 |
 | --- | --- |
-| Sorted source-file hash manifest | `75cc4d8d06e7a41d0476c7d9c441055b2c09e2e9a032d8c2592be992f22bc2fc` |
-| `bench/ase_transport.py` | `520da3856900a783f249948bc740ec451f62a4d75dd9caf68c77146640e08a18` |
+| Sorted source-file hash manifest | `3338fd91a4c821df84866fd8cbe7b2136ae0bda0b55b1004049a5b9eb101d0b3` |
+| `bench/ase_transport.py` | `86df2957ce7d0574b5addf5670bcc38221111b000175415e90985d7d6583e1b4` |
 | Release CLI | `b8d812fa4db93b17d2cda6a642fdc2c72fed57b1206c1e3164a5900ae04c3a19` |
 | Release scientific example | `47fb3cb131b089cd77212d41a050f2ce4ea498c0b61a2d62386ebda75d2614d4` |
 
 Host: Apple M3 Pro, 11 logical CPUs, macOS 26.6.2 arm64; rustc 1.97.1
 (`8bab26f4f`, LLVM 22.1.6), Python 3.14.5, ASE 3.29.0, NumPy 2.5.4. EMT source
 SHA-256 was `8ce8bb2f90e8afad8f091b8c3f600ea260534e5c270a6b2c82cae1817cdf3881`,
-with `asap_cutoff=false`. The initial load averages were 3.1924/3.1631/3.1582;
-recorded one-minute loads ranged from 2.7393 to 3.3247. This was a shared host,
+with `asap_cutoff=false`. The initial load averages were 12.4375/5.9243/4.1895;
+recorded one-minute loads ranged from 4.3540 to 12.4375. This was a shared host,
 without concurrent builds/tests during samples, not an isolated machine.
 
 ## Full-run timing experiment
 
-Measured 2026-11-05 16:33:16–16:35:15 UTC. Each mode used equivalent FCC Cu
+Measured 2026-11-05 16:40:15–16:42:14 UTC. Each mode used equivalent FCC Cu
 configurations with replicas `[1,1,1]` (4 atoms) and `[3,3,3]` (108 atoms),
 lattice constant 3.61 Å, mass 63.546 amu, seed 42, initial temperature 10 K,
 Velocity-Verlet and dt 0.0001 ps for **40 integration steps**. Both modes used
@@ -67,18 +71,18 @@ cleanup. It excludes the driver's separate initial pin-discovery call.
 
 | Cu atoms | One-shot median (s) | Persistent median (s) | One-shot / persistent |
 | --- | ---: | ---: | ---: |
-| 4 | 10.296735208 | 0.303316750 | 33.9471 |
-| 108 | 10.852868125 | 0.744721583 | 14.5731 |
+| 4 | 10.857594125 | 0.315893166 | 34.3711 |
+| 108 | 10.230833792 | 0.709647791 | 14.4168 |
 
 Measured wall seconds, in repetition order:
 
 | Repetition | Cu4 one-shot | Cu4 persistent | Cu108 one-shot | Cu108 persistent |
 | --- | ---: | ---: | ---: | ---: |
-| 1 | 10.382357167 | 0.305705375 | 10.894942250 | 0.748168917 |
-| 2 | 10.237236833 | 0.298168917 | 10.852868125 | 0.746060209 |
-| 3 | 10.306946500 | 0.303316750 | 10.818342291 | 0.744721583 |
-| 4 | 10.240277209 | 0.304100375 | 10.829097292 | 0.738641167 |
-| 5 | 10.296735208 | 0.299172042 | 10.964610917 | 0.736879792 |
+| 1 | 11.059284875 | 0.315893166 | 10.956578416 | 0.718266875 |
+| 2 | 10.857594125 | 0.320207291 | 10.230833792 | 0.711115041 |
+| 3 | 10.933011291 | 0.311761208 | 10.171143208 | 0.708149625 |
+| 4 | 10.405538667 | 0.315783375 | 10.324397583 | 0.709647791 |
+| 5 | 10.369810209 | 0.357212625 | 10.124615959 | 0.706577167 |
 
 The driver required exact full checkpoint structural/numeric equality and
 exact thermo CSV values across transports and repetitions at each step count.
@@ -126,11 +130,12 @@ six raw observable series of 13,667 values each and their sampling analysis.
 The raw series remain in `validation.stdout`; the finite-series estimates do
 not establish ensemble convergence.
 
-After measurement, the affected benchmark-tool suite passed **27/27** tests
-(`python -m unittest discover -s bench/tests -v`), including five new driver
+After measurement, the affected benchmark-tool suite passed **28/28** tests
+(`python -m unittest discover -s bench/tests -v`), including six new driver
 tests using actual child processes for success, alternating order, retained
 failure evidence, incomplete steps, identity/thermo/checkpoint mismatch and
-overwrite refusal. Rust formatting and whitespace checks passed.
+overwrite refusal and malformed discovery metadata. Rust formatting and
+whitespace checks passed.
 
 Earlier Task 1/2 validation on unchanged functional source covered default/GPU
 lint and actual Rust 1.90 locked checks. Combined non-overlapping workspace

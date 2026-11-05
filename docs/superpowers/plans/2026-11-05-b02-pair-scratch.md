@@ -36,8 +36,8 @@ rtk proxy "$PY" bench/pair_scratch.py --before "$BASELINE" --after "$CANDIDATE" 
   --repetitions 5 --output "$EVIDENCE"
 ```
 
-- [ ] Add allocator profile/isolated warmed regression first; measure actual pair counts and observe the zero-force-buffer-allocation assertion fail on old parallel code. Keep serial controls separate.
-- [ ] Commit profile/test/driver support before changing production, build and retain clean-source baseline CLI/profile binaries and raw profiling data. The meaningful regression is:
+- [x] Add allocator profile/isolated warmed regression first; measure actual pair counts and observe the zero-force-buffer-allocation assertion fail on old parallel code. Keep serial controls separate.
+- [x] Commit profile/test/driver support before changing production, build and retain clean-source baseline CLI/profile binaries and raw profiling data. The meaningful regression is:
 
 ```rust
 // After pool + neighbor warmup, while N and pool stay unchanged:
@@ -49,11 +49,11 @@ let observed = force_buffer_allocations.load(Ordering::SeqCst) - before;
 assert_eq!(observed, 0, "warm pair pass allocated an N-sized force buffer");
 ```
 
-- [ ] Implement bounded owned scratch; reset forces/PE/W, retain serial arithmetic, handle resize/contention safely and preserve the prebuilt bounded snapshot path. Add exact/tolerance E/F/W, composition, scales/exclusions, generic, empty/repeat/resize and nested-concurrency coverage.
-- [ ] Run focused tests to GREEN, format/lint/default compile; self-review and commit candidate source/tests before timing.
-- [ ] Build ordinary release candidate in the same worktree/compiler settings. Run failure-sensitive driver tests (actual subprocess boundary, incomplete steps/physics failure/fresh outputs), then alternating paired full-CLI measurements and isolated allocation/memory profiles with provenance and fixed numerical gates.
-- [ ] Evaluate all cases, not just favorable ones. If dense scratch lacks benefit, measure a focused touched/block alternative; retain only a justified variant, documenting controls/noise and any regressions.
-- [ ] Write full Task1 report with RED/GREEN, commands, source/binary hashes, all raw rows, memory-vs-N/threads, medians and numerical policy; commit guide/results and get independent read-only task review, with covering fixes/rereview if needed.
+- [x] Implement bounded owned scratch; reset forces/PE/W, retain serial arithmetic, handle resize/contention safely and preserve the prebuilt bounded snapshot path. Add exact/tolerance E/F/W, composition, scales/exclusions, generic, empty/repeat/resize and nested-concurrency coverage.
+- [x] Run focused tests to GREEN, format/lint/default compile; self-review and commit candidate source/tests before timing.
+- [x] Build ordinary release candidate in the same worktree/compiler settings. Run failure-sensitive driver tests (actual subprocess boundary, incomplete steps/physics failure/fresh outputs), then alternating paired full-CLI measurements and isolated allocation/memory profiles with provenance and fixed numerical gates.
+- [x] Evaluate all cases, not just favorable ones. If dense scratch lacks benefit, measure a focused touched/block alternative; retain only a justified variant, documenting controls/noise and any regressions.
+- [x] Write full Task1 report with RED/GREEN, commands, source/binary hashes, all raw rows, memory-vs-N/threads, medians and numerical policy; commit guide/results and get independent read-only task review, with covering fixes/rereview if needed.
 
 ## Task 2: complete validation, evidence and closure
 

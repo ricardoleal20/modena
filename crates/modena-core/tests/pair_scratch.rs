@@ -12,6 +12,16 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 
 #[test]
 fn warm_parallel_pass_reuses_force_buffers() {
+    for changed in [
+        (-0.0, 0.0, &[0.0][..]),
+        (0.0, -0.0, &[0.0][..]),
+        (0.0, 0.0, &[-0.0][..]),
+    ] {
+        assert!(
+            !exact_state((0.0, 0.0, &[0.0]), changed),
+            "exact E/F/W gate must reject opposite signed zeros"
+        );
+    }
     // Keep allocator-sensitive checks in one isolated integration-test process.
     let model = PairForceModel::new(LennardJones::new(1.0, 1.0, 2.5).unwrap());
     for (threads, atoms) in [
@@ -74,7 +84,10 @@ fn evaluate(model: &dyn ForceModel, source: &System, scales: &[PairScale]) -> (f
 }
 fn close(actual: &(f64, f64, Vec<f64>), expected: &(f64, f64, Vec<f64>), exact: bool) {
     if exact {
-        assert_eq!(actual, expected);
+        assert!(exact_state(
+            (actual.0, actual.1, &actual.2),
+            (expected.0, expected.1, &expected.2)
+        ));
         return;
     }
     for (a, b) in [(actual.0, expected.0), (actual.1, expected.1)] {

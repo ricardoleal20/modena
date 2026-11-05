@@ -1,7 +1,8 @@
 """Exercise the real driver/child boundary without timing a simulation."""
-import importlib.util
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,7 +38,7 @@ print(f'MODENA: finished {{steps}} steps')
 
 
 class DriverTests(unittest.TestCase):
-    def run_driver(self, root, mode='ok', after_mode=None):
+    def run_driver(self, root, mode='ok', after_mode=None, env=None):
         binaries = []
         for name, behavior in [('before', mode), ('after', after_mode or mode)]:
             path = root / name
@@ -47,7 +48,7 @@ class DriverTests(unittest.TestCase):
         command = [sys.executable, str(DRIVER), '--before', str(binaries[0]), '--after', str(binaries[1]),
                    '--sizes', '864', '--threads', '1', '--steps', '100', '--repetitions', '2',
                    '--output', str(root / 'evidence')]
-        result = subprocess.run(command, capture_output=True, text=True)
+        result = subprocess.run(command, capture_output=True, text=True, env=env)
         artifact = json.loads((root / 'evidence/pair_scratch.json').read_text())
         return result, artifact, command
 
@@ -96,6 +97,37 @@ class DriverTests(unittest.TestCase):
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             artifact = json.loads((root / 'different/pair_scratch.json').read_text())
+            self.assertIn('exact', artifact['error'])
+
+    def test_success_without_rtk_on_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / 'path-without-rtk'
+            directory.mkdir()
+            commands = ['git', 'rustc'] + (['sysctl'] if sys.platform == 'darwin' else [])
+            for command in commands:
+                executable = shutil.which(command)
+                self.assertIsNotNone(executable, command)
+                (directory / command).symlink_to(executable)
+            env = {**os.environ, 'PATH': str(directory)}
+            self.assertIsNone(shutil.which('rtk', path=env['PATH']))
+            result, artifact, _ = self.run_driver(root, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(artifact['passed'])
+            self.assertEqual(len(artifact['runs']), 6)
+            self.assertTrue(all(r['physics_verified'] for r in artifact['runs']))
+
+    def test_one_thread_parity_rejects_signed_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result, _, command = self.run_driver(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            after = root / 'after'
+            after.write_text(after.read_text().replace("if mode=='nan':", "state['continuation']['forces'][0]=-0.0\nif mode=='nan':"))
+            command[-1] = str(root / 'signed-zero')
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            artifact = json.loads((root / 'signed-zero/pair_scratch.json').read_text())
             self.assertIn('exact', artifact['error'])
 
 

@@ -110,7 +110,9 @@ def verify_run(directory, stdout, atoms, steps):
     for step, row in zip(expected_steps, thermo[1:]):
         if len(row) != 8 or int(row[0]) != step or not all(math.isfinite(float(x)) for x in row):
             raise ValueError('invalid thermo steps/values')
-    return dict(checkpoint=state, thermo=thermo)
+    # Hash actual files: decoded float equality considers +0.0 == -0.0.
+    return dict(checkpoint_sha256=sha(directory / 'final.checkpoint'),
+                thermo_sha256=sha(directory / 'thermo.csv'))
 
 
 def run_one(out, binary, atoms, threads, steps, repetition, variant, warmup, rows):
@@ -163,15 +165,15 @@ def main(argv=None):
                     numerical_policy='1T exact checkpoint/thermo; >1T static E/W atol1e-8 rtol1e-12, all F atol1e-10 rtol1e-12 in isolated profile; scientific gates separate')
     try:
         binaries = dict(before=args.before.resolve(strict=True), after=args.after.resolve(strict=True))
-        source = {p: sha(ROOT / p) for p in capture(['rtk', 'proxy', 'git', '-C', str(ROOT), 'ls-files']).splitlines() if (ROOT / p).is_file()}
-        artifact['provenance'] = dict(git_commit=capture(['rtk', 'proxy', 'git', '-C', str(ROOT), 'rev-parse', 'HEAD']),
-            git_status=capture(['rtk', 'proxy', 'git', '-C', str(ROOT), 'status', '--porcelain']),
+        source = {p: sha(ROOT / p) for p in capture(['git', '-C', str(ROOT), 'ls-files']).splitlines() if (ROOT / p).is_file()}
+        artifact['provenance'] = dict(git_commit=capture(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']),
+            git_status=capture(['git', '-C', str(ROOT), 'status', '--porcelain']),
             source_files=source, source_manifest_sha256=hashlib.sha256(json.dumps(source, sort_keys=True).encode()).hexdigest(),
             binaries={k:dict(path=str(v), sha256=sha(v)) for k,v in binaries.items()},
-            driver_sha256=sha(__file__), rustc=capture(['rtk', 'proxy', 'rustc', '-Vv']),
+            driver_sha256=sha(__file__), rustc=capture(['rustc', '-Vv']),
             rustflags=os.environ.get('RUSTFLAGS'), cargo_encoded_rustflags=os.environ.get('CARGO_ENCODED_RUSTFLAGS'),
             python=sys.version, platform=platform.platform(), logical_cpus=os.cpu_count(),
-            hardware=capture(['rtk', 'proxy', 'sysctl', '-n', 'machdep.cpu.brand_string']) if platform.system() == 'Darwin' else platform.processor())
+            hardware=capture(['sysctl', '-n', 'machdep.cpu.brand_string']) if platform.system() == 'Darwin' else platform.processor())
         for atoms in args.sizes:
             for threads in args.threads:
                 for repetition in range(args.repetitions + 1):

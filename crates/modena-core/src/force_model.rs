@@ -197,10 +197,10 @@ impl PairForceModel {
 impl PairForceModel {
     /// Deterministic force evaluation: identical numerics regardless of
     /// thread count or machine, because the pair sum is accumulated in a fixed
-    /// serial order (the parallel path's chunked reduction is not
-    /// order-deterministic at >1 thread — OpenMM solves the same problem with
-    /// `CpuDeterministicForces`). Slightly slower at large N; for the paper,
-    /// run-to-run identifiability is worth it when it matters.
+    /// serial order. The leased parallel path fixes chunk and reduction order
+    /// at a fixed pool size; changing the pool size or taking the serial
+    /// contention fallback can change summation order. This fixed serial path
+    /// preserves run-to-run identifiability when it matters.
     pub fn compute_deterministic(
         &self,
         system: &mut System,

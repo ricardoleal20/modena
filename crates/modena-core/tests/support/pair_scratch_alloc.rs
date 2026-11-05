@@ -71,3 +71,11 @@ pub fn replicas(n: usize) -> [u32; 3] {
 pub fn system(n: usize) -> modena_core::System {
     modena_core::lattice::fcc(1.6796, replicas(n), "Ar")
 }
+
+/// Exact E/F/W comparison shared by the isolated test and profile example.
+pub fn exact_state(a: (f64, f64, &[f64]), b: (f64, f64, &[f64])) -> bool {
+    a.0.to_bits() == b.0.to_bits()
+        && a.1.to_bits() == b.1.to_bits()
+        && a.2.len() == b.2.len()
+        && a.2.iter().zip(b.2).all(|(a, b)| a.to_bits() == b.to_bits())
+}

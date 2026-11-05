@@ -58,7 +58,7 @@ fn main() {
         .compute_deterministic(&mut reference, &mut rv, &mut neighbors)
         .unwrap();
     let close = |a: f64, b: f64, atol: f64| (a - b).abs() <= atol + 1e-12 * b.abs();
-    let exact = u == ru && v.w == rv.w && s.forces == reference.forces;
+    let exact = exact_state((u, v.w, &s.forces), (ru, rv.w, &reference.forces));
     let passed = close(u, ru, 1e-8)
         && close(v.w, rv.w, 1e-8)
         && s.forces

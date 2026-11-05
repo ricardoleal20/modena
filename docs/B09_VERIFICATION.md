@@ -18,7 +18,7 @@ These are bounded interface/numerical checks. They do not establish chemical
 or material accuracy, converged ensembles, DFT/ML support, independent-engine
 parity or GPU hardware speed.
 
-## Source and retained evidence
+## Pre-review source and retained evidence
 
 The driver/tests were committed before measurement (`146c097`), then hardened
 to record malformed metadata failures (`2781f44`). Final measurement used
@@ -158,3 +158,81 @@ protocol errors and deadlines leave the session terminal. This is not a
 process-tree sandbox. Cancellation is observed at safe setup/step boundaries;
 an in-flight call is bounded by its configured deadline plus bookkeeping,
 without immediate preemption or a hard global wall-time guarantee.
+
+## Final review fixes and fresh verification
+
+Whole-branch review of `427d438` found five issues. The corrected source,
+tests and interface limits were committed at
+**`f14d6efd4a2a6e84e658a2f60a39805cf783ef55`** before broad validation or
+measurement. The tables above retain the earlier `ce22be1` campaign; its
+timings and Task 2's combined coverage remain historical.
+
+- The ASE calculator compares atom state exactly by default. Crossing the
+  native singularity threshold by less than 1e-15 Å now forces reevaluation
+  and clears stale E/F on failure. An empty noncalculating probe returns None.
+- Snapshot wrapping uses periodic remainder arithmetic. In a 20 Å box, positions
+  100000000000000016 and 16 with their neighbor at 17 give identical forces,
+  as do −100000000000000016 and 4 with their neighbor at 5.
+- The snapshot streams candidates and caps its single pair vector at
+  **1,000,000 distinct half-pairs within cutoff plus skin**. Growth requests
+  are limited before appending; on a 64-bit host this requests at most 16 MB
+  of pair storage. This is not a total memory or CPU limit. The 8 MiB input,
+  100,000 atom and 1,000,000 grid cell limits remain. Ordinary MD retains
+  its unrestricted serial/parallel neighbor paths. Tiny budget tests cover
+  coincident, dense nonsingular, sparse and zero-skin inputs, capacity bounds
+  and an ordinary rebuild after bounded failure.
+- Benchmark verification first requires the checkpoint's physical signature,
+  pinned Cu EMT model, integrator and unit-factor data, and all eight thermo
+  columns. Both previous 24-run campaigns pass the tightened verification;
+  copies of a real artifact with the signature removed or step-only thermo fail.
+
+The fresh locked/offline full workspace run **exited zero: 355 passed, zero
+failed, one intentionally ignored doctest** with actual ASE enabled. Python
+passed 35/35 with ASE, and 26 passed with 9 explicit skips without ASE;
+the real worker suite passed 5/5, and benchmark tools passed 29/29. Formatting,
+default and GPU all-target Clippy (`-D warnings`), and Rust 1.90 locked/offline
+default, GPU and standalone validation-harness checks passed. The release
+scientific smoke passed 67/67 observations. These are CPU runtime tests plus
+GPU compilation/lint, not MPI or GPU hardware validation.
+
+The clean source above produced both locked/offline release executables.
+Raw evidence is retained in **`target/b09-evidence/final-fix-f14d6ef/`**:
+`build-provenance.json`, `frozen/`, `checks/`, `transport/ase_transport.json`,
+all 24 run directories, `audit.json` and `scientific-smoke/validation.*`.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Sorted source-file hash manifest | `709fd9e54dbc1693fbedfbec81d52979e59780c415680bbc533c6b8a1d54710b` |
+| Benchmark driver | `6cd7e5f69fb73489307044b1bde63eb599af8ab527b55cd6b6d0d048b22dd0e5` |
+| Release CLI | `b95cf5c9b355abe0c0574c892ed6516b92980db378a96020edd535a7509d0fc0` |
+| Release scientific example | `e0845e5c040652adfea58771eca5dd346e289041206ee7e44ba657c2adf01e64` |
+
+**2026-11-05 17:09:35–17:11:31 UTC.** Same M3 Pro, Rust, ASE/NumPy, pinned
+model, single-thread settings, decks and fresh-process alternating order as
+above. Initial load averages: 4.3950/4.2056/3.6646; observed one-minute range
+2.7065–4.3950. No concurrent builds/tests during sampling. All 24 runs exited
+zero with identical checkpoints, thermo, diagnostics and metadata within each
+size/step group. Each measured run completed 40 steps, with 41 thermo and
+diagnostic samples. A second check recomputed source/binary/artifact hashes
+and median ratios, and verified byte-identical checkpoint/thermo files within
+each group. Every row below belongs to this one campaign; no selection across
+epochs. Wall seconds:
+
+| Repetition | Cu4 one-shot | Cu4 persistent | Cu108 one-shot | Cu108 persistent |
+| --- | ---: | ---: | ---: | ---: |
+| Warmup (discarded) | 2.914666500 | 0.254992958 | 2.957508417 | 0.387601750 |
+| 1 | 9.727928542 | 0.301460958 | 10.428737292 | 0.708115584 |
+| 2 | 9.909554333 | 0.306619375 | 10.304467375 | 0.707247084 |
+| 3 | 9.917972417 | 0.309043958 | 10.256008041 | 0.722976084 |
+| 4 | 9.727633917 | 0.283684917 | 10.811194209 | 0.739274250 |
+| 5 | 9.850397542 | 0.301518541 | 11.687496833 | 0.759593000 |
+
+| Cu atoms | One-shot median (s) | Persistent median (s) | One-shot / persistent |
+| --- | ---: | ---: | ---: |
+| 4 | 9.850397542 | 0.301518541 | 32.6693 |
+| 108 | 10.428737292 | 0.722976084 | 14.4247 |
+
+These local ratios measure full CLI runs including startup, evaluation,
+integration, output and teardown. They do not measure isolated steady-state
+solver time, guarantee cold file caches, or establish speedups on other
+models or hardware.

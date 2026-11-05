@@ -338,8 +338,7 @@ fn pair_pass<P: PairPotential + ?Sized>(
                 .zip(pairs.par_chunks(chunk))
                 .for_each(|(acc, pairs)| {
                     acc.forces.fill(0.0);
-                    acc.pe = 0.0;
-                    acc.w = 0.0;
+                    let (mut pe, mut w) = (0.0, 0.0);
                     for &(i, j) in pairs {
                         let ri =
                             Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
@@ -361,15 +360,30 @@ fn pair_pass<P: PairPotential + ?Sized>(
                             acc.forces[3 * i + k] += fv.0[k];
                             acc.forces[3 * j + k] -= fv.0[k];
                         }
-                        acc.pe += u;
-                        acc.w += d.dot(fv);
+                        pe += u;
+                        w += d.dot(fv);
+                    }
+                    acc.pe = pe;
+                    acc.w = w;
+                });
+            // Each disjoint output block reduces partitions in the same
+            // order. Parallel reduction avoids a serial T-times-N memory
+            // pass while preserving the caller's existing contributions.
+            let block = (3 * n).div_ceil(count).max(1);
+            forces_out[..3 * n]
+                .par_chunks_mut(block)
+                .enumerate()
+                .for_each(|(index, out)| {
+                    let start = index * block;
+                    let end = start + out.len();
+                    for partition in &workspace.partitions {
+                        for (dst, &src) in out.iter_mut().zip(&partition.forces[start..end]) {
+                            *dst += src;
+                        }
                     }
                 });
             let (mut pe, mut w) = (0.0, 0.0);
             for partition in &workspace.partitions {
-                for (dst, &src) in forces_out.iter_mut().zip(&partition.forces) {
-                    *dst += src;
-                }
                 pe += partition.pe;
                 w += partition.w;
             }

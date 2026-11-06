@@ -17,7 +17,8 @@ rtk cargo build --locked --offline --release -p modena-bench --example layout_st
 rtk proxy python3 -m unittest discover -s bench/tests -p test_layout_step.py
 rtk proxy python3 bench/layout_step.py pilot --out target/b03-evidence/new-pilot --binary target/release/examples/layout_step
 rtk proxy python3 bench/layout_step.py campaign --out target/b03-evidence/new-campaign --binary target/release/examples/layout_step --config /absolute/path/config.json
-rtk proxy python3 target/b03-evidence/new-campaign/layout_step.py audit --out target/b03-evidence/new-campaign
+rtk proxy python3 bench/layout_step.py audit --out target/b03-evidence/new-campaign
+rtk proxy python3 bench/layout_step.py secondary --out target/b03-evidence/new-no-snapshot --primary target/b03-evidence/new-campaign --binary target/b03-evidence/new-campaign/layout_step
 ```
 
 For the 2026-11-06 campaign, save this configuration as a JSON file and pass its
@@ -101,9 +102,13 @@ shifted-force LJ forces, potential, virial, kinetic energy, temperature and
 pressure without production helpers. Initial force-ready and forced-final
 neighbor sets must equal the independently enumerated skin set. Reused neighbor
 lists must cover every final active pair; their original skin set need not equal
-the final-coordinate skin set. Oracle work is cached by N, steps, timestep and
-policy; every other measured snapshot is compared on every physics field with
-that independently audited state. Half-pair identities and multiplicity remain
+the final-coordinate skin set. Oracle arrays and pair sets are cached by an SHA256 key over exact actual
+coordinates and validated physical context (cell/PBC, N, masses, species,
+charges, atomic numbers and potential). Every force component and E/W value in
+every saved force-ready/final state is checked directly against that oracle;
+no tolerance is accumulated through a canonical snapshot. A separate trajectory
+comparison covers every saved field and unknown mismatches. Both large caches
+use explicit four-entry LRUs. Half-pair identities and multiplicity remain
 exact. Fixed gates are absolute 1e-8 plus relative 1e-12 for energy/virial and
 absolute 1e-10 plus relative 1e-12 for each force component. An audit failure
 invalidates the affected measurement, irrespective of a favorable timing.
@@ -154,8 +159,8 @@ was rustc1.97.1, aarch64-apple-darwin, LLVM22.1.6. Binary SHA256:
 All 1,344 invocations completed; all 96 timing comparisons failed the 5% bar.
 There were no positive cases requiring primary reproduction. The best median
 time saving was -1.5416% (SoA, N2048, pool4, forced), with 0/5 favorable pairs.
-This is a timing screen: final independent numerical certification and the
-authorized separate no-snapshot instrumentation check are still pending.
+The later direct-oracle numerical certification passed all 1,344 invocations.
+The authorized separate no-snapshot instrumentation check is still pending.
 
 The table retains all cases. A is the matched interleaved-serial baseline; B
 is the named scalar candidate. Saved%=100*(1-median(B)/median(A)). Setup and
@@ -261,3 +266,63 @@ records. Pool11d means requested0, actual11.
 | 10000 | 11d | forced | soa | 182.463 | 193.904 | -6.27 | 0/5 | 18.47/19.55 | 178.59/178.58 | 468.8 |
 | 10000 | 11d | forced | aosoa4 | 183.254 | 195.342 | -6.60 | 0/5 | 18.40/19.13 | 178.23/178.53 | 468.8 |
 | 10000 | 11d | forced | cluster4 | 182.520 | 653.959 | -258.29 | 0/5 | 18.88/46.01 | 177.88/222.17 | 21537.4 |
+
+## Direct audit and snapshot-free protocol
+
+The exact primary source was preserved after timing in commit
+`4b63e9b12a6bc7ea3c462c9a5db64c0928b4d86b`; its SHA matches the launch copy.
+This commit correspondence does not change the actual launch HEAD or dirty
+status. The original audit used a tolerant canonical-state comparison after its
+first oracle. Before acceptance, a real subprocess regression demonstrated that
+a 0.75-tolerance canonical force bias followed by a 1.5-tolerance candidate bias
+could pass both hops. The fixture updates Fmax and recomputes consistent FNV, so
+its failure is physical. The later direct-oracle validator rejects that case
+without changing any tolerance. Its full source and hash are preserved as a
+separate post-timing audit epoch.
+
+The direct audit also independently recomputes FNV from every actual saved
+state and SHA256 from every complete initial input. It verifies raw stdout,
+stderr, compressed snapshot and original uncompressed snapshot SHA256. It emits
+`secondary-references.json`, tied to the audit and binary hashes. The audit
+process exits before the secondary process starts, releasing its arrays and
+neighbor sets. The secondary loads only small reference rows and fingerprints.
+
+The separately authorized `secondary` action runs the same complete matrix,
+steps, timestep, AB/BA pairs, warmups and production controls, omitting only
+`--snapshot`. It requires the same executable SHA256. Before timing it freezes
+its own complete orchestrator/test source, compiler/source identity, copied
+configuration and audited references with explicit input hashes. Every available
+stdout physics field, counter, type, domain/identity field and FNV is compared
+against the same-mode/parameter audited references. Timing values are separately
+checked for finite/nonnegative values; physical values use the fixed tolerances,
+and every other available field/type/counter must match exactly. No vectors or full-state SHA are
+emitted by the secondary child. Its recomputed-reference FNV is a consistency
+check, not a cryptographic full-state proof or a replacement for primary arrays.
+
+The primary and secondary medians, durations and resource rows remain separate.
+Conditional five-pair reproductions are retained for any secondary case that
+meets the original timing screen; no candidate is promoted by either script.
+
+The authoritative direct audit source SHA256 is
+`c1a312eef14a74aa5769b09c374c459d198b88397923ccd0f64db18293f03d78`.
+It passed all 1,344 saved invocations using 13 exact-coordinate oracle contexts;
+maximum force/energy/virial errors were 1.6362e-14, 1.6953e-9 and 5.7917e-9.
+All 4,032 saved state fingerprints were independently recomputed; each of the
+160 mode/parameter reference groups had one stable final fingerprint. Actual
+initial-input SHA256 values, derived during this post-timing audit, were:
+
+| N | Actual complete initial-input SHA256 |
+|---:|:---|
+| 864 | e30da513aaeee6f11cb85ad3282dd83aa57fa1577316c891f83d25599220e9fa |
+| 2048 | fde06a3b57b9d6895153447b1743806709e019ce60be2492ed8d492007b4837a |
+| 5000 | 87785b1b54f158eecb02af5cbd4dd3c79ce6caaef7713a349df41cfcb8231784 |
+| 10000 | 3f97a1b9ae562df9cdc2816944249b2123f0fa312eee261bb5eacac662e93852 |
+
+The primary and already-running audit did not record Python identity at startup.
+A timestamped later observation resolved the worktree python3 to Python3.14.5;
+that observation is not retroactively attributed to their launch metadata. The
+secondary/future audit startup explicitly captures sys.executable/sys.version.
+The seven driver tests passed under both Python3.14.5 and CI-compatible
+Python3.12.8 before secondary timing. The biased-force regression had a genuine
+RED with the original audit accepting the bad outputs, then GREEN with direct
+oracle checking. No numerical tolerance or Rust source changed.

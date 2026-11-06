@@ -1,0 +1,1392 @@
+[
+  {
+    "id": "empty",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [],
+    "atomic_numbers": [],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 1.5,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "self6",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 2.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "self_disabled",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 2.1,
+    "periodic_self": false,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "self_short",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 1.9,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "multi4",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.6,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 1.5,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "unreduced",
+    "cell": [
+      [
+        10.0,
+        0.0,
+        0.0
+      ],
+      [
+        49.0,
+        10.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        40.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        19.7,
+        0.1,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 4.8,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "oblique",
+    "cell": [
+      [
+        10.0,
+        0.0,
+        0.0
+      ],
+      [
+        4.9,
+        10.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        40.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        6.37,
+        3.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 4.8,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "boundary",
+    "cell": [
+      [
+        8.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        8.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        8.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        2.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 2.0,
+    "periodic_self": true,
+    "cube": 16,
+    "official": false
+  },
+  {
+    "id": "boundary_inside",
+    "cell": [
+      [
+        8.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        8.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        8.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        1.9999999999999998,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 2.0,
+    "periodic_self": true,
+    "cube": 16,
+    "official": false
+  },
+  {
+    "id": "boundary_outside",
+    "cell": [
+      [
+        8.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        8.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        8.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        2.0000000000000004,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 2.0,
+    "periodic_self": true,
+    "cube": 16,
+    "official": false
+  },
+  {
+    "id": "mace3",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.7,
+        2.3,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        1.0,
+        0.7,
+        0.9
+      ],
+      [
+        0.6,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "gauge",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.7,
+        2.3,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        6.8,
+        -3.9,
+        0.9
+      ],
+      [
+        0.6,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "deform",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.8,
+        2.35,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        1.0,
+        0.7,
+        0.9
+      ],
+      [
+        0.6,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "displaced",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.7,
+        2.3,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        1.0,
+        0.7,
+        0.9
+      ],
+      [
+        0.637,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "multi4_mask000",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.6,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      false,
+      false,
+      false
+    ],
+    "cutoff": 1.5,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "multi4_mask001",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.6,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      true,
+      false,
+      false
+    ],
+    "cutoff": 1.5,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "multi4_mask010",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.6,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      false,
+      true,
+      false
+    ],
+    "cutoff": 1.5,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "multi4_mask011",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.6,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      true,
+      true,
+      false
+    ],
+    "cutoff": 1.5,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "multi4_mask100",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.6,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      false,
+      false,
+      true
+    ],
+    "cutoff": 1.5,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "multi4_mask101",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.6,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      true,
+      false,
+      true
+    ],
+    "cutoff": 1.5,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "multi4_mask110",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.6,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      false,
+      true,
+      true
+    ],
+    "cutoff": 1.5,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "multi4_mask111",
+    "cell": [
+      [
+        2.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        2.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        2.0
+      ]
+    ],
+    "positions": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.6,
+        0.0,
+        0.0
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 1.5,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "mace3_mask000",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.7,
+        2.3,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        1.0,
+        0.7,
+        0.9
+      ],
+      [
+        0.6,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      false,
+      false,
+      false
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "mace3_mask001",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.7,
+        2.3,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        1.0,
+        0.7,
+        0.9
+      ],
+      [
+        0.6,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      true,
+      false,
+      false
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "mace3_mask010",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.7,
+        2.3,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        1.0,
+        0.7,
+        0.9
+      ],
+      [
+        0.6,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      false,
+      true,
+      false
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "mace3_mask011",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.7,
+        2.3,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        1.0,
+        0.7,
+        0.9
+      ],
+      [
+        0.6,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      true,
+      true,
+      false
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "mace3_mask100",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.7,
+        2.3,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        1.0,
+        0.7,
+        0.9
+      ],
+      [
+        0.6,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      false,
+      false,
+      true
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "mace3_mask101",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.7,
+        2.3,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        1.0,
+        0.7,
+        0.9
+      ],
+      [
+        0.6,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      true,
+      false,
+      true
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "mace3_mask110",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.7,
+        2.3,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        1.0,
+        0.7,
+        0.9
+      ],
+      [
+        0.6,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      false,
+      true,
+      true
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  },
+  {
+    "id": "mace3_mask111",
+    "cell": [
+      [
+        2.4,
+        0.0,
+        0.0
+      ],
+      [
+        0.7,
+        2.3,
+        0.0
+      ],
+      [
+        0.2,
+        0.3,
+        2.5
+      ]
+    ],
+    "positions": [
+      [
+        0.1,
+        0.2,
+        0.3
+      ],
+      [
+        1.0,
+        0.7,
+        0.9
+      ],
+      [
+        0.6,
+        1.5,
+        1.8
+      ]
+    ],
+    "atomic_numbers": [
+      6,
+      8,
+      6
+    ],
+    "pbc": [
+      true,
+      true,
+      true
+    ],
+    "cutoff": 3.1,
+    "periodic_self": true,
+    "cube": 16,
+    "official": true
+  }
+]

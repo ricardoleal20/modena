@@ -367,3 +367,165 @@ fn error_precedence_validates_before_work_and_range_before_candidates() {
         (0, 0, 0)
     );
 }
+
+#[path = "support/periodic_oracle.rs"]
+#[allow(dead_code)]
+mod periodic_oracle;
+
+#[test]
+fn fixed_cube_exact_tuples_for_every_declared_fixture() {
+    use periodic_oracle::*;
+    for f in fixtures() {
+        let expected = fixed_cube(&f);
+        assert_eq!(actual(&f), expected, "{}", f.id);
+        assert!(expected.windows(2).all(|w| w[0] < w[1]));
+        for &(i, j, s) in &expected {
+            assert!(
+                expected.binary_search(&(j, i, s.map(|v| -v))).is_ok(),
+                "{}",
+                f.id
+            );
+            assert!((0..3).all(|k| f.pbc[k] || s[k] == 0));
+        }
+        if f.official {
+            assert!(cutoff_margin(&f) >= 1e-8, "{}", f.id);
+        }
+    }
+}
+#[test]
+fn independent_fixture_cardinalities_and_adjacent_f64_boundary() {
+    use periodic_oracle::*;
+    for f in fixtures() {
+        let count = fixed_cube(&f).len();
+        let expected = match f.id.as_str() {
+            "empty" | "self_disabled" | "self_short" | "boundary" | "boundary_outside" => 0,
+            "self6" => 6,
+            "multi4" => 4,
+            "boundary_inside" => 2,
+            _ => continue,
+        };
+        assert_eq!(count, expected, "{}", f.id);
+    }
+}
+#[test]
+fn gauge_tuples_and_vectors_transform_by_atom_image() {
+    use periodic_oracle::*;
+    let all = fixtures();
+    let base = all.iter().find(|f| f.id == "mace3").unwrap();
+    let gauge = all.iter().find(|f| f.id == "gauge").unwrap();
+    let t = [[0, 0, 0], [3, -2, 0], [0, 0, 0]];
+    let mut transformed = Vec::new();
+    for e @ (i, j, s) in actual(base) {
+        let moved = (i, j, std::array::from_fn(|k| s[k] + t[i][k] - t[j][k]));
+        let a = displacement(base, e);
+        let b = displacement(gauge, moved);
+        for k in 0..3 {
+            assert!((a[k] - b[k]).abs() <= 2e-12 + 2e-12 * a[k].abs());
+        }
+        transformed.push(moved);
+    }
+    transformed.sort_unstable();
+    assert_eq!(actual(gauge), transformed);
+}
+#[test]
+fn independent_oracle_detects_incomplete_and_wrong_image_graphs() {
+    use periodic_oracle::*;
+    let all = fixtures();
+    let f = all.iter().find(|f| f.id == "unreduced").unwrap();
+    let expected = fixed_cube(f);
+    assert!(expected.contains(&(0, 1, [-2, 0, 0])));
+    let incomplete: Vec<_> = actual(f)
+        .into_iter()
+        .filter(|e| e.2.iter().all(|x| x.abs() <= 1))
+        .collect();
+    assert_ne!(
+        incomplete, expected,
+        "a closest/+-1-only path must be rejected"
+    );
+    let mut wrong = actual(f);
+    wrong[0].2[0] += 1;
+    assert_ne!(
+        wrong, expected,
+        "distance/count-only checks would miss tuple changes"
+    );
+}
+#[test]
+fn fresh_snapshots_and_options_match_independent_cube() {
+    use periodic_oracle::*;
+    let mut f = fixtures().into_iter().find(|f| f.id == "multi4").unwrap();
+    assert_eq!(actual(&f), fixed_cube(&f));
+    f.positions[1][0] = 1.1;
+    assert_eq!(actual(&f), fixed_cube(&f));
+    f.positions.swap(0, 1);
+    f.atomic_numbers.swap(0, 1);
+    assert_eq!(actual(&f), fixed_cube(&f));
+    f.atomic_numbers[0] = 1;
+    let s = periodic_oracle::system(&f);
+    let g = PeriodicGraph::build(&s, periodic_oracle::options(&f)).unwrap();
+    assert_eq!(g.system().atomic_numbers, f.atomic_numbers);
+    drop(g);
+    f.cutoff = 2.1;
+    assert_eq!(actual(&f), fixed_cube(&f));
+    f.pbc = [false, true, false];
+    assert_eq!(actual(&f), fixed_cube(&f));
+    f.periodic_self = false;
+    assert_eq!(actual(&f), fixed_cube(&f));
+    f.positions.pop();
+    f.atomic_numbers.pop();
+    assert_eq!(actual(&f), fixed_cube(&f));
+}
+
+#[test]
+fn independent_triangular_fixture_certificates_fit_fixed_cube() {
+    use periodic_oracle::*;
+    for f in fixtures() {
+        // Direct triangular equations only: no inverse or production bound.
+        let h = f.cell;
+        assert_eq!([h[0][1], h[0][2], h[1][2]], [0.0; 3]);
+        let span: [f64; 3] = std::array::from_fn(|k| {
+            f.positions
+                .iter()
+                .flat_map(|a| f.positions.iter().map(move |b| (a[k] - b[k]).abs()))
+                .fold(0.0, f64::max)
+        });
+        // Search-only cushion; membership uses the unchanged strict R^2.
+        let q = f.cutoff + 1e-8;
+        let sz = ((q + span[2]) / h[2][2].abs()).floor();
+        let sy = ((q + span[1] + h[2][1].abs() * sz) / h[1][1].abs()).floor();
+        let sx = ((q + span[0] + h[1][0].abs() * sy + h[2][0].abs() * sz) / h[0][0].abs()).floor();
+        let certificate = [sx, sy, sz];
+        let expected = if f.id == "gauge" {
+            [5.0, 3.0, 1.0]
+        } else if f.id == "unreduced" {
+            [2.0, 0.0, 0.0]
+        } else if f.id == "oblique" {
+            [1.0, 0.0, 0.0]
+        } else if f.id.starts_with("boundary") {
+            [0.0; 3]
+        } else if f.id == "mace3"
+            || f.id.starts_with("mace3_mask")
+            || f.id == "deform"
+            || f.id == "displaced"
+        {
+            [2.0, 2.0, 1.0]
+        } else if f.id == "self6" || f.id == "self_disabled" {
+            [1.0; 3]
+        } else {
+            [1.0, 0.0, 0.0]
+        };
+        assert!(
+            (0..3).all(|k| certificate[k] <= expected[k]),
+            "{}: {:?}",
+            f.id,
+            certificate
+        );
+        assert!(expected.iter().all(|&v| v < 16.0));
+        for (_, _, shift) in fixed_cube(&f) {
+            assert!(
+                (0..3).all(|k| (shift[k].abs() as f64) <= expected[k]),
+                "{}",
+                f.id
+            );
+        }
+    }
+}

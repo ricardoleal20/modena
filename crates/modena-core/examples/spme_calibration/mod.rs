@@ -14,8 +14,13 @@ mod reference;
 pub use fixtures::{frozen_protocol, materialize, validate_frozen, validate_snapshot};
 #[allow(unused_imports)]
 pub use metrics::{metrics, passes_target};
+#[cfg(test)]
+pub use reference::converged_reference_test;
 #[allow(unused_imports)]
-pub use reference::{reference, reference_with_budget, ReferenceAudit, ReferenceBudget};
+pub use reference::{
+    converged_reference, converged_reference_with_budget, reference, reference_with_budget,
+    ReferenceAudit, ReferenceBudget, ReferenceOutcome, ReferenceUsage,
+};
 pub const SCHEMA: &str = "modena-spme-calibration-v1";
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

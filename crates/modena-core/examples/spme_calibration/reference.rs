@@ -525,3 +525,526 @@ pub fn reference_with_budget(
         audit,
     ))
 }
+
+/// Persist this usage across verify/sweep/confirm/profile via `ReferenceBudget::resume`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceUsage {
+    pub work: WorkCounts,
+    pub calls: u64,
+    pub elapsed_ns: u64,
+}
+impl ReferenceUsage {
+    fn capture(b: &ReferenceBudget) -> Self {
+        Self {
+            work: b.work.clone(),
+            calls: b.calls,
+            elapsed_ns: b.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FailedReferenceAttempt {
+    pub settings: ReferenceSettings,
+    pub failure: CalibrationFailure,
+    pub usage: ReferenceUsage,
+}
+/// Supplemental diagnostics preserve the exact protocol ReferenceRecord wire fields.
+/// Expected scientific/cap failures return an outcome, never a fabricated evaluation.
+/// `chosen_level.is_some()` means strict absolute reference convergence only.
+/// Its status is Passed above the force floor, RelativeUndefined below it;
+/// neither status alone certifies a candidate target. Failures have no chosen level.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceOutcome {
+    pub record: super::ReferenceRecord,
+    pub audits: Vec<ReferenceAudit>,
+    #[serde(
+        serialize_with = "super::serialize_finite",
+        deserialize_with = "super::deserialize_finite"
+    )]
+    pub refinement_scores: Vec<f64>,
+    #[serde(
+        serialize_with = "super::serialize_finite",
+        deserialize_with = "super::deserialize_finite"
+    )]
+    pub crosscheck_scores: Vec<f64>,
+    pub failure: Option<CalibrationFailure>,
+    pub failed_attempt: Option<FailedReferenceAttempt>,
+    pub usage: ReferenceUsage,
+}
+fn failure_heap(f: &CalibrationFailure) -> usize {
+    match f {
+        CalibrationFailure::InvalidInput(s)
+        | CalibrationFailure::UnsupportedDomain(s)
+        | CalibrationFailure::BudgetExceeded(s)
+        | CalibrationFailure::ReferenceUnconverged(s)
+        | CalibrationFailure::ReferenceStagnated(s)
+        | CalibrationFailure::ReferencePrecisionLimited(s)
+        | CalibrationFailure::RelativeUndefined(s)
+        | CalibrationFailure::Io(s) => s.capacity(),
+        _ => 0,
+    }
+}
+impl ReferenceOutcome {
+    /// Dynamic capacities only. A caller retaining Vec<ReferenceOutcome> must also
+    /// charge that vector's capacity * size_of::<ReferenceOutcome>() in its baseline.
+    pub fn owned_heap_bytes(&self) -> Result<u64, CalibrationFailure> {
+        let r = &self.record;
+        let mut bytes = add(
+            r.snapshot_id.capacity() as u64,
+            r.snapshot_sha256.capacity() as u64,
+        )?;
+        for (capacity, width) in [
+            (r.levels.capacity(), size_of::<super::ReferenceLevel>()),
+            (r.crosschecks.capacity(), size_of::<super::ReferenceLevel>()),
+            (self.audits.capacity(), size_of::<ReferenceAudit>()),
+            (self.refinement_scores.capacity(), size_of::<f64>()),
+            (self.crosscheck_scores.capacity(), size_of::<f64>()),
+        ] {
+            bytes = add(bytes, mul(capacity as u64, width as u64)?)?;
+        }
+        for level in r.levels.iter().chain(&r.crosschecks) {
+            bytes = add(
+                bytes,
+                mul(
+                    level.evaluation.forces.capacity() as u64,
+                    size_of::<[f64; 3]>() as u64,
+                )?,
+            )?;
+        }
+        if let Some(f) = &self.failure {
+            bytes = add(bytes, failure_heap(f) as u64)?;
+        }
+        if let Some(f) = &self.failed_attempt {
+            bytes = add(bytes, failure_heap(&f.failure) as u64)?;
+        }
+        Ok(bytes)
+    }
+    fn fail(
+        &mut self,
+        failure: CalibrationFailure,
+        settings: Option<ReferenceSettings>,
+        b: &ReferenceBudget,
+    ) {
+        self.record.status = match &failure {
+            CalibrationFailure::BudgetExceeded(_) => super::Status::BudgetExceeded,
+            CalibrationFailure::ReferenceStagnated(_) => super::Status::ReferenceStagnated,
+            CalibrationFailure::ReferencePrecisionLimited(_) => {
+                super::Status::ReferencePrecisionLimited
+            }
+            CalibrationFailure::UnsupportedDomain(_) => super::Status::UnsupportedDomain,
+            CalibrationFailure::ReferenceUnconverged(_) => super::Status::ReferenceUnconverged,
+            _ => super::Status::Failed,
+        };
+        self.record.chosen_level = None;
+        self.usage = ReferenceUsage::capture(b);
+        self.failed_attempt = settings.map(|settings| FailedReferenceAttempt {
+            settings,
+            failure: failure.clone(),
+            usage: self.usage.clone(),
+        });
+        self.failure = Some(failure);
+    }
+}
+fn protocol_heap(p: &super::Protocol) -> Result<u64, CalibrationFailure> {
+    let mut bytes = add(
+        add(p.schema.capacity() as u64, p.fixture_set.capacity() as u64)?,
+        p.family.capacity() as u64,
+    )?;
+    for (capacity, width) in [
+        (p.targets.capacity(), size_of::<f64>()),
+        (p.kappa_a.capacity(), size_of::<f64>()),
+        (p.cutoff_lmin.capacity(), size_of::<f64>()),
+        (p.kcut_a.capacity(), size_of::<f64>()),
+        (p.reference_ladder.capacity(), size_of::<[f64; 2]>()),
+        (p.translations.capacity(), size_of::<[f64; 3]>()),
+    ] {
+        bytes = add(bytes, mul(capacity as u64, width as u64)?)?;
+    }
+    Ok(bytes)
+}
+fn validate_ladder(p: &super::Protocol, b: &ReferenceBudget) -> Result<(), CalibrationFailure> {
+    const LADDER: [[f64; 2]; 6] = [
+        [4., 8.],
+        [5., 10.],
+        [6., 12.],
+        [7., 14.],
+        [8., 16.],
+        [9., 18.],
+    ];
+    if ![4, 6].contains(&p.reference_ladder.len())
+        || p.reference_ladder != LADDER[..p.reference_ladder.len()]
+        || p.reference_kappa_a != 1.1
+        || p.crosscheck_kappa_a != [0.9, 1.3]
+        || p.a != 2.2
+        || p.q_unit != 1.
+        || p.limits != b.limits
+        || p.tolerances.reference_force_rms_abs_units != 1e-8
+        || p.tolerances.reference_force_target_fraction != 0.01
+        || p.tolerances.reference_force_max_units != 1e-7
+        || p.tolerances.reference_energy_per_atom_units != 1e-9
+        || p.tolerances.reference_w_per_atom_units != 1e-9
+        || p.tolerances.relative_denominator_floor != 1e-8
+        || p.targets != [1e-3, 1e-4]
+    {
+        return Err(invalid(
+            "reference requires frozen ladder, units, tolerances and unchanged family limits",
+        ));
+    }
+    // Reduced test/operational caps are allowed; increased caps are not.
+    for (value, maximum) in [
+        (p.limits.max_atoms as u64, 256),
+        (p.limits.max_real_terms_per_call, 100_000_000),
+        (p.limits.max_atom_k_terms_per_call, 100_000_000),
+        (p.limits.max_real_terms_per_family, 5_000_000_000),
+        (p.limits.max_atom_k_terms_per_family, 500_000_000),
+        (p.limits.max_owned_heap_bytes, 268_435_456),
+        (p.limits.max_accuracy_calls, 25_000),
+        (p.limits.max_family_wall_seconds, 1_800),
+    ] {
+        if value > maximum {
+            return Err(invalid("increased reference cap"));
+        }
+    }
+    Ok(())
+}
+fn snapshot_hash(s: &Snapshot, available: u64) -> Result<String, CalibrationFailure> {
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+    // Bound the transient serializer before allocating; serde's actual capacity is
+    // checked too. This buffer is dropped before any oracle allocation.
+    let upper = add(mul(input_heap(s)?, 32)?, 4096)?;
+    if upper > available {
+        return Err(cap("snapshot hash serialization heap cap"));
+    }
+    let bytes = super::json_bytes(s)?;
+    if bytes.capacity() as u64 > available {
+        return Err(cap("snapshot hash actual capacity cap"));
+    }
+    let mut child = Command::new("shasum")
+        .args(["-a", "256"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(super::io)?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| super::io("shasum stdin unavailable"))?
+        .write_all(&bytes)
+        .map_err(super::io)?;
+    let result = child.wait_with_output().map_err(super::io)?;
+    let text = String::from_utf8(result.stdout).map_err(super::io)?;
+    let hash = text
+        .strip_suffix("  -\n")
+        .ok_or_else(|| super::io("invalid stdin shasum output"))?;
+    if !result.status.success() || hash.len() != 64 || !hash.bytes().all(|x| x.is_ascii_hexdigit())
+    {
+        return Err(super::io("invalid snapshot digest"));
+    }
+    Ok(hash.to_ascii_lowercase())
+}
+/// Convenience one-snapshot wrapper starts a fresh budget. Family orchestration MUST
+/// use `converged_reference_with_budget`, retain its outcome even on failure, and
+/// resume actual cumulative usage across phases. A returned failed status blocks
+/// calibration; Ok means a record exists, not that convergence passed.
+pub fn converged_reference(
+    s: &Snapshot,
+    p: &super::Protocol,
+) -> Result<super::ReferenceRecord, CalibrationFailure> {
+    Ok(converged_reference_with_budget(s, p, &mut ReferenceBudget::new(&p.limits))?.record)
+}
+/// Caller baseline charges every OTHER retained snapshot/result/container. Current
+/// snapshot, protocol, this outcome and oracle buffers are charged here exactly once.
+/// The baseline is restored on return; work/calls/elapsed are never reset.
+pub fn converged_reference_with_budget(
+    s: &Snapshot,
+    p: &super::Protocol,
+    b: &mut ReferenceBudget,
+) -> Result<ReferenceOutcome, CalibrationFailure> {
+    run_ladder(s, p, b, |s, settings, limits, b| {
+        reference_with_budget(s, settings, limits, b).map(|(e, a)| (e, Some(a)))
+    })
+}
+#[cfg(test)]
+pub fn converged_reference_test<F>(
+    s: &Snapshot,
+    p: &super::Protocol,
+    b: &mut ReferenceBudget,
+    mut evaluate: F,
+) -> Result<ReferenceOutcome, CalibrationFailure>
+where
+    F: FnMut(ReferenceSettings, &mut ReferenceBudget) -> Result<Evaluation, CalibrationFailure>,
+{
+    run_ladder(s, p, b, |_, settings, _, b| {
+        evaluate(settings, b).map(|e| (e, None))
+    })
+}
+fn run_ladder<F>(
+    s: &Snapshot,
+    p: &super::Protocol,
+    b: &mut ReferenceBudget,
+    mut evaluate: F,
+) -> Result<ReferenceOutcome, CalibrationFailure>
+where
+    F: FnMut(
+        &Snapshot,
+        ReferenceSettings,
+        &Limits,
+        &mut ReferenceBudget,
+    ) -> Result<(Evaluation, Option<ReferenceAudit>), CalibrationFailure>,
+{
+    validate_ladder(p, b)?;
+    let external = b.owned_heap_baseline;
+    let mut out = ReferenceOutcome {
+        record: super::ReferenceRecord {
+            snapshot_id: s.id.clone(),
+            snapshot_sha256: String::new(),
+            levels: Vec::new(),
+            crosschecks: Vec::new(),
+            chosen_level: None,
+            status: super::Status::Pending,
+        },
+        audits: Vec::new(),
+        refinement_scores: Vec::new(),
+        crosscheck_scores: Vec::new(),
+        failure: None,
+        failed_attempt: None,
+        usage: ReferenceUsage::capture(b),
+    };
+    let result = (|| {
+        b.checkpoint()?;
+        let fixed = add(add(external, protocol_heap(p)?)?, input_heap(s)?)?;
+        let reserve = add(
+            out.owned_heap_bytes()?,
+            add(
+                mul(
+                    (p.reference_ladder.len() + 2) as u64,
+                    (size_of::<super::ReferenceLevel>()
+                        + size_of::<ReferenceAudit>()
+                        + size_of::<f64>()) as u64,
+                )?,
+                64,
+            )?,
+        )?;
+        if add(fixed, reserve)? > p.limits.max_owned_heap_bytes {
+            return Err(cap("reference ladder record heap cap"));
+        }
+        out.record
+            .levels
+            .try_reserve_exact(p.reference_ladder.len())
+            .map_err(|e| cap(e.to_string()))?;
+        out.record
+            .crosschecks
+            .try_reserve_exact(2)
+            .map_err(|e| cap(e.to_string()))?;
+        out.audits
+            .try_reserve_exact(p.reference_ladder.len() + 2)
+            .map_err(|e| cap(e.to_string()))?;
+        out.refinement_scores
+            .try_reserve_exact(p.reference_ladder.len() - 1)
+            .map_err(|e| cap(e.to_string()))?;
+        out.crosscheck_scores
+            .try_reserve_exact(2)
+            .map_err(|e| cap(e.to_string()))?;
+        let used = add(fixed, out.owned_heap_bytes()?)?;
+        out.record.snapshot_sha256 = snapshot_hash(
+            s,
+            p.limits
+                .max_owned_heap_bytes
+                .checked_sub(used)
+                .ok_or_else(|| cap("reference record heap cap"))?,
+        )?;
+        for index in 0..p.reference_ladder.len() + 2 {
+            let cross = index >= p.reference_ladder.len();
+            let [r, k] = p.reference_ladder[if cross {
+                p.reference_ladder.len() - 1
+            } else {
+                index
+            }];
+            let settings = ReferenceSettings {
+                kappa: if cross {
+                    p.crosscheck_kappa_a[index - p.reference_ladder.len()]
+                } else {
+                    p.reference_kappa_a
+                } / p.a,
+                real_cutoff: r * p.a,
+                kspace_cutoff: k / p.a,
+            };
+            b.owned_heap_baseline =
+                add(add(external, protocol_heap(p)?)?, out.owned_heap_bytes()?)?;
+            let evaluated = b
+                .checkpoint()
+                .and_then(|()| evaluate(s, settings.clone(), &p.limits, b));
+            let (value, audit) = match evaluated {
+                Ok(pair) => pair,
+                Err(f) => {
+                    out.fail(f, Some(settings), b);
+                    return Ok(());
+                }
+            };
+            if !value.energy.is_finite()
+                || !value.strain_w.is_finite()
+                || value.forces.iter().flatten().any(|x| !x.is_finite())
+            {
+                out.fail(precision(), Some(settings), b);
+                return Ok(());
+            }
+            if value.forces.len() != s.positions.len() {
+                out.fail(
+                    invalid("reference evaluation force shape"),
+                    Some(settings),
+                    b,
+                );
+                return Ok(());
+            }
+            let work = audit
+                .as_ref()
+                .map(|a| a.work.clone())
+                .unwrap_or(WorkCounts {
+                    real_terms: 0,
+                    atom_k_terms: 0,
+                });
+            let delta = if !cross && out.record.levels.is_empty() {
+                Ok(None)
+            } else {
+                let reference = if cross {
+                    &out.record.levels.last().unwrap().evaluation
+                } else {
+                    &value
+                };
+                let candidate = if cross {
+                    &value
+                } else {
+                    &out.record.levels.last().unwrap().evaluation
+                };
+                super::metrics(reference, candidate, s.positions.len(), 1e-8 / p.a.powi(2))
+                    .map(Some)
+            };
+            let precision_limited = delta.is_err();
+            let attempted_settings = settings.clone();
+            let level = super::ReferenceLevel {
+                settings,
+                evaluation: value,
+                delta_from_previous: delta.unwrap_or(None),
+                work,
+            };
+            if cross {
+                out.record.crosschecks.push(level);
+            } else {
+                out.record.levels.push(level);
+            }
+            if let Some(audit) = audit {
+                out.audits.push(audit);
+            }
+            if add(fixed, out.owned_heap_bytes()?)? > p.limits.max_owned_heap_bytes {
+                return Err(cap("retained reference outcome actual capacities cap"));
+            }
+            if precision_limited {
+                out.fail(precision(), Some(attempted_settings), b);
+                return Ok(());
+            }
+        }
+        score_ladder(&mut out, p)?;
+        b.checkpoint()?;
+        Ok(())
+    })();
+    if let Err(f) = result {
+        out.fail(f, None, b);
+    }
+    out.usage = ReferenceUsage::capture(b);
+    if let Some(attempt) = &mut out.failed_attempt {
+        attempt.usage = out.usage.clone();
+    }
+    b.owned_heap_baseline = external;
+    Ok(out)
+}
+fn score_ladder(out: &mut ReferenceOutcome, p: &super::Protocol) -> Result<(), CalibrationFailure> {
+    let n = out
+        .record
+        .levels
+        .last()
+        .ok_or_else(|| invalid("empty reference ladder"))?
+        .evaluation
+        .forces
+        .len();
+    let f_unit = p.q_unit.powi(2) / p.a.powi(2);
+    let e_unit = p.q_unit.powi(2) / p.a;
+    let floor = 1e-8 * f_unit;
+    let final_value = &out.record.levels.last().unwrap().evaluation;
+    let d = super::metrics(final_value, final_value, n, floor)
+        .map_err(|_| precision())?
+        .reference_force_rms;
+    let rms_budget = if d > floor {
+        floor.min(0.01 * 1e-4 * d)
+    } else {
+        floor
+    };
+    let score = |m: &super::ErrorMetrics| -> Result<f64, CalibrationFailure> {
+        finite(
+            (m.force_rms_abs / rms_budget)
+                .max(m.max_atom_force_error / (1e-7 * f_unit))
+                .max(m.energy_per_atom_abs / (1e-9 * e_unit))
+                .max(m.w_per_atom_abs / (1e-9 * e_unit)),
+        )
+    };
+    for index in 1..out.record.levels.len() {
+        let mut delta = super::metrics(
+            &out.record.levels[index].evaluation,
+            &out.record.levels[index - 1].evaluation,
+            n,
+            floor,
+        )
+        .map_err(|_| precision())?;
+        delta.reference_force_rms = d;
+        delta.force_rms_rel = if d > floor {
+            Some(delta.force_rms_abs / d)
+        } else {
+            None
+        };
+        out.refinement_scores.push(score(&delta)?);
+        out.record.levels[index].delta_from_previous = Some(delta);
+    }
+    let final_value = &out.record.levels.last().unwrap().evaluation;
+    for cross in &mut out.record.crosschecks {
+        let delta =
+            super::metrics(final_value, &cross.evaluation, n, floor).map_err(|_| precision())?;
+        out.crosscheck_scores.push(score(&delta)?);
+        cross.delta_from_previous = Some(delta);
+    }
+    let scores = &out.refinement_scores;
+    let refinement_pass = scores[scores.len() - 2..].iter().all(|s| *s <= 1.);
+    if refinement_pass && out.crosscheck_scores.iter().all(|s| *s <= 1.) {
+        out.record.status = if d > floor {
+            super::Status::Passed
+        } else {
+            super::Status::RelativeUndefined
+        };
+        out.record.chosen_level = Some(out.record.levels.len() - 1);
+    } else {
+        let last = &scores[scores.len() - 3..];
+        let stagnant =
+            last.iter().all(|s| *s > 1.) && last[1] >= 0.9 * last[0] && last[2] >= 0.9 * last[1];
+        let message = format!(
+            "{}: fixed reference ladder/cross-kappa checks failed",
+            out.record.snapshot_id
+        );
+        let failure = if stagnant {
+            CalibrationFailure::ReferenceStagnated(message)
+        } else {
+            CalibrationFailure::ReferenceUnconverged(message)
+        };
+        out.record.status = if stagnant {
+            super::Status::ReferenceStagnated
+        } else {
+            super::Status::ReferenceUnconverged
+        };
+        out.failure = Some(failure);
+    }
+    Ok(())
+}

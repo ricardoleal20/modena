@@ -617,8 +617,10 @@ at all five lambda values for selection and confirmation geometry; minimum
 real margins are 0.05911002364431539 and 0.024110251081122414. The controller
 receipt is `controller-fd-geometry-preflight.json` in the Task 2 evidence directory.
 This repairs an invalid regression stencil; it changes no convergence ladder,
-candidate grid, fixture, step, cap, or physical error threshold. The first and
-repaired derivative source epochs and raw results remain separate.
+candidate grid, fixture, step, cap, or physical error threshold. The first raw
+failure log is retained, but its original source epoch was not saved and is
+unavailable. Later registered source epochs and their raw results
+remain separate; no historical source was reconstructed.
 
 
 ### Task 2 separately registered extended Madelung regression (2026-11-06)

@@ -1091,23 +1091,16 @@ fn reference_default_crystal_remains_unconverged() {
         .find(|s| s.id.ends_with("-crystal"))
         .unwrap();
     let mut budget = ReferenceBudget::new(&p.limits);
-    let levels = crystal_levels(&p, &s, &mut budget);
-    let final_value = levels.last().unwrap();
-    let scores: Vec<_> = levels
-        .windows(2)
-        .enumerate()
-        .map(|(i, pair)| {
-            reference_delta_score(
-                &pair[0],
-                &pair[1],
-                final_value,
-                &format!("default crystal refinement={i}"),
-            )
-        })
-        .collect();
-    assert!(!scores.windows(2).any(|pair| pair[0] <= 1. && pair[1] <= 1.));
-    assert!(scores[1] > 1. && scores[2] <= 1.);
-    println!("MADELUNG_DEFAULT status=ReferenceUnconverged scores={scores:?}; no Madelung sanity acceptance");
+    let outcome = converged_reference_with_budget(&s, &p, &mut budget).unwrap();
+    assert_eq!(outcome.record.status, Status::ReferenceUnconverged);
+    assert_eq!(outcome.record.chosen_level, None);
+    assert_eq!(outcome.record.levels.len(), 4);
+    assert_eq!(outcome.record.crosschecks.len(), 2);
+    assert!(outcome.refinement_scores[1] > 1. && outcome.refinement_scores[2] <= 1.);
+    println!(
+        "MADELUNG_DEFAULT {}",
+        serde_json::to_string(&outcome).unwrap()
+    );
 }
 #[test]
 fn reference_madelung_extended_refinement_sign_and_normalization() {
@@ -1267,4 +1260,284 @@ fn reference_secondary_core_ewald_only_after_image_and_tail_checks() {
         };
         strict_reference_delta(converged, &core, &format!("secondary core {}", s.id));
     }
+}
+
+// These synthetic evaluations test convergence control, never oracle physics.
+fn ladder_fixture(extended: bool) -> (Protocol, Snapshot) {
+    let p = frozen_protocol("special", 2, 1, extended).unwrap();
+    let s = materialize(&p)
+        .unwrap()
+        .into_iter()
+        .find(|s| s.id == "special-3-selection-neutral-bare")
+        .unwrap();
+    (p, s)
+}
+fn synthetic_ladder(p: &Protocol, s: &Snapshot, energies: &[f64]) -> ReferenceOutcome {
+    let mut index = 0;
+    converged_reference_test(s, p, &mut ReferenceBudget::new(&p.limits), |_, _| {
+        let mut value = eval(vec![[1., 0., 0.]; s.positions.len()]);
+        value.energy = energies[index];
+        index += 1;
+        Ok(value)
+    })
+    .unwrap()
+}
+#[test]
+fn two_consecutive_reference_passes_required() {
+    let (p, s) = ladder_fixture(false);
+    let unit = 1e-9 / p.a * 3.;
+    let failed = synthetic_ladder(&p, &s, &[10. * unit, 2. * unit, 0., 0., 0., 0.]);
+    assert_eq!(failed.record.status, Status::ReferenceUnconverged);
+    assert_eq!(failed.record.levels.len(), 4);
+    assert_eq!(failed.record.crosschecks.len(), 2);
+    assert_eq!(failed.record.chosen_level, None);
+    let passed = synthetic_ladder(&p, &s, &[10. * unit, 0., 0., 0., 0., 0.]);
+    assert_eq!(passed.record.status, Status::Passed);
+    assert_eq!(passed.record.chosen_level, Some(3));
+    assert_eq!(passed.refinement_scores.len(), 3);
+}
+#[test]
+fn cross_kappa_disagreement_blocks_calibration() {
+    let (p, s) = ladder_fixture(false);
+    let result = synthetic_ladder(&p, &s, &[0., 0., 0., 0., 1., 0.]);
+    assert_eq!(result.record.status, Status::ReferenceUnconverged);
+    assert_eq!(result.record.crosschecks.len(), 2);
+    assert!(result.crosscheck_scores[0] > 1.);
+    assert_eq!(result.record.chosen_level, None);
+}
+#[test]
+fn stagnation_above_budget_is_explicit() {
+    let (p, s) = ladder_fixture(false);
+    let result = synthetic_ladder(&p, &s, &[3., 2., 1., 0., 0., 0.]);
+    assert_eq!(result.record.status, Status::ReferenceStagnated);
+    assert!(matches!(
+        result.failure,
+        Some(CalibrationFailure::ReferenceStagnated(_))
+    ));
+    assert!(serde_json::to_string(&result)
+        .unwrap()
+        .contains("ReferenceStagnated"));
+    assert_eq!(
+        synthetic_ladder(&p, &s, &[0.; 6]).record.status,
+        Status::Passed
+    );
+}
+#[test]
+fn nonfinite_reference_is_precision_limited() {
+    let (p, s) = ladder_fixture(false);
+    let result = synthetic_ladder(&p, &s, &[0., f64::NAN]);
+    assert_eq!(result.record.status, Status::ReferencePrecisionLimited);
+    assert_eq!(result.record.levels.len(), 1);
+    assert!(result.failed_attempt.is_some());
+    assert!(serde_json::to_string(&result)
+        .unwrap()
+        .contains("ReferencePrecisionLimited"));
+}
+#[test]
+fn extended_reference_is_chosen_before_run() {
+    let (p, s) = ladder_fixture(true);
+    let result = synthetic_ladder(&p, &s, &[0.; 8]);
+    assert_eq!(result.record.levels.len(), 6);
+    assert_eq!(result.record.levels[5].settings.real_cutoff, 9. * p.a);
+    assert_eq!(result.record.crosschecks.len(), 2);
+    let mut illegal = p.clone();
+    illegal.reference_ladder.push([10., 20.]);
+    assert!(converged_reference_test(
+        &s,
+        &illegal,
+        &mut ReferenceBudget::new(&p.limits),
+        |_, _| panic!("invalid ladder evaluated")
+    )
+    .is_err());
+}
+#[test]
+fn reference_deadline_preserves_failure_record() {
+    let (p, s) = ladder_fixture(false);
+    let mut budget = ReferenceBudget::new(&p.limits);
+    let mut index = 0;
+    let result = converged_reference_test(&s, &p, &mut budget, |_, b| {
+        index += 1;
+        if index == 3 {
+            b.calls += 1;
+            b.work.real_terms += 5;
+            return Err(CalibrationFailure::BudgetExceeded(
+                "injected deadline".into(),
+            ));
+        }
+        b.calls += 1;
+        b.work.real_terms += 17;
+        Ok(eval(vec![[1., 0., 0.]; 3]))
+    })
+    .unwrap();
+    assert_eq!(result.record.status, Status::BudgetExceeded);
+    assert_eq!(result.record.levels.len(), 2);
+    assert_eq!(result.usage.calls, 3);
+    assert_eq!(result.usage.work.real_terms, 39);
+    assert_eq!(result.failed_attempt.as_ref().unwrap().usage, result.usage);
+    assert!(serde_json::to_string(&result)
+        .unwrap()
+        .contains("injected deadline"));
+}
+
+#[test]
+fn ladder_final_denominator_and_absolute_floor_are_used() {
+    let (p, s) = ladder_fixture(false);
+    let mut i = 0;
+    let result = converged_reference_test(&s, &p, &mut ReferenceBudget::new(&p.limits), |_, _| {
+        let force = [1., 0.5, 0.25, 0.125, 0.125, 0.125][i];
+        i += 1;
+        Ok(eval(vec![[force, 0., 0.]; 3]))
+    })
+    .unwrap();
+    for level in result.record.levels.iter().skip(1) {
+        assert_eq!(
+            level
+                .delta_from_previous
+                .as_ref()
+                .unwrap()
+                .reference_force_rms,
+            metrics(
+                &result.record.levels[3].evaluation,
+                &result.record.levels[3].evaluation,
+                3,
+                1e-8 / p.a.powi(2)
+            )
+            .unwrap()
+            .reference_force_rms
+        );
+    }
+    let zero = converged_reference_test(&s, &p, &mut ReferenceBudget::new(&p.limits), |_, _| {
+        Ok(eval(vec![[0.; 3]; 3]))
+    })
+    .unwrap();
+    assert_eq!(zero.record.status, Status::RelativeUndefined);
+    assert_eq!(zero.record.chosen_level, Some(3));
+    assert!(zero.record.crosschecks[0]
+        .delta_from_previous
+        .as_ref()
+        .unwrap()
+        .force_rms_rel
+        .is_none());
+    let m = zero.record.crosschecks[0]
+        .delta_from_previous
+        .as_ref()
+        .unwrap();
+    assert!(!passes_target(m, 1e-4, &p, true).unwrap());
+}
+#[test]
+fn ladder_retained_capacity_and_failed_partial_deltas_are_bounded() {
+    let (mut p, s) = ladder_fixture(false);
+    p.limits.max_owned_heap_bytes = 100_000;
+    let mut b = ReferenceBudget::new(&p.limits);
+    let mut i = 0;
+    let result = converged_reference_test(&s, &p, &mut b, |_, _| {
+        i += 1;
+        if i == 3 {
+            return Err(CalibrationFailure::BudgetExceeded("stop after two".into()));
+        }
+        Ok(eval(vec![[1., 0., 0.]; 3]))
+    })
+    .unwrap();
+    assert!(result.record.levels[1].delta_from_previous.is_some());
+    assert!(result.owned_heap_bytes().unwrap() > 0);
+    assert_eq!(b.owned_heap_baseline, 0);
+    let mut b = ReferenceBudget::new(&p.limits);
+    b.owned_heap_baseline = p.limits.max_owned_heap_bytes;
+    let result =
+        converged_reference_test(&s, &p, &mut b, |_, _| panic!("overfull heap evaluated")).unwrap();
+    assert_eq!(result.record.status, Status::BudgetExceeded);
+    assert_eq!(b.owned_heap_baseline, p.limits.max_owned_heap_bytes);
+}
+#[test]
+fn ladder_real_three_ion_records_and_shared_family_budget() {
+    // Preregistered in Task 3 evidence before this test's first physics run.
+    let (mut p, s) = ladder_fixture(false);
+    p.limits.max_accuracy_calls = 7;
+    let mut b = ReferenceBudget::new(&p.limits);
+    let first = converged_reference_with_budget(&s, &p, &mut b).unwrap();
+    println!(
+        "TASK3_REAL_FIRST {}",
+        serde_json::to_string(&first).unwrap()
+    );
+    assert_eq!(first.record.levels.len(), 4);
+    assert_eq!(first.record.crosschecks.len(), 2);
+    assert_eq!(first.audits.len(), 6);
+    assert_eq!(first.usage.calls, 6);
+    let expected = if first.refinement_scores[1..].iter().all(|x| *x <= 1.)
+        && first.crosscheck_scores.iter().all(|x| *x <= 1.)
+    {
+        Status::Passed
+    } else {
+        Status::ReferenceUnconverged
+    };
+    assert_eq!(first.record.status, expected);
+    // Current input/protocol are charged by runner; this retained first result is external.
+    b.owned_heap_baseline = first.owned_heap_bytes().unwrap();
+    let second = converged_reference_with_budget(&s, &p, &mut b).unwrap();
+    println!(
+        "TASK3_REAL_SECOND {}",
+        serde_json::to_string(&second).unwrap()
+    );
+    assert_eq!(second.record.status, Status::BudgetExceeded);
+    assert_eq!(second.record.levels.len(), 1);
+    assert_eq!(second.usage.calls, 7);
+    assert!(second.usage.work.real_terms > first.usage.work.real_terms);
+    assert!(second.usage.elapsed_ns >= first.usage.elapsed_ns);
+    assert_eq!(second.failed_attempt.as_ref().unwrap().usage, second.usage);
+    assert!(second.audits[0].owned_heap_bytes > first.audits[0].owned_heap_bytes);
+    let resumed = ReferenceBudget::resume(
+        &p.limits,
+        second.usage.work.clone(),
+        second.usage.calls,
+        std::time::Duration::from_nanos(second.usage.elapsed_ns),
+        first.owned_heap_bytes().unwrap() + second.owned_heap_bytes().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(resumed.calls, 7);
+}
+
+#[test]
+fn ladder_actual_deadline_returns_a_failed_record() {
+    let (mut p, s) = ladder_fixture(false);
+    p.limits.max_family_wall_seconds = 1;
+    let mut b = ReferenceBudget::new(&p.limits);
+    let result = converged_reference_test(&s, &p, &mut b, |_, _| {
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        Ok(eval(vec![[1., 0., 0.]; 3]))
+    })
+    .unwrap();
+    assert_eq!(result.record.status, Status::BudgetExceeded);
+    assert_eq!(result.record.levels.len(), 1);
+    assert!(result.failed_attempt.is_some());
+    assert!(result.usage.elapsed_ns >= 1_000_000_000);
+}
+
+#[test]
+fn ladder_metric_overflow_keeps_finite_raw_evaluation() {
+    let (p, s) = ladder_fixture(false);
+    let mut i = 0;
+    let out = converged_reference_test(&s, &p, &mut ReferenceBudget::new(&p.limits), |_, _| {
+        i += 1;
+        Ok(eval(vec![[if i == 1 { 0. } else { f64::MAX }, 0., 0.]; 3]))
+    })
+    .unwrap();
+    assert_eq!(out.record.status, Status::ReferencePrecisionLimited);
+    assert_eq!(out.record.levels.len(), 2);
+    assert!(out.record.levels[1].evaluation.forces[0][0].is_finite());
+    assert!(serde_json::to_string(&out).is_ok());
+}
+
+#[test]
+fn ladder_convenience_returns_failed_record_and_rejects_invalid_setup() {
+    let (mut p, s) = ladder_fixture(false);
+    p.limits.max_owned_heap_bytes = 1;
+    let record = converged_reference(&s, &p).unwrap();
+    assert_eq!(record.status, Status::BudgetExceeded);
+    assert!(record.levels.is_empty());
+    assert!(record.chosen_level.is_none());
+    p.reference_ladder.push([8., 16.]);
+    assert!(matches!(
+        converged_reference(&s, &p),
+        Err(CalibrationFailure::InvalidInput(_))
+    ));
 }

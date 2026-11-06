@@ -38,6 +38,7 @@ pub mod mpi_comm;
 pub mod neighbor;
 pub mod nose_hoover;
 mod periodic_geometry;
+pub mod periodic_graph;
 pub mod potential;
 pub mod replica_exchange;
 pub mod runner;
@@ -81,6 +82,10 @@ pub use io::xyz::{read_xyz, TrajectoryWriter};
 pub use lattice::{random_alloy, rocksalt, AlloySpecies};
 pub use neighbor::{NeighborList, PairScale};
 pub use nose_hoover::NoseHooverChain;
+pub use periodic_graph::{
+    GraphBudget, GraphBuildError, GraphBuildStats, PeriodicEdge, PeriodicGraph,
+    PeriodicGraphOptions,
+};
 pub use potential::mixing::{MixingRule, PairParamTable};
 pub use potential::{
     Buckingham, BuckinghamOverride, BuckinghamTypeParams, InterpKind, LennardJones, LjOverride,

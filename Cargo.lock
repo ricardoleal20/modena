@@ -842,8 +842,11 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 name = "modena-bench"
 version = "0.1.1"
 dependencies = [
+ "clap",
  "criterion",
  "modena-core",
+ "rayon",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,0 +1,469 @@
+# B05 SPME empirical calibration specification
+
+**Status:** adopted implementation contract, 2026-11-06. Controller source/interface preflight is complete; no B05 implementation, scientific tests or measurements have run. This specification supersedes the combined report for design decisions where it explicitly refines them. The companion repository plan is `docs/superpowers/plans/2026-11-06-b05-spme-calibration.md`. Original preparation drafts remain preserved separately.
+
+**Goal:** select existing explicit SPME parameters on a bounded, frozen ionic snapshot domain using an independently converged direct Ewald reference, empirical force targets 1e-3 and 1e-4, companion error gates and measured cost; retain all evidence and report unsupported, unconverged, unattained, or unconfirmed results explicitly.
+
+**Authority:** B05 in `docs/research/2026-11-05-core-improvements/phase3_analysis/ACCEPTANCE-BACKLOG.md`, C2 in `phase2_investigation/CASES.md`, and section 6 of `phase6_revision/REPORT.md`. Those documents propose acceptance criteria and do not assert results. Previous preparation: `/private/tmp/modena-b05-design-research.md`.
+
+**Implementation location:** an offline `modena-core` example and example-only support modules, plus an additive opt-in SPME phase-profile API. Production explicit input schema and defaults remain unchanged. The initial verified B03 base12e4ab1 includes the benchmark library and clap/rayon/serde_json dependencies. Controller preflight confirmed seven SPME/Ewald/input/runner/pair-scale/benchmark source identities match current B04. Early Tasks1–3 add only independent example/test types, fixtures and an oracle; final B04 integration and interface checks precede Task4 and the numerical campaign. Keeping the helper in core examples avoids a new dependency from core to benchmark code and avoids edits to B03-owned files. Reuse stable data conventions after that recheck without broadening this feature into a benchmark-framework refactor.
+
+**Execution workflow:** the controller performs the compatibility/ownership/scaffolding preflight without a separate agent or review task. Execute implementation Tasks 1–8 with `subagent-driven-development`, sequentially: one implementer per task followed by independent review before the next task. This delegation is authorized; it does not authorize work during the current B03 CPU lease. New branches use the user-required `ricardo/` prefix, overriding the host default `ricardoleal20/`.
+
+## Global Constraints
+
+- B03 is delivered. Controller may hand off independent example-only Tasks 1–3 on the verified B03 base while B04 proceeds in a separate checkout. Reconcile the unpublished B05 base with final reviewed B04 before Task 4 candidate evaluation or production profiling. No concurrent work within a B05 task sequence; no competing builds/tests/writes during another case's exclusive measurement lease.
+- Preserve explicit `EwaldSpec` parameters, current defaults, unit conversion, runner construction, analytic order-4 B-spline differentiation, existing FFT-plan/workspace reuse, additive ForceModel semantics, and charged-mesh COM behavior.
+- Never attribute a P3M/ik estimator or a universal error bound to this analytic SPME implementation. No hidden force-mean subtraction.
+- Support only reduced units, finite orthorhombic cells with 3D periodicity, candidate SPME rc < half the shortest cell edge, and the exact frozen fixture families. Reject unsupported geometry/units and unvalidated inputs.
+- Force targets are empirical; independent all-image real-space/full-positive-and-negative-k Ewald convergence and held-out confirmation are mandatory before emitting selected configurations.
+- Absolute RMS, maximum atom-vector error, energy/atom and scalar isotropic-strain W/atom gates accompany relative RMS. Current Virial is scalar: B05 does not implement or certify the six-component stress tensor; that belongs to B07.
+- Freeze fixtures, tolerance, operation/memory budgets and timing protocol before candidate measurements; preserve failed rows and raw data.
+- Actual spread/FFT/gather/real-space phase measurements are required for full B05 completion. Their observer is opt-in per call, and primary candidate timing uses the ordinary uninstrumented compute path. Staging the offline-helper alternative may leave profiling explicitly pending; it cannot close full B05.
+- No new Rust dependency, production autotuning, interpolation-order change, P3M replacement, tensor extension, automatic input rewrite, or unbounded refinement.
+- All future shell commands use rtk; no competing timing campaign or source mutation during another stream's exclusive measurement lease.
+- New branches use the user-required `ricardo/` prefix, overriding the host default `ricardoleal20/`.
+- The controller owns preflight/scaffolding; Tasks 1–8 use authorized sequential subagent-driven development with one implementer per task and independent review before advancing.
+
+## 1. Observed implementation and constraints
+
+The implementation uses analytic derivatives of the B-spline assignment weights, despite several old comments saying `ik`. `spme.rs:641–681` differentiates the mesh energy with `m4_deriv`; this is the governing code, not the stale label. Correct those labels during the later narrowly scoped documentation change; do not change differentiation.
+
+- `SpmeForceModel::new(kappa, real_cutoff, kspace_cutoff) -> Result<Self>` validates finite positive parameters. `with_pair_scales(Vec<PairScale>) -> Result<Self>` supplies independent Coulomb weights. `ForceModel::compute(&self, &mut System, &mut Virial, &mut NeighborList) -> Result<f64>` accumulates forces and scalar isotropic strain virial; the helper must clone/reset forces and virial before each evaluation.
+- `mesh_for_box(&SimBox, kcut) -> [usize; 3]` maps `ceil(L_axis*kcut/pi)` to the next 5-smooth integer, minimum four. `kspace_cutoff` is a mesh-size selector here, not an identical spherical reciprocal truncation to direct Ewald. Deduplicate equal `(kappa, rc, actual_mesh)` candidates.
+- `SpmeWorkspace` already owns forward/inverse FFT plans, two complex grids, influence factors, and per-worker scratch; the model's mutex covers mesh validation and use. Influence keys include kappa and orthorhombic edge bits; mesh changes rebuild the workspace. Standalone `spme_reciprocal_forces` and `spme_reciprocal_energy` allocate temporary workspaces and must not be used to claim production steady-state timings.
+- SPME rejects triclinic boxes. C2 excludes them. Calibration accepts only 3D periodic finite positive orthorhombic cells, finite coordinates/charges, nonzero charge scale, unique valid pair indices, and no overlapping particles. Minimum particle separation must be at least `0.2*a` in the proposed reduced-unit campaign.
+- Current real-space path uses minimum images and a finite cutoff. All emitted candidate cutoffs must be `< L_min/2`; the independent oracle must include omitted periodic real-space images, so real-space truncation error is actually measured. Increasing current direct Ewald cutoff beyond half the box does not create a full image oracle.
+- `EwaldSpec` is explicit (`method`, `kappa`, `real_cutoff`, `kspace_cutoff`), with deny-unknown-fields; real-unit conversions are at the I/O boundary. Leave it and `runner::build_electrostatics` unchanged. Initial helper accepts reduced units only and emits reduced-unit fragments. Real units are rejected with a clear message, not guessed or converted twice.
+- Both electrostatic models include self energy, conducting/tin-foil periodic reciprocal convention, uniform neutralizing background for net charge, and shared special-pair semantics. The oracle independently implements the same boundary/background convention and removes a bare minimum-image pair fraction; it does not reuse `CoulombPolicy`, `exclusion_correction`, neighbor lists, core Ewald k-vector code, or SPME.
+- `conserves_total_momentum` intentionally returns false for charged SPME. Report raw net force and raw force errors. Do not subtract force means in metrics, model, fixtures, integrator, or report.
+
+Existing regression anchors to retain: `tests/electrostatics.rs` (Ewald force FD/Madelung and ionic Ewald/SPME NVE), `tests/force_hardening.rs` (background W, full SPME charged strain, additive contract), `tests/pair_scales.rs` (weighted corrections inside/outside cutoff), `tests/force_cache.rs` (workspace reuse and shared-model cell state), `tests/final_integration.rs` and `tests/sampling_state.rs` (charged-mesh COM/DOF contract), plus the reciprocal energy/force/strain unit tests in `src/spme.rs`. Their existence is not evidence that B05 targets pass; current mesh/direct force comparison uses matching cutoffs and a much looser tolerance.
+
+## 2. Freeze the physical protocol before measuring candidates
+
+Create `docs/scientific-hardening/B05-SPME-PROTOCOL.md` first. It contains the exact fixture generator, candidate grid, oracle settings, tolerances below, timing procedure, and schema version `modena-spme-calibration-v1`. Hash its bytes and record that hash before any candidate error/timing run. Changes after seeing results create a new protocol version and an explicitly exploratory campaign; do not silently tune fixtures/tolerances.
+
+Use `a=2.2`, `q_unit=1`, `F_unit=q_unit^2/a^2`, `E_unit=q_unit^2/a`, and reduced units throughout. Base ionic fixture is the existing `lattice::rocksalt(a,[2,2,2],"Na","Cl",1,1,1,-1)` (64 ions), positions wrapped explicitly before perturbation. Generate each component displacement by a fully specified integer function, not an unstable RNG stream:
+
+```rust
+// i: atom index, axis: 0..3, seed: listed below; arithmetic u64.
+let z = ((i as u64 + 1) * 1_664_525
+    + (axis as u64 + 1) * 1_013_904_223 + seed * 69_069) % 65_536;
+let displacement = amplitude * a * (2.0 * z as f64 / 65_535.0 - 1.0);
+```
+
+Freeze candidate-selection neutral snapshots `(seed,amplitude)=(7,0.02),(19,0.05),(31,0.08)`; confirmation-only neutral snapshots `(43,0.035),(59,0.065)`. Save exact materialized coordinate/charge/box/pair-scale arrays and hashes before computing candidates; confirmation snapshots do not rank candidates. Add an unperturbed crystal for the near-zero-denominator test, never as the only accuracy fixture.
+
+Other mandatory fixtures:
+
+1. **Net charge/background:** selection seed 19 perturbed 64-ion snapshot, change atom 1 charge from -1 to -0.5 (`Q=+0.5`); confirmation seed 59 with the same change. All background/self terms stay enabled and Q, sum(q²), boundary convention are reported.
+2. **Special pairs, rectangular cell:** `L=[9,10,11]`, positions `[[1.1,2.3,3.4],[2.7,3.2,3.8],[6.2,5.8,7.0]]`, charges `[1,-0.7,-0.3]`; pair scales `(0,1,c=0)` and `(0,2,c=0.4)`, LJ weights one. First pair is inside every proposed rc and second outside every rc. Also evaluate c=1 and c=0.7 pair-policy algebra separately. Confirmation positions add `[0.031,-0.017,0.023]` to atom 1 before wrapping. A charged variant changes final charge to +0.4 (`Q=+0.7`). Model and neighbor-list scales are supplied consistently, exactly once.
+3. **Orthorhombic anisotropy:** selection seed 31 lattice uniformly remap fractional coordinates from cubic box to `[4.4,5.06,5.72]`; confirmation seed 43 remapped identically. This is a separate declared fixture family, not permission to generalize to arbitrary aspect ratios.
+4. **Integer periodic wrap:** shift any atom by each full box vector; E/F/W must agree to regression tolerances. This is distinct from sub-grid translation.
+5. **Unsupported/degenerate fixtures:** triclinic box; empty/zero-charge input; NaN/Inf; overlapping atoms; invalid/duplicate conflicting pair policies; unsupported units; particle count or mesh over caps. Ensure explicit rejection/status with no configuration emitted.
+
+For each candidate and every nondegenerate selection/confirmation snapshot, use seven rigid sub-grid translations. Set `h_axis=L_axis/mesh_axis`, add `h * t` componentwise to all positions and wrap, with
+`t=[[0,0,0],[0.125,0.375,0.625],[0.25,0.5,0.75],[0.5,0.5,0.5],[0.75,0.25,0.5],[0.37,0.61,0.83],[0.93,0.17,0.41]]`.
+The oracle reference is invariant under a rigid translation up to its convergence tolerances; compare each translated SPME result to the same converged oracle forces/energy/W after independently verifying that oracle invariance. Report force variation and E/W ranges across translations, plus raw net force for every row. Candidate-specific offsets are exact deterministic probing of mesh phase, not a claim that seven shifts bound all phases.
+
+For force and isotropic-strain finite differences, record/check that no real-space pair, reference image, or reference reciprocal vector crosses a spherical cutoff during either perturbation. Hold kappa and real cutoff fixed. SPME W differentiates the functional at a **fixed mesh**, not a discontinuous re-selection of mesh size. Require `mesh_for_box` at both strained cells to equal the central actual mesh before comparing production full-model W with FD. If a candidate kcut lies exactly at a mesh threshold, choose and record a kcut strictly inside the interval producing the identical mesh (it defines exactly the same finite functional); otherwise mark that FD case `MeshBoundary` and use the existing public fixed-mesh reciprocal energy/force helper plus independently checked real/correction/background pieces for the derivative check. Never treat a difference across a mesh or neighbor cutoff jump as a force/strain error certificate. Report changes of mesh/caches under a finite box change as a separate lifecycle regression.
+
+## 3. Independent direct Ewald oracle and convergence proof
+
+Implement the reference in example-only code. It consumes flat positions/charges/orthorhombic cell and a canonical pair-scale list; it must not call an engine force evaluator or engine neighbor/min-image helper. Use independent componentwise `d -= L*(d/L).round()` for bare special-pair corrections. For the full sum, enumerate image vectors explicitly.
+
+For `d_ij,n = r_i-r_j + n*L`, full ordered i,j,image enumeration (exclude i=j,n=0) and full positive/negative reciprocal enumeration, use:
+
+```text
+U_real = (1/2) sum' q_i*q_j*erfc(kappa*r)/r, r=|d_ij,n| < R
+F_real,i = sum_(j,n)' q_i*q_j*[erfc(kappa*r)/r^3
+                       +(2*kappa/sqrt(pi))*exp(-kappa²*r²)/r²]*d_ij,n
+W_real = (1/2) sum' q_i*q_j*[erfc(kappa*r)/r
+                              +(2*kappa/sqrt(pi))*exp(-kappa²*r²)]
+k = 2*pi*(m_x/L_x,m_y/L_y,m_z/L_z), 0 < |k| < K
+C=2*pi/V; A_k=exp(-k²/(4*kappa²))/k²
+rho = sum_j q_j*(cos(k.r_j)+i*sin(k.r_j))
+U_rec = C*sum_k A_k*|rho|²
+F_rec,i = 2*C*q_i*sum_k A_k*k*(rho.re*sin(k.r_i)-rho.im*cos(k.r_i))
+W_rec = C*sum_k A_k*|rho|²*(1-k²/(2*kappa²))
+U_self = -kappa/sqrt(pi)*sum_i q_i²; W_self=0
+U_bg = -pi*Q²/(2*V*kappa²); W_bg=3*U_bg; F_bg=0
+For each canonical (i,j,c): U -= (1-c)*q_i*q_j/r_min
+                         W -= (1-c)*q_i*q_j/r_min
+                         F_i -= (1-c)*q_i*q_j*d_min/r_min³; F_j += same
+```
+
+Use compensated accumulation for energies/virials and force components. `W=-dU(lambda*r,lambda*L)/d lambda at lambda=1` with kappa fixed (not a full tensor). Self-image real energy/virial is included, and self-image forces cancel by image symmetry. For each axis, real-image enumeration bounds `|n_axis| <= ceil((R + max_ij |r_i,axis-r_j,axis|)/L_axis)` safely before spherical filtering; wrapped coordinates allow `ceil(R/L_axis)+1`. Reciprocal bounds are `ceil(K*L_axis/(2*pi))`. Record counts, caps, and truncation settings.
+
+Default reference ladder fixes `kappa_ref=1.1/a` and evaluates `(R/a,K*a)=(4,8),(5,10),(6,12),(7,14)`. Require **two consecutive** refinement differences satisfying all reference budgets; otherwise emit `ReferenceUnconverged`, not a selected config. Evaluate final settings independently at `kappa_ref=0.9/a` and `1.3/a` and require agreement with the final 1.1/a result to the same budgets; if not, no calibration. These are empirical convergence checks, not a rigorous infinite-series error bound.
+
+Reference budgets on each snapshot: force vector RMS delta <= `min(1e-8*F_unit,0.01*1e-4*D)` where D is the final reference force vector RMS when D > `1e-8*F_unit`; for a smaller D use absolute budget `1e-8*F_unit`. Max atom-vector force delta <= `1e-7*F_unit`. Energy/atom and W/atom delta <= `1e-9*E_unit`. A failed ladder is reported with its raw deltas and cannot be repaired by increasing thresholds after candidate inspection. Explicit later `--reference-extended` protocol may allow two additional predetermined levels `(8,16),(9,18)`, retaining the same budgets and operation caps; it is a new recorded protocol option, not unbounded iteration.
+
+Validate this oracle before using it: its full analytic forces match central energy differences on the 3-atom rectangular neutral/charged/scaled fixtures; analytic W matches isotropic strain FD; full ±k versus an independently coded half-space sum agrees; translation invariance; known background coefficient; special-pair bare-fraction identities. Cross-check current `EwaldForceModel` at high kappa and sub-half-box rc against the oracle only where the independent ladder shows omitted real-image/tail effects under the same budget. Current direct Ewald is a useful secondary implementation cross-check, not the independent oracle itself. Keep a Madelung sequence check (increasing R/K and finite-cell lattice convergence) to catch sign/factor mistakes; do not call the existing loose 0.02 Madelung tolerance a 1e-4 force certification.
+
+## 4. Error metrics, gates, and domain language
+
+Per snapshot s with N atoms, define raw `delta_i=F_spme,i-F_ref,i`:
+
+```text
+D_s = sqrt(sum_i |F_ref,i|²/N)                 # vector RMS, NOT component RMS
+A_s = sqrt(sum_i |delta_i|²/N)                 # same vector RMS convention
+R_s = A_s/D_s                                 # only when D_s > 1e-8 F_unit
+M_s = max_i |delta_i|                          # maximum atom-vector norm
+E_s = (U_spme-U_ref)/N                         # signed + absolute reported
+W_s = (W_spme-W_ref)/N                         # signed + absolute reported
+net_force = sum_i F_spme,i                     # three components and norm
+```
+
+Never normalize by candidate forces, maximum reference force, signed mean force, energy zero, or a reference force averaged across distinct fixtures. Preserve per-snapshot denominators and worst-case reductions. Report absolute/component maxima too, with names distinct from atom-vector maximum.
+
+For target `t in [1e-3,1e-4]`, a candidate passes only if **every selection snapshot and translation** satisfies `R_s <= t`, `A_s <= t*F_unit`, `M_s <= 10*t*F_unit`, `|E_s| <= t*E_unit`, and `|W_s| <= 10*t*E_unit`, with oracle converged. These numerical side gates are proposed protocol tolerances, frozen before measurement; they are not already demonstrated attainable. Near-zero D snapshots report `RelativeUndefined` and are tested against absolute/energy/strain regression budgets; they do not rank or certify relative-target calibration. Relative-undefined arbitrary input cannot receive a relative-target configuration.
+
+After selection, the exact selected candidate must pass the same gates on every held-out confirmation snapshot/translation. Failure produces `ConfirmationFailed`; the helper does not silently select the next candidate based on holdout results. A new selection/confirmation campaign requires a new manifest. If no feasible grid candidate exists, emit `TargetNotReached` with the full Pareto curve and no config. Failed or capped oracle -> `ReferenceUnconverged`/`BudgetExceeded`, also no config.
+
+Calibration wording: **"Observed target met on these exact snapshots, shifts, and boundary convention."** It is not a universal error bound. A report records charge distribution, N, density, minimum separation, aspect ratio, Q, sum(q²), pair scales, box/position/charge hashes, seed/amplitude, method `spme-order4-analytic`, and raw reference convergence data. Only exact fixture-hash matches are `CalibratedSnapshots`. Another snapshot in a similarly summarized domain is `NotCalibrated`, because scalar summaries cannot certify arbitrary charge arrangements. Changed box, charges, pair scales, interpolation algorithm, units, or cutoffs invalidate the report. Dynamic trajectories and NPT box changes require separate sampling and validation; no runtime guarantee is made by this helper. Partial PBC and triclinic input are rejected, not labeled approximately calibrated.
+
+## 5. Bounded sweep, cost selection, and output
+
+Initial candidate grid, per fixture/cell family:
+
+```text
+kappa*a in [1.2,1.6,2.0,2.4,3.0,3.6]
+rc/L_min in [0.30,0.40,0.49]
+kspace_cutoff*a in [8,12,16,24,32,48,64]
+```
+
+126 raw candidates, sorted lexicographically; deduplicate actual mesh triples as above. No expected-error formula prunes or certifies candidates. Hard limits: 256 atoms/reference input, 1,048,576 mesh points/candidate, 126 candidate tuples/family, 25,000 candidate evaluations/campaign, 4 reference refinement levels (+2 only explicit extended protocol), 100,000,000 real ordered-pair-image evaluations and 100,000,000 atom-k terms per individual reference call. Count estimated work safely before allocation; use checked mesh products. If a whole campaign exceeds a declared total evaluation cap, reject before partial selection. All caps, elapsed time, and skipped reasons appear in JSON. No automatic grid expansion.
+
+Family grouping is explicit: the 64-ion cubic neutral/background snapshots share one triple and must all pass it; their anisotropic variants form a second cell family; the rectangular 3-ion neutral/charged/special-pair fixtures form a third family. A winner is calibrated only for its own family; the three-atom special-pair regression is additionally mandatory before any ionic-family campaign, but its separate rc grid does not secretly alter the cubic winner. Repeat the ionic families independently for 216 ions. The 25,000 cap is per family campaign, including translation and confirmation calls, and excludes separately counted bounded oracle work and timing repetitions.
+
+Pipeline: materialize/hash protocol and fixtures -> oracle and physical checks -> reference convergence -> all selection force/error rows -> feasible set per target -> timed cost for feasible candidates -> fixed winning candidate -> held-out confirmation -> output. Unsuccessful physical/error gates precede timing; timing does not rescue a physics failure. For uninstrumented total-cost ranking, measure every feasible candidate (within 126 cap), using its persistent model and neighbor list. Do not use an analytic mesh-size proxy as measured cost. If bounded timing budget cannot cover all feasible candidates, report shortlist/proxy status and do not claim fastest feasible.
+
+The explicit frozen baseline is `kappa=1/a`, `real_cutoff=0.40*L_min`, `kspace_cutoff=12/a` for each family, evaluated and retained even when its observed error misses a target. It is not silently inserted into the selectable 126-tuple grid. Profile its actual phases after its derivative/additive/strain physics checks, alongside any confirmed target candidates; baseline target failure is reported rather than hidden.
+
+For each feasible candidate, use the 64-ion selection fixture and a separately frozen 216-ion (`replicas=[3,3,3]`) family only after its own oracle/selection protocol completes. Report separate winners per N/family; do not combine to manufacture a universal winner. The 216-ion family uses the same perturbation seeds and amplitudes, background rule, and translations; its explicit confirmation fixtures are equally required. Larger N can be exploratory profiling only and is uncalibrated unless a new reference-supported campaign is registered.
+
+Timing: release build; 1 thread primary and a separately labeled 4-thread campaign; fixed CPU/toolchain/config; no concurrent B03 benchmark. Keep model/list alive across calls; reset force and W each call, no cloning in timed region. Five warmups, then five batches of 20 force evaluations with `black_box` of U/W/forces; emit every batch, median ns/evaluation, IQR, observed min/max. List build cache check remains in timed compute. Report cold construction/first-call timing separately and one forced-neighbor-rebuild evaluation separately, never mixing these with warm timings. Choose minimum median among candidates passing all gates; declare candidates within 5% of fastest median a tie, select lower actual grid-point count, then lower cutoff, then lexicographic kappa/kcut for deterministic output. This is a noise-aware practical rule, not a statistical significance claim.
+
+Output files in an explicit user-supplied directory: `protocol.json`, exact `snapshots.json`, `reference.json`, `candidates.jsonl` (all accepted/failed/capped rows), `summary.json`, `cost-error.csv`, `cost-error.svg` (log force-error vs ns/evaluation, target guides, failures and confirmation status labeled), and `selected-1e-3.toml`/`selected-1e-4.toml` only after confirmation succeeds. For multiple families, place each in its own N/cell-named subdirectory. SVG can be generated with escaped text and deterministic simple polyline/scatter markup; no plotting dependency needed. Include energy/W/max-error tables, not only the force RMS chart. Selected fragment is exactly:
+
+```toml
+# Example of valid output syntax; these numbers are illustrative, not selected.
+# Real output comments name the report path and protocol/snapshot/source hashes.
+[electrostatics]
+method = "spme"
+kappa = 1.0
+real_cutoff = 2.0
+kspace_cutoff = 12.0
+```
+
+The implementation writes actual selected finite numbers with round-trip f64 precision. The user merges the fragment into an existing `units="reduced"` deck. The helper never overwrites a production input, restart, weights, or prior report. Default existing output directory is an error unless explicitly writing a new unique run subdirectory.
+
+## 6. Files and interfaces for later implementation
+
+Create:
+
+- `docs/scientific-hardening/B05-SPME-PROTOCOL.md`: frozen science/timing protocol, status language, usage, rejection rules, URLs, and manifest schema.
+- `crates/modena-core/examples/spme_convergence.rs`: thin example entry point, manual std::env argument parsing, file handling, JSON/TOML output and process exit status.
+- `crates/modena-core/examples/spme_calibration/mod.rs`: serializable types, input validation, bounded sweep orchestration, deterministic selection; expose its submodules to the integration test by path.
+- `crates/modena-core/examples/spme_calibration/reference.rs`: independent all-image, full-±k Ewald and convergence bookkeeping, no core evaluator calls.
+- `crates/modena-core/examples/spme_calibration/fixtures.rs`: deterministic fixture materialization and exact selection/confirmation splits.
+- `crates/modena-core/examples/spme_calibration/metrics.rs`: pure error metrics, budget checks, selector and SVG/CSV rendering.
+- `crates/modena-core/tests/spme_calibration.rs`: integration tests importing the example support module with `#[path="../examples/spme_calibration/mod.rs"] mod calibration;`. No public core API for the offline selector.
+- `crates/modena-core/tests/spme_profile.rs`: additive/physics parity and phase/cache regression tests for the opt-in profiling interface.
+- `bench/spme_calibration_campaign.py`: sequential standard-library host launcher for immutable family/thread campaigns, stderr/stdout retention and `/usr/bin/time -l` peak-RSS records. No B03-owned source is modified.
+
+Modify later, separately: `crates/modena-core/src/spme.rs` only for the additive phase-profile interface and corrected analytic-force comments; `crates/modena-core/tests/electrostatics.rs` only to correct its stale `ik` explanatory comment. No planned edits to io/input.rs, runner.rs, core Ewald, `Cargo.toml`, or B03 benchmark files.
+
+Concrete example support interfaces (all `pub(crate)` within example/test compilation):
+
+```rust
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct Snapshot {
+    pub id: String,
+    pub cell: [f64;3],
+    pub positions: Vec<[f64;3]>,
+    pub charges: Vec<f64>,
+    pub scales: Vec<Scale>,
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct Scale { pub i: usize, pub j: usize, pub coulomb: f64 }
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct Parameters { pub kappa: f64, pub real_cutoff: f64, pub kspace_cutoff: f64 }
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct Evaluation { pub energy: f64, pub strain_w: f64, pub forces: Vec<[f64;3]> }
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct ReferenceSettings { pub kappa: f64, pub real_cutoff: f64, pub kspace_cutoff: f64 }
+pub fn reference(snapshot: &Snapshot, settings: ReferenceSettings,
+                 limits: &Limits) -> Result<Evaluation, CalibrationFailure>;
+pub fn converged_reference(snapshot: &Snapshot, protocol: &Protocol)
+    -> Result<ReferenceRecord, CalibrationFailure>;
+pub fn evaluate_spme(snapshot: &Snapshot, p: Parameters) -> Result<Evaluation, CalibrationFailure>;
+pub fn metrics(reference: &Evaluation, candidate: &Evaluation,
+               n: usize, force_floor: f64) -> Result<ErrorMetrics, CalibrationFailure>;
+pub fn campaign(protocol: &Protocol, snapshots: &[Snapshot])
+    -> Result<CampaignReport, CalibrationFailure>;
+pub fn select(rows: &[CandidateReport], target: f64)
+    -> Result<Parameters, CalibrationFailure>;
+```
+
+Define remaining named structs as exact named-field serialized records in `mod.rs`: `Limits` carries caps above; `Protocol` carries `schema`, `a`, `q_unit`, `targets`, candidate arrays, reference ladder, limits, fixture-set ID, translation array, tolerance fields, thread count, warmup/batch counts; `ReferenceRecord` carries settings/evaluations/deltas/work counts and convergence flags; `ErrorMetrics` carries `force_rms_abs`, optional `force_rms_rel`, `reference_force_rms`, `max_atom_force_error`, `max_component_force_error`, signed/absolute E_per_atom and W_per_atom, `net_force`; `CandidateReport` carries parameters/actual mesh/per-fixture metrics/status/raw batch ns and summary; `CampaignReport` carries protocol/snapshot/provenance records, all candidate reports, per-target decisions/confirmation results; `CalibrationFailure` is an enum with `InvalidInput(String)`, `UnsupportedDomain(String)`, `BudgetExceeded(String)`, `ReferenceUnconverged(String)`, `RelativeUndefined(String)`, `TargetNotReached(f64)`, `ConfirmationFailed(f64)`, `Io(String)`. No scientific error is serialized as a successful zero result. Validation returns explicit context and fixture ID.
+
+The binary modes:
+
+```text
+spme_convergence prepare --out DIR --family cubic|ortho|special --replicas 2|3 --threads 1|4 [--reference-extended]
+spme_convergence verify --protocol DIR/protocol.json --snapshots DIR/snapshots.json
+spme_convergence sweep --protocol DIR/protocol.json --snapshots DIR/snapshots.json --out NEW_DIR
+spme_convergence confirm --campaign DIR/summary.json --out NEW_DIR
+spme_convergence report --campaign DIR/summary.json --out NEW_DIR
+```
+
+`prepare` performs no force evaluation and emits byte-stable JSON excluding timestamp from hashable protocol/fixture content. `verify` performs oracle/regression gates and records results in `verification.json` beside the frozen protocol (it does not rewrite protocol/snapshots). `sweep` requires successful verify records with matching hashes, recalculates references if provenance differs, and writes no selected configuration before confirmation. `confirm` reads frozen selected candidate(s), evaluates held-out fixtures, and emits configuration only on pass. `report` re-renders immutable result records, does not rerun/tune. Exit codes: 0 successful requested phase, 2 invalid/unsupported input or cap, 3 reference failure, 4 target not reached/confirmation failed, 1 I/O/internal error. The user may inspect a failure report even when command exits nonzero.
+
+For deterministic SHA-256 without a Rust dependency, the example uses `std::process::Command` (no shell interpolation) to invoke the existing host `shasum -a 256 ABSOLUTE_PATH` utility on explicit paths. Validate exactly 64 hex digits and the expected single-file result, check process status, and fail before campaign work when unavailable. Source and materialized protocol/snapshot bytes are hashed in prepare and rechecked by verify/sweep/confirm, not trusted from user labels. The supported first campaign host is the current macOS environment with shasum (RTK is agent-shell tooling only); portability to a different hashing utility is an explicit later adapter. The protocol calls this host prerequisite out; no new Rust package or hidden network call is introduced.
+
+
+## 7. Normative execution details and closure
+
+This section resolves the combined research report's implementation details. Its precise API, budget, status, and profiling requirements govern the implementation.
+
+### 7.1 Required and optional work
+
+Required for the complete B05 deliverable: protocol/fixtures, independent oracle validation and convergence, error gates, bounded candidate selection, ordinary-path measured costs, fixed held-out confirmation, retained candidate/error/cost/provenance records, and **actual opt-in phase profiling** of real-space, spread, forward FFT, reciprocal influence, inverse FFT, gather, and setup/correction/background overhead. Phase profiling is optional for each normal force call, so it introduces no clock reads into the ordinary path. Implementing it and running its separate diagnostic campaign are required before reporting full B05 scope delivered. A helper-only intermediate result must say `OfflineHelperComplete_PhaseProfilingPending` and cannot represent profiling as inferred from total time or existing cached FFT plans. Full scope delivered can still have `TargetNotReached` or `ConfirmationFailed` at a target: those are measured scientific outcomes, not tool implementation failures or positive acceptance of the accuracy target.
+
+Optional extensions excluded from this iteration: production input RMS target field, runtime retuning, six-component stress, arbitrary snapshots accepted as a calibrated domain, larger N, other interpolation orders, real-unit support, partial PBC, triclinic SPME, alternate estimators. A separate immutable extended-reference protocol with the two preset extra levels is allowed; it must be chosen at prepare time, not enabled after a candidate outcome.
+
+### 7.2 Exact serializable records
+
+All records below live in example-only `spme_calibration/mod.rs`, derive `Clone, Debug, Serialize, Deserialize`, and use `#[serde(deny_unknown_fields)]` on structs. Float fields must be finite unless explicitly represented by `Option`; reject nonfinite values rather than emit JSON null or infinity. Use the Snapshot/Scale/Parameters/Evaluation/ReferenceSettings definitions in section 6, with the following exact extensions: `Snapshot` also has `role: FixtureRole`, `family: String`, `units: String`, `pbc: [bool;3]`, `seed: Option<u64>`, `amplitude: Option<f64>`; `units` is always `reduced` and PBC always all true for prepared fixtures. Roles are `Selection`, `Confirmation`, and `RegressionOnly`. The binary may read only the fixed prepared fixture schema; custom input is rejected as uncalibrated in v1. Each prepare command writes exactly one family protocol and that family's fixtures. `--family special` requires replicas=2 and prepares the fixed three-atom fixture, not 64 ions. For ortho fixtures use edges `(a*replicas)*[1,1.15,1.3]`, i.e. `[4.4,5.06,5.72]` for replicas=2 and `[6.6,7.59,8.58]` for replicas=3; remap the cubic fractional coordinates. No candidate from another family is inherited.
+
+```rust
+pub enum FixtureRole { Selection, Confirmation, RegressionOnly }
+pub struct Limits {
+    pub max_atoms: usize,                    // 256
+    pub max_mesh_points: usize,              // 1_048_576
+    pub max_candidates: usize,               // 126 per family
+    pub max_accuracy_calls: u64,             // 25_000 per family, selection+confirmation
+    pub max_timing_calls: u64,               // 20_000 per family, includes cold/rebuild/warmup
+    pub max_profile_calls: u64,              // 1_000 per family
+    pub max_real_terms_per_call: u64,        // 100_000_000
+    pub max_atom_k_terms_per_call: u64,      // 100_000_000
+    pub max_real_terms_per_family: u64,      // 5_000_000_000
+    pub max_atom_k_terms_per_family: u64,    // 500_000_000
+    pub max_owned_heap_bytes: u64,           // 268_435_456 (256 MiB)
+    pub max_peak_rss_bytes: u64,             // 536_870_912 (512 MiB), acceptance cap
+    pub max_family_wall_seconds: u64,        // 1_800, cumulative verify/sweep/confirm/profile
+    pub max_threads: usize,                  // 4
+}
+pub struct Tolerances {
+    pub reference_force_rms_abs_units: f64,  // 1e-8 F_unit
+    pub reference_force_target_fraction: f64,// 0.01 times tightest target times D
+    pub reference_force_max_units: f64,      // 1e-7 F_unit
+    pub reference_energy_per_atom_units: f64,// 1e-9 E_unit
+    pub reference_w_per_atom_units: f64,     // 1e-9 E_unit
+    pub relative_denominator_floor: f64,     // 1e-8 F_unit
+    pub candidate_force_rms_abs_factor: f64, // 1 times target F_unit
+    pub candidate_force_max_factor: f64,     // 10 times target F_unit
+    pub candidate_energy_factor: f64,        // 1 times target E_unit per atom
+    pub candidate_w_factor: f64,             // 10 times target E_unit per atom
+    pub cost_tie_fraction: f64,              // 0.05
+}
+pub struct Protocol {
+    pub schema: String,                     // modena-spme-calibration-v1
+    pub fixture_set: String,                // c2-spme-v1
+    pub family: String,                     // cubic-64, ortho-64, special-3, cubic-216, ortho-216
+    pub replicas: u32,                      // 2 or 3; special-3 prepared alongside replicas 2
+    pub a: f64, pub q_unit: f64,             // 2.2, 1.0
+    pub targets: Vec<f64>,                  // [1e-3,1e-4]
+    pub kappa_a: Vec<f64>,                  // [1.2,1.6,2.0,2.4,3.0,3.6]
+    pub cutoff_lmin: Vec<f64>,              // [.30,.40,.49]
+    pub kcut_a: Vec<f64>,                   // [8,12,16,24,32,48,64]
+    pub reference_ladder: Vec<[f64;2]>,      // [R/a,K*a], four or prechosen six levels
+    pub reference_kappa_a: f64,             // 1.1
+    pub crosscheck_kappa_a: [f64;2],         // [.9,1.3]
+    pub translations: Vec<[f64;3]>,         // exact seven rows in section 2
+    pub limits: Limits, pub tolerances: Tolerances,
+    pub threads: usize,                    // 1 or 4
+    pub warmups: usize, pub batches: usize, pub batch_calls: usize, // 5,5,20
+}
+pub struct WorkCounts { pub real_terms: u64, pub atom_k_terms: u64 }
+pub struct ErrorMetrics {
+    pub force_rms_abs: f64, pub force_rms_rel: Option<f64>,
+    pub reference_force_rms: f64, pub max_atom_force_error: f64,
+    pub max_component_force_error: f64,
+    pub energy_per_atom_signed: f64, pub energy_per_atom_abs: f64,
+    pub w_per_atom_signed: f64, pub w_per_atom_abs: f64,
+    pub net_force: [f64;3], pub net_force_norm: f64,
+}
+pub struct ReferenceLevel {
+    pub settings: ReferenceSettings, pub evaluation: Evaluation,
+    pub delta_from_previous: Option<ErrorMetrics>, pub work: WorkCounts,
+}
+pub struct ReferenceRecord {
+    pub snapshot_id: String, pub snapshot_sha256: String,
+    pub levels: Vec<ReferenceLevel>, pub crosschecks: Vec<ReferenceLevel>,
+    pub chosen_level: Option<usize>, pub status: Status,
+}
+pub struct MetricRow {
+    pub snapshot_id: String, pub shift_index: usize,
+    pub metrics: ErrorMetrics, pub passing_targets: Vec<f64>, pub status: Status,
+}
+pub struct TimingRecord {
+    pub reset_included: bool,               // true for ordinary primary batches
+    pub cold_ns: u64, pub rebuild_ns: u64,
+    pub batch_total_ns: Vec<u64>, pub calls_per_batch: usize,
+    pub median_ns_per_call: f64, pub q1_ns_per_call: f64, pub q3_ns_per_call: f64,
+}
+pub struct CandidateReport {
+    pub id: usize, pub family: String, pub parameters: Parameters,
+    pub actual_mesh: [usize;3], pub aliases: Vec<f64>,
+    pub rows: Vec<MetricRow>, pub timing: Option<TimingRecord>, pub status: Status,
+}
+pub struct TargetDecision {
+    pub target: f64, pub selected_id: Option<usize>, pub selection_status: Status,
+    pub confirmation_rows: Vec<MetricRow>, pub confirmation_status: Status,
+}
+pub struct PhaseRecord {
+    pub candidate_id: usize, pub snapshot_id: String, pub threads: usize,
+    pub cold: bool, pub calls: usize, pub phases_ns: Vec<[u64;12]>,
+}
+pub struct Provenance {
+    pub git_head: String, pub source_sha256: std::collections::BTreeMap<String,String>,
+    pub protocol_sha256: String, pub snapshot_sha256: String,
+    pub reference_algorithm: String,        // all-image-full-pm-k-v1
+    pub rustc_verbose: String, pub cargo_version: String,
+    pub os: String, pub cpu: String, pub threads: usize,
+    pub profile: String, pub features: Vec<String>, pub command: Vec<String>,
+    pub utc_started: String, pub family_elapsed_ns: u64,
+    pub measured_peak_rss_bytes: Option<u64>,
+}
+pub struct CampaignReport {
+    pub protocol: Protocol, pub provenance: Provenance,
+    pub snapshot_ids: Vec<String>, pub references: Vec<ReferenceRecord>,
+    pub candidates: Vec<CandidateReport>, pub decisions: Vec<TargetDecision>,
+    pub phase_records: Vec<PhaseRecord>, pub status: Status,
+}
+pub enum Status {
+    Prepared, Verified, Passed, Failed, Pending, CalibratedSnapshots,
+    NotCalibrated, RelativeUndefined, ReferenceUnconverged, ReferenceStagnated,
+    ReferencePrecisionLimited, BudgetExceeded, UnsupportedDomain,
+    TargetNotReached, ConfirmationFailed, MeshBoundary,
+    OfflineHelperCompletePhaseProfilingPending, FullScopeMeasured,
+}
+pub enum CalibrationFailure {
+    InvalidInput(String), UnsupportedDomain(String), BudgetExceeded(String),
+    ReferenceUnconverged(String), ReferenceStagnated(String),
+    ReferencePrecisionLimited(String), RelativeUndefined(String),
+    TargetNotReached(f64), ConfirmationFailed(f64), Io(String),
+}
+```
+
+For section 6 function signatures, use `CalibrationFailure` as the error type consistently in every helper (`reference`, `evaluate_spme`, `metrics` included), replacing the earlier generic String error shorthand. `select` considers only rows whose physical gates and ordinary timing are complete and finite, and returns a Parameters value from the same candidate ID retained in TargetDecision. `campaign` orchestrates only one family/protocol; never pool families for force denominators or cost ranking.
+
+The Madelung sanity fixture uses the existing repository constant `alpha=1.747558775`, r0=a/2, and verifies `abs(E_per_pair + alpha/r0) <= 2e-5*E_unit` after the independent oracle ladder passes. This approximate historical constant is only a sign/normalization sanity anchor, not a 1e-4 force calibration or the reference-convergence budget. Full ±k and half-space values must additionally agree to 1e-10 scaled units, integer-wrap and rigid-translation oracle E/F/W to 1e-9 scaled units, and stable-image core Ewald cross-checks to the already stricter reference budgets. An unperturbed crystal never substitutes for perturbed force fixtures.
+
+The regular timed evaluator is a reusable example-only `SpmeEvaluator { model: SpmeForceModel, system: System, neighbors: NeighborList }` with `new(snapshot:&Snapshot, parameters:Parameters)->Result<Self,CalibrationFailure>`, `evaluate(&mut self)->Result<Evaluation,CalibrationFailure>` for untimed accuracy, and `ordinary_batch(&mut self, calls:usize)->Result<u64,CalibrationFailure>` for timed normal compute. `ordinary_batch` includes force zeroing and `Virial::default()` once per call, calls `ForceModel::compute`, black-boxes energy/W/force contents, and returns elapsed nanoseconds for the batch; it does not clone coordinates or forces in the timed region. Report this reset policy explicitly. `evaluate` may copy returned forces after compute; that copy is not primary timing.
+
+### 7.3 CPU, memory, precision and failure rules
+
+Validate/estimate every image and k loop's work with checked arithmetic before allocating or executing. Stream reference image/k contributions; do not store an O(N² images) table. Check deadlines after at most 1,024 reference terms, between accuracy calls, and between timing batches; timing must not call budget instrumentation inside the measured region. The fixed operation counters are the primary CPU work budget. Cumulative family wall limit is 1,800 seconds over verify/sweep/confirm/profile with at most four Rayon workers: a bound of 7,200 worker-seconds plus bounded serial orchestration. Store elapsed work in phase records to prevent resetting budgets by splitting commands. On deadline, count, or allocation failure, emit BudgetExceeded and retain partial raw records with no selected configuration newly emitted. Memory budget covers simultaneous owned vector capacities, checked before reserve/resize; report opaque FFT-plan allocation separately. Record actual process peak RSS with the host `/usr/bin/time -l` wrapper; exceeding 512 MiB invalidates the memory budget in the final report and blocks FullScopeMeasured. A requested cap cannot be silently increased to make a target pass.
+
+Reference refinement always runs its finite preset ladder. Define normalized convergence score S for a delta as max(force RMS/budget, max atom error/budget, energy/atom/budget, W/atom/budget). Two consecutive finite scores <=1 plus final cross-kappa checks are required. If final scores stay >1 and the last two refinements each improve by less than 10% (`S_new >= 0.9*S_old`), use ReferenceStagnated; otherwise exhausted ladder without two passes is ReferenceUnconverged. Bit-identical or tiny deltas below budgets are not alone called stagnation, because they may be convergence; cross-kappa agreement and the validated derivative/oracle checks remain mandatory. Nonfinite intermediate values or analytic/finite-difference cancellation that cannot meet the registered residuals after h and h/2 checks produce ReferencePrecisionLimited, never a relaxed reference threshold. Near-zero reference force denominators produce RelativeUndefined, not numerical target attainment.
+
+When a tool phase fails, write its exact failure and exit nonzero; never reinterpret partial data as a measured fastest feasible winner. After a confirmation fails, do not choose another candidate using holdout data. The frozen candidate remains recorded as failed. Candidate grid, oracle ladder or tolerance changes require a new protocol hash and separate exploratory/confirmatory label.
+
+### 7.4 Phase-profile API and artifact contract
+
+Add in `spme.rs`:
+
+```rust
+#[derive(Clone, Debug, Default)]
+pub struct SpmeProfile {
+    pub neighbor: std::time::Duration,
+    pub real_space: std::time::Duration,
+    pub pair_correction: std::time::Duration,
+    pub workspace_setup: std::time::Duration,
+    pub influence_setup: std::time::Duration,
+    pub spread: std::time::Duration,
+    pub fft_forward: std::time::Duration,
+    pub influence: std::time::Duration,
+    pub fft_inverse: std::time::Duration,
+    pub gather: std::time::Duration,
+    pub self_background: std::time::Duration,
+    pub total: std::time::Duration,
+}
+// In impl SpmeForceModel; core Result alias and existing types.
+pub fn compute_profiled(&self, system: &mut System, virial: &mut Virial,
+                        neighbors: &mut NeighborList) -> Result<(f64, SpmeProfile)>;
+```
+
+This twelve-field layout supersedes the earlier eleven-field sketch: `influence_setup` separately measures cached-key check/recomputation inside reciprocal setup; `workspace_setup` covers mutex acquisition, mesh validation and workspace construction/reuse. Forward/inverse FFT fields each include their own transposes. `influence` is the reciprocal mode energy/W/convolution pass. Total surrounds complete profiled compute and is not claimed to be exactly the sum of fields because timer/observer overhead exists. Ordinary ForceModel compute instantiates a compile-time no-op observer; no clocks, profile vector, allocation or shared statistics are introduced in that path. Twelve raw field durations are retained in the stated struct order in PhaseRecord. Profile and normal U/F/W must agree to `1e-12*max(1,|value|)` per component and scalar on the three-atom and 64-ion fixtures.
+
+Add command `spme_convergence profile --campaign CONFIRMED_DIR/summary.json --out NEW_DIR`. It accepts only confirmed candidate IDs and the declared baseline, runs each on the same frozen fixtures with five warmups and five batches of 20 **profiled** calls, and records cold first-call and warmed phase distributions separately. It never rewrites primary TimingRecord values or reselects candidates. Include this diagnostic overhead in labels. `report` merges hash-matched confirmation and phase records and sets FullScopeMeasured only if all required records and budgets are complete; positive target status remains separately Passed/TargetNotReached/ConfirmationFailed.
+
+The sequential launcher writes immutable `memory.json` for every child, then calls report with explicit inputs: `report --campaign CONFIRM_DIR/summary.json --profiles PROFILE_DIR/phase-times.jsonl --memory FAMILY_DIR/memory.json --out REPORT_DIR`. Profile and report accept the retained decision manifest even when one or both targets fail; profile then measures the physically validated baseline and any independently confirmed target, while failed target IDs remain failed. Nonzero exit4 does not erase reports or skip baseline phase diagnostics. Reference/physics/budget failures stop computation for that family and render the retained failure report without requiring profile data. Missing or over-cap process RSS blocks FullScopeMeasured. The prepared protocol/hash and typed decision IDs are always rechecked before merging records.
+
+Artifact extension: `phase-times.jsonl`, `phase-times.csv` and `memory.json` are mandatory for full scope. Primary `candidates.jsonl`, ordinary raw batch totals, all error rows (including failures), reference ladder deltas and convergence scores, frozen holdout decisions, environment, source hashes, and timing/profile separation must remain independently inspectable. Selected fragments may be emitted after successful confirmation as the helper alternative; their report remains marked profiling pending until the separate profile phase completes. Do not claim measured speedup before matched-accuracy ordinary path results exist.
+
+### 7.5 Closure matrix
+
+| Requirement | Evidence needed | Failure leaves |
+|---|---|---|
+| Independent reference | all-image/full ±k validated equations, ladder deltas, cross-kappa agreement, no shared force code | uncalibrated; no config |
+| Target 1e-3 / 1e-4 | per-snapshot/translation relative+absolute+maximum+E+W gates and held-out confirmation | target explicitly unaccepted |
+| Physics invariants | analytic F=-grad U, fixed-mesh isotropic W, background, pair policy, translation/wrap, additive and cache regressions | implementation incomplete |
+| Cost/error selection | retained all-candidate errors and ordinary primary cold/rebuild/warm timing at matched errors | no fastest-feasible or speedup claim |
+| Phase profiling | actual twelve-phase records, same U/F/W, observer absent from ordinary timing | full B05 profiling pending |
+| Bounded/reproducible execution | immutable hashes, elapsed/work/memory counts, process peak RSS, command/toolchain/thread/hardware details | budget/provenance not accepted |
+
+## 8. Provenance and sources checked during this preparation
+
+Read checkout HEAD was `aec5bfb4a3066e1df217052d19af6a13472ed6de`; working files are live and may differ from HEAD because another stream exists. SHA-256 of files read:
+
+```text
+121ed7db2606935411f7bcbb9229bd5063cdc7c60d5ffd448b1b547777e1c2a8 crates/modena-core/src/spme.rs
+11d294c94eb5cefa77ad16f586f564cf3f26b14d835b15a6354971028c90bf2b crates/modena-core/src/ewald.rs
+e55b9be9d3d07af674ec7928bbe4ecc192324a5e99549836f377d2e3f1a62af8 crates/modena-core/src/io/input.rs
+1e46b318945079878cdcab7b344faabb72c194692c0acbb41b84afa8335d3540 crates/modena-core/src/runner.rs
+c3e73916b8ef4c171515957c2944c9d7655ee35c3e742116822790acceb278eb crates/modena-core/tests/electrostatics.rs
+842d365e0a216b0486c49fc976cb7ff3e353b957d549ff0b44f3cf026c17ace0 docs/research/2026-11-05-core-improvements/phase2_investigation/CASES.md
+91eea5ee745963bc01bedf56c08726b9eaf6517b189277003a6b716e58965442 docs/research/2026-11-05-core-improvements/phase3_analysis/ACCEPTANCE-BACKLOG.md
+```
+
+Primary sources opened 2026-11-06:
+
+- Essmann et al., *A smooth particle mesh Ewald method* (1995), DOI https://doi.org/10.1063/1.470117 ; full paper https://biomolmd.org/mw/images/e/e0/Spme.pdf . Its analytic gradients and Coulombic lattice/exclusion conventions support defining the oracle and preserving the energy-gradient formulation; it does not certify this checkout's target errors.
+- Deserno & Holm, *How to mesh up Ewald sums I* (1998), https://arxiv.org/abs/cond-mat/9807099 and https://doi.org/10.1063/1.477414 . Its comparison of assignment/influence/differentiation supports identifying actual method ingredients rather than relying on a PME label.
+- Deserno & Holm, *How to mesh up Ewald sums II* (1998), https://arxiv.org/abs/cond-mat/9807100 and https://doi.org/10.1063/1.477415 . The published estimate concerns P3M; none is imported as an SPME-analytic error certificate.
+
+The fixture grid, numerical budgets, bounded helper design, timing tie rule, operation caps, and oracle-convergence policy above are proposed engineering/scientific protocol decisions, not claims copied from these papers or results already observed.
+
+
+### Controller adoption clarifications
+
+The offline convergence helper is the B05 backlog's stated alternative; full
+B05 still requires the actual opt-in production phase profiler and its separate
+campaign. Selected configurations remain empirical for the frozen domain.
+Canonical example APIs return CalibrationFailure, including the section6
+interfaces previously sketched as Result<_,String>; detailed section7 statuses
+remain authoritative. Runtime hash subprocesses invoke shasum directly without
+a shell or RTK dependency; agent-shell commands retain the RTK prefix.
+Early Tasks1–3 remain example-only and require source identity plus separate
+checkout. Final B04 base synchronization/interface validation precedes Task4.
+Physical equations, fixtures, targets, reference ladder, hold-out rules, budgets
+and timing procedure are unchanged from the prepared specification.
+
+### Execution checkout and resource reservation
+
+The controller verified that the completed B01 temporary checkout was clean and
+its agents terminal, backed up its historical HEAD as
+`ricardo/b01-temp-pre-b05-20261106`, and reused it on
+`ricardo/b05-spme-calibration` at B03 `12e4ab1`. Its path is
+`/private/tmp/modena-b01`; the directory name is historical. Existing ignored
+artifacts and shared target remain intact. The separate native managed-worktree
+creation remains pending, without restart or a claim of terminal failure.
+No performance lease is active. Early Tasks1–3 are independent example-only
+work; final B04 synchronization and source/interface verification precede
+Task4. All team compute/builds/writes pause during any exclusive campaign.

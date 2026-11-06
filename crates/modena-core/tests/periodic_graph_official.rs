@@ -117,6 +117,10 @@ fn official_ase_rejects_wrong_tuple_with_python_optimization() {
     let mut f = fixtures().into_iter().find(|f| f.id == "multi4").unwrap();
     f.id = "optimized_tuple_identity_control".into();
     f.positions[1] = f.positions[0];
+    assert!(
+        cutoff_margin(&f) >= 1e-8,
+        "optimized tuple control cutoff margin"
+    );
     let edges = actual(&f);
     assert_eq!(edges, [(0, 1, [0; 3]), (1, 0, [0; 3])]);
     let helper = concat!(

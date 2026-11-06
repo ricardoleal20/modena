@@ -139,3 +139,18 @@ in `target/b04-evidence/task3-fix1-20261106/manifest.json`, SHA256
 `7bfab955f16efd34e17e9f50b56d4070bcd1accb69d995d8138a27707a198dcd`.
 Its base is `4f0f6f8aa333b908f8b8dfe7b62b7ae8980cbe14`; independent scoped
 re-review remains required for this fix epoch. G2/G3/G4 remain pending.
+
+### G1 review fix round 2 — synthetic control margin preflight
+
+The optimized coincident-index control now checks its own fixed-cube cutoff
+margin >=1e-8 immediately after changing coordinates, before any ASE invocation.
+The focused actual external control passed on stable and Rust 1.90.0 (each:
+1 passed, zero ignored, 1 other test intentionally filtered); focused rustfmt
+passed. The helper and all 27 positive fixture inputs remain unchanged; their
+fix-round-1 evidence above was neither rerun nor rehashed. Current official
+Rust test SHA256 is
+`25f2424471d1436ea48a057903dd030e630c1ec33027e91105c88a8ac3bf9d30`.
+New focused evidence: `target/b04-evidence/task3-fix2-20261106/manifest.json`,
+SHA256 `50cedf37f29690ec71499ece66ec77f80217c2d75a7b750a93885d3aaa84a99b`.
+Base: `b84c36bedbc39c8b177a845305c629c8eaf5874a`. Scoped re-review remains
+required; previously disclosed warnings/Minor and G2/G3/G4 status are unchanged.

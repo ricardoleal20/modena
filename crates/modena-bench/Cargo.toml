@@ -12,6 +12,9 @@ publish = false
 [dependencies]
 modena-core = { workspace = true }
 criterion = { version = "0.8.2", features = ["html_reports"] }
+clap = { workspace = true }
+rayon = { workspace = true }
+serde_json = { workspace = true }
 
 [[bench]]
 name = "force_kernel"

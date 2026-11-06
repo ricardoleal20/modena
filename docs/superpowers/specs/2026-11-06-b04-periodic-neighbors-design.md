@@ -306,6 +306,17 @@ Create dedicated `crates/modena-bench/src/bin/triclinic_neighbors.rs`, `bench/tr
 
 Predeclared N=(256,2048,8192), number density 0.8, Rforce=2.5 and skin=(0,0.3); fractional stratified positions from grid side ceil(cuberoot(N)) with deterministic rational per-axis jitter in [-0.03,0.03], coordinate offset 0.31, and seed=20261106; serialize snapshots before runs. Use cubic-volume cell families: moderate b_x/L=.2,c_x/L=.1,c_y/L=.15; substantial (.7,.2,.4); unreduced (4.9,0,0); elongated diag factors (2,.5,1). L=(N/.8)^(1/3). Include explicit grid-cap/boundary fallbacks and basis-change rebuild tests separately. Record exact generated positions and require no initial overlap or unresolved cutoff fixture before timings.
 
+Matrix clarification before G4 input generation: basis columns are
+`a=(L,0,0), b=(.2L,L,0), c=(.1L,.15L,L)` for moderate;
+`a=(L,0,0), b=(.7L,L,0), c=(.2L,.4L,L)` for substantial;
+`a=(L,0,0), b=(4.9L,L,0), c=(0,0,L)` for unreduced; and
+`a=(2L,0,0), b=(.2L,.5L,0), c=(.1L,.15L,L)` for elongated.
+Thus elongated retains the moderate off-diagonal components with the declared
+diagonal factors; every determinant is L^3. This resolves the previously
+unspecified elongated shear before any timing, without changing density,
+velocities, tolerances, sample counts or eligibility criteria.
+
+
 Measure forced full rebuild and complete VelocityVerlet+neighbor+PairForceModel step/block, not graph construction alone. Include transformation/bin/stencil creation, allocation, sorting, fallback, force reductions and rebuild cadence. For each case create scalar/candidate replicas from identical state and evolve them through 5 warmup paired blocks and 20 measured paired blocks, maintaining each replica continuously between blocks; alternate AB/BA, block size 10 complete steps, dt=.0005 in reduced LJ units, identical deterministic initial velocities with zero center of mass. Serialize initial velocities and all controls. Validate pair/E/F/W before timed blocks and final E/F/W parity; count rebuilds, candidate checks, emitted pairs, fallback causes, requested/retained memory and allocations. Compute paired median ratios and 10_000-resample bootstrap 95% interval with seed=20261106; retain absolute durations and raw paired records.
 
 Promotion requires G1-G3 passed, moderate-tilt N>=2048 intended cases at each enabled thread count and skin regime with median full-step optimized/scalar<=.95 and interval upper<1.0; small/fallback cases must select scalar with <=5% median overhead. Inconclusive noise, unavailable hardware or failed criteria leaves Auto=Scalar and G4 pending/failed. Do not generalize a host-specific selector to unmeasured hardware. For the natural skin=.3 amortized claim, require at least two measured rebuilds per replica; if the fixed campaign does not observe them, label that regime inconclusive rather than infer a rebuild benefit. Per-case wall-time cap is 600 seconds, whole campaign cap is 7200 seconds; a cap abort is incomplete evidence and never a successful performance gate. A candidate default selector is restricted to validated shape/cost conditions on the measured platform; publish exact predicate and re-run it against raw cases before enabling. A fast rebuild with no complete-step gain does not pass G4.

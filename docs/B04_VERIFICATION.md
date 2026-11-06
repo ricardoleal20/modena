@@ -15,8 +15,8 @@ orders used by the proof. Subsequent G1 implementation evidence is recorded belo
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
-| G1 | executable checks passed; independent Task 3 review pending | Fixed-cube/resource tests and explicitly executed official ASE exact tuples |
-| G2 | pending | Actual initialized official MACE graph/E/F parity |
+| G1 | passed; Task 3 independently approved through ce04b4f | Fixed-cube/resource tests and explicitly executed official ASE exact tuples |
+| G2 | executable checks passed; independent Task 4 review pending | Actual initialized official MACE graph/E/F parity |
 | G3 | pending | Scalar/stencil pairs, E/F/W, skin/bounded regressions |
 | G4 | pending | Paired complete-step benefit and fallback overhead |
 
@@ -154,3 +154,128 @@ New focused evidence: `target/b04-evidence/task3-fix2-20261106/manifest.json`,
 SHA256 `50cedf37f29690ec71499ece66ec77f80217c2d75a7b750a93885d3aaa84a99b`.
 Base: `b84c36bedbc39c8b177a845305c629c8eaf5874a`. Scoped re-review remains
 required; previously disclosed warnings/Minor and G2/G3/G4 status are unchanged.
+
+
+### G1 independent review closure
+
+The controller accepted Task 3 and both fixes through
+`ce04b4f659af9654adef0f77ccd56d92d0d053e9`. This closes the review-pending
+qualifiers of the historical G1 epochs above. Task 4 leaves all G1 fixture,
+oracle, ASE helper and production geometry bytes unchanged.
+
+## G2 — actual initialized official MACE software parity (2026-11-06)
+
+The named external gate actually passed on stable Rust 1.97.1 and the Rust
+1.90.0 floor: each final run executed one test, zero ignored, with the two ASE
+tests intentionally filtered. Independent Task 4 review remains pending.
+The helper uses official MACE code, official Configuration/AtomicData/Batch,
+the same initialized model object, and actual serialized native PeriodicGraph
+edges. Fresh position and node tensors enter every gradient-enabled forward.
+Only edge_index, exact-integral unit_shifts and Cartesian shifts change in the
+alternate batch; all other fields are checked for exact identity.
+
+The original required NumPy 2.2.6 / matscipy 1.1.1 combination failed resolution:
+[matscipy 1.1.1 metadata](https://pypi.org/pypi/matscipy/1.1.1/json) requires
+NumPy >=1.16.0,<2.0.0. Controller contract revision
+`0a01e55ea9f65ad609600d5a29df955d4c36a866` changed only NumPy to 1.26.4
+before model evaluation. Exact installed direct versions are torch 2.6.0,
+mace-torch 0.3.13, e3nn 0.4.4, numpy 1.26.4, ase 3.26.0 and matscipy 1.1.1.
+Installed Python remains 3.12.8, macOS-26.6.2-arm64-arm-64bit. A pyenv shim
+initially failed discovery; PYENV_VERSION=3.12.8 selected the already installed
+exact runtime. No alternate Python/runtime/framework was substituted.
+
+`bench/requirements-b04-mace-py312.lock` freezes all 44 runtime packages with
+hashes. `uv pip sync --require-hashes` installed only into target/b04-mace-venv;
+`uv pip check` passes. Installed RECORD hashes verified 21,938 files. Retained
+uv archive receipts identify actual wheels; installed WHEEL tags disambiguate
+multiple cached PyYAML archives. python-hostlist 2.3.0 has only a source release:
+its hash-locked sdist built a retained wheel using setuptools 84.2.1 (recorded
+in WHEEL). The source and built-wheel hashes are respectively
+`e1a0b18e525a5fca573cb9862799f11b3f2bd3ba7aec70c4ecd8b95341bb71ea` and
+`5f81f639eb73a350c84143877eb46b534387028751f2afca111d75d5e30b2c1c`.
+The B01 environment and global Python packages were not modified.
+
+Torch 2.6's weights-only default initially rejected builtins.slice in e3nn's
+packaged constants. The controller approved a narrowly scoped
+`torch.serialization.safe_globals([slice])` only around importing e3nn.o3.
+The helper checks the packaged constants SHA256 before importing, verifies the
+prior allowlist is restored, and rejects the unsafe environment override.
+No weights_only=False, global loader relaxation or pretrained checkpoint is used.
+Constants SHA256: `279fb1f7844b2b85df092550bf7854a70fe3b427b312672f6a1e1fef0a786876`.
+Independent imports and the exact constructor succeeded before meaningful RED.
+
+The model is the exact design constructor, seed 20261106, CPU float64, one thread,
+r_max 3.1, two interactions, elements [6,8], hidden 8x0e+8x1o, correlation 2,
+and 1,968 initialized parameters. SHA256 over sorted state_dict key/dtype/shape
+headers and contiguous CPU tensor bytes (length-delimited) is
+`1d1a81cf8cfaa7885469757c26b82d49944cd188034ba7f5c481ad020974066e`.
+MACE release v0.3.13 resolves to official source commit
+`b5faaa076c49778fc17493edfecebcabeb960155`; installed models.py, utils.py,
+atomic_data.py and neighborhood.py are byte-identical to that immutable source.
+The actual MACE wheel SHA256 is
+`e0aeef5fdb493f94436e4a806f89e051240d79202bccd6bacf5c6007d9adf75a`.
+
+All four frozen full-PBC fixtures (mace3/gauge/deform/displaced) have 76 edges.
+Exact tuple parity and fixed-cube cutoff margins pass before evaluation.
+Official original order, canonical official order and native graph forwards
+agree within atol=rtol=1e-10. Maximum energy error is 5.551115123125783e-17;
+maximum force-component error is 1.717376241217039e-16. Same-process repeated
+forwards are exactly equal; final stable/MSRV model digests and all E/F arrays
+also agree exactly. Gauge-translated E/F agreement passes.
+
+For the displaced fixture, Rust rebuilds 18 actual native graphs for all nine
+Cartesian central differences at h=1e-5. Their neighbor tuples stay unchanged,
+all cutoff margins exceed 1e-8, and each displaced input also passes official
+tuple and E/F comparison. Maximum autograd-versus-central-difference force
+error is 1.693140072589472e-11, below atol=rtol=1e-6.
+
+The deterministic controls drop the first nonzero image edge, drop all periodic
+self images, and change the first nonzero component of the first nonzero edge
+away from zero by one integer. Across the fixed suite their maximum E/F effects
+are 0.0017405161288699955, 0.01902269751579285 and 0.0017405161288699816,
+respectively, all above 1e-10. The original +1-to-x control accidentally created
+a zero-self edge and failed with nonfinite model forces. Its preflight/log is
+retained; the controller approved the stated deterministic repair before the
+next evaluation. The failed attempt is not acceptance evidence, and no seed,
+model, fixture, tolerance or mutation-sensitivity threshold was tuned.
+
+All mandatory checks use unconditional exceptions or always-on checking
+functions. Every model subprocess runs Python -O. Positive runs additionally
+exercise non-graph and zero-sensitivity guard failures; external negative
+controls reject duplicated tuples, fractional shifts and wrong schema without
+publishing success. Separate optimized probes reject wrong dependency pins and
+unsafe loader overrides before importing frameworks. The missing-interpreter
+control errors clearly, as required. Numerical/source/model/input manifests
+are captured before evaluation; failed attempts and successful epochs are kept
+separately under the new ignored task4-mace-20261106 directory.
+
+Commands (full outputs and setup/failed-attempt commands are in the task report):
+
+```sh
+rtk proxy env PYENV_VERSION=3.12.8 uv venv --python 3.12.8 --no-python-downloads target/b04-mace-venv
+rtk proxy uv pip compile --python target/b04-mace-venv/bin/python --generate-hashes bench/requirements-b04-mace.in -o bench/requirements-b04-mace-py312.lock
+rtk proxy uv pip sync --python target/b04-mace-venv/bin/python --require-hashes bench/requirements-b04-mace-py312.lock
+rtk proxy env MODENA_MACE_PYTHON=target/b04-mace-venv/bin/python cargo test --locked -p modena-core --test periodic_graph_official official_mace_initialized_graph_energy_forces -- --ignored --nocapture
+rtk proxy env MODENA_MACE_PYTHON=target/b04-mace-venv/bin/python cargo +1.90.0 test --locked -p modena-core --test periodic_graph_official official_mace_initialized_graph_energy_forces -- --ignored --nocapture
+rtk cargo clippy --locked -p modena-core --test periodic_graph_official -- -D clippy::all
+rtk proxy rustfmt --edition 2021 --check crates/modena-core/tests/periodic_graph_official.rs
+rtk proxy uv pip check --python target/b04-mace-venv/bin/python
+```
+
+Evidence runs additionally set MODENA_MACE_EVIDENCE to the absolute ignored
+artifact directory to retain preflight request/model/package manifests. The
+first meaningful RED is log 13 (missing helper, after successful constructor
+probe); log 12 retains the earlier broken-pipe diagnostic failure. Final
+stable/MSRV logs are 23/21; focused final Clippy and rustfmt pass. The two
+previously disclosed production unused warnings remain deferred. No broad
+suite, production changes or performance campaign was run.
+
+Final evidence manifest:
+`target/b04-evidence/task4-mace-20261106/manifest.json`, SHA256 `8e6a85963863491d00f85386e6d330d9f8c2d5f3bfe4451259425b8d750a9ccf`.
+Lock SHA256: `a94b437c2d9faf76fd0c404aa7a6b9702d6402d3b6cf098b88ba145c5125dcef`.
+Helper SHA256: `4ddafd56ed5bee74fe81170ec3a16469eacdb798e9faf8ffded9028bbe0d3cff`.
+Fixture bytes remain `c3f1bf1ec691fb7131b70bbd67605d1eb9e9f8c6b5d6ea6b1421093f41fdf9e6`.
+
+This is software parity for this initialized MACE instance, snapshots, locked
+packages and arithmetic only. It establishes no trained chemical accuracy,
+FAIR-Chem task/checkpoint equivalence or B10 acceptance. G3/G4 remain pending.

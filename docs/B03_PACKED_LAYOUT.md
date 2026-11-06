@@ -151,16 +151,16 @@ parity claim follows from this reduced LJ experiment.
 Launch HEAD was `f13aa727a507f543717af3872202324859adcb78` with the new
 driver and tests untracked. They were frozen by full source copies and hashes;
 a later commit preserves those same bytes and does not relabel the launch as
-clean. Host: Apple M3 Pro, macOS, actual pools 1/4/8/default11. Release compiler
-was rustc1.97.1, aarch64-apple-darwin, LLVM22.1.6. Binary SHA256:
+clean. Host: Apple M3 Pro, macOS, actual pools 1/4/8/default 11. Release compiler
+was rustc 1.97.1, aarch64-apple-darwin, LLVM 22.1.6. Binary SHA256:
 `5001bb6b8bdfddc60e74e9fb9bee391e177b1a9992851f47e9ae1a3c8f53c2dc`. Primary loaded driver SHA256:
 `5764f6b110841d181f6ce90f670ecca020441aeae5e9d334451fe08df965ef82`.
 
 All 1,344 invocations completed; all 96 timing comparisons failed the 5% bar.
 There were no positive cases requiring primary reproduction. The best median
-time saving was -1.5416% (SoA, N2048, pool4, forced), with 0/5 favorable pairs.
+time saving was -1.5416% (SoA, N2048, pool 4, forced), with 0/5 favorable pairs.
 The later direct-oracle numerical certification passed all 1,344 invocations.
-The authorized separate no-snapshot instrumentation check is still pending.
+The separately frozen no-snapshot instrumentation check also rejected every case; its complete results follow below.
 
 The table retains all cases. A is the matched interleaved-serial baseline; B
 is the named scalar candidate. Saved%=100*(1-median(B)/median(A)). Setup and
@@ -319,10 +319,211 @@ initial-input SHA256 values, derived during this post-timing audit, were:
 | 10000 | 3f97a1b9ae562df9cdc2816944249b2123f0fa312eee261bb5eacac662e93852 |
 
 The primary and already-running audit did not record Python identity at startup.
-A timestamped later observation resolved the worktree python3 to Python3.14.5;
+A timestamped later observation resolved the worktree python3 to Python 3.14.5;
 that observation is not retroactively attributed to their launch metadata. The
 secondary/future audit startup explicitly captures sys.executable/sys.version.
-The seven driver tests passed under both Python3.14.5 and CI-compatible
-Python3.12.8 before secondary timing. The biased-force regression had a genuine
+The seven driver tests passed under both Python 3.14.5 and CI-compatible
+Python 3.12.8 before secondary timing. The biased-force regression had a genuine
 RED with the original audit accepting the bad outputs, then GREEN with direct
 oracle checking. No numerical tolerance or Rust source changed.
+
+## Snapshot-free results
+
+The separate protocol retained 1,344 invocations. All available-field and independently recomputed-reference FNV gates passed. None of its 96 measured comparisons passed the original timing bar; no secondary positive-case reproduction was triggered.
+
+Its best median time saving was -0.9117% (aosoa4, N5000, requested pool1, forced), 0/5 favorable pairs. Primary and secondary observations are separate; neither provides a 5% positive case.
+
+| N | Pool | Policy | B | A VV ms | B VV ms | Saved % | Favorable | Setup A/B ms | RSS A/B MiB | Packed B KiB |
+|---:|---:|:---|:---|---:|---:|---:|---:|---:|---:|---:|
+| 864 | 1 | no-rebuild | soa | 264.502 | 383.356 | -44.94 | 0/5 | 1.53/1.66 | 2.84/2.88 | 40.5 |
+| 864 | 1 | no-rebuild | aosoa4 | 266.031 | 389.069 | -46.25 | 0/5 | 1.55/1.67 | 2.83/2.86 | 40.5 |
+| 864 | 1 | no-rebuild | cluster4 | 264.458 | 435.838 | -64.80 | 0/5 | 1.54/3.91 | 2.84/6.88 | 1994.1 |
+| 864 | 1 | forced | soa | 288.085 | 307.906 | -6.88 | 0/5 | 1.71/1.85 | 2.84/2.86 | 40.5 |
+| 864 | 1 | forced | aosoa4 | 250.804 | 286.067 | -14.06 | 0/5 | 1.52/1.66 | 2.83/2.86 | 40.5 |
+| 864 | 1 | forced | cluster4 | 253.444 | 645.450 | -154.67 | 0/5 | 1.52/3.92 | 2.84/8.08 | 1991.1 |
+| 864 | 4 | no-rebuild | soa | 267.141 | 383.956 | -43.73 | 0/5 | 1.56/1.75 | 2.91/2.94 | 40.5 |
+| 864 | 4 | no-rebuild | aosoa4 | 264.909 | 390.821 | -47.53 | 0/5 | 1.56/1.70 | 2.92/2.95 | 40.5 |
+| 864 | 4 | no-rebuild | cluster4 | 264.535 | 431.718 | -63.20 | 0/5 | 1.56/3.95 | 2.91/6.97 | 1994.1 |
+| 864 | 4 | forced | soa | 251.102 | 282.791 | -12.62 | 0/5 | 1.50/1.68 | 2.91/2.94 | 40.5 |
+| 864 | 4 | forced | aosoa4 | 250.824 | 285.096 | -13.66 | 0/5 | 1.52/1.67 | 2.91/2.95 | 40.5 |
+| 864 | 4 | forced | cluster4 | 253.161 | 647.913 | -155.93 | 0/5 | 1.51/3.88 | 2.92/8.19 | 1991.1 |
+| 864 | 8 | no-rebuild | soa | 264.488 | 383.344 | -44.94 | 0/5 | 1.53/1.71 | 3.05/3.14 | 40.5 |
+| 864 | 8 | no-rebuild | aosoa4 | 264.391 | 389.262 | -47.23 | 0/5 | 1.55/1.73 | 3.03/3.11 | 40.5 |
+| 864 | 8 | no-rebuild | cluster4 | 266.589 | 440.998 | -65.42 | 0/5 | 1.57/3.97 | 3.05/7.08 | 1994.1 |
+| 864 | 8 | forced | soa | 252.381 | 286.819 | -13.65 | 0/5 | 1.55/1.71 | 3.06/3.09 | 40.5 |
+| 864 | 8 | forced | aosoa4 | 271.988 | 289.770 | -6.54 | 0/5 | 1.77/1.81 | 3.05/3.06 | 40.5 |
+| 864 | 8 | forced | cluster4 | 250.598 | 648.007 | -158.58 | 0/5 | 1.52/3.89 | 3.06/8.30 | 1991.1 |
+| 864 | 11d | no-rebuild | soa | 261.941 | 380.387 | -45.22 | 0/5 | 1.51/1.71 | 3.22/3.23 | 40.5 |
+| 864 | 11d | no-rebuild | aosoa4 | 266.897 | 390.408 | -46.28 | 0/5 | 1.56/1.73 | 3.16/3.20 | 40.5 |
+| 864 | 11d | no-rebuild | cluster4 | 265.549 | 448.172 | -68.77 | 0/5 | 1.54/4.00 | 3.14/7.22 | 1994.1 |
+| 864 | 11d | forced | soa | 252.409 | 286.772 | -13.61 | 0/5 | 1.55/1.73 | 3.12/3.22 | 40.5 |
+| 864 | 11d | forced | aosoa4 | 253.008 | 285.809 | -12.96 | 0/5 | 1.53/1.78 | 3.17/3.22 | 40.5 |
+| 864 | 11d | forced | cluster4 | 254.584 | 659.569 | -159.08 | 0/5 | 1.58/4.15 | 3.14/8.48 | 1991.1 |
+| 2048 | 1 | no-rebuild | soa | 246.765 | 283.560 | -14.91 | 0/5 | 6.87/6.99 | 3.77/3.86 | 96.0 |
+| 2048 | 1 | no-rebuild | aosoa4 | 249.460 | 284.140 | -13.90 | 0/5 | 6.86/6.94 | 3.78/3.86 | 96.0 |
+| 2048 | 1 | no-rebuild | cluster4 | 245.502 | 331.246 | -34.93 | 0/5 | 6.80/12.16 | 3.78/13.00 | 4622.7 |
+| 2048 | 1 | forced | soa | 258.758 | 266.251 | -2.90 | 0/5 | 6.83/7.05 | 3.77/3.86 | 96.0 |
+| 2048 | 1 | forced | aosoa4 | 263.839 | 266.802 | -1.12 | 0/5 | 6.97/7.14 | 3.78/3.86 | 96.0 |
+| 2048 | 1 | forced | cluster4 | 264.197 | 452.537 | -71.29 | 0/5 | 6.93/12.30 | 3.77/15.64 | 4620.9 |
+| 2048 | 4 | no-rebuild | soa | 248.324 | 287.899 | -15.94 | 0/5 | 6.87/6.98 | 3.86/3.94 | 96.0 |
+| 2048 | 4 | no-rebuild | aosoa4 | 248.299 | 286.906 | -15.55 | 0/5 | 7.04/7.07 | 3.84/3.95 | 96.0 |
+| 2048 | 4 | no-rebuild | cluster4 | 248.574 | 332.024 | -33.57 | 0/5 | 6.86/12.13 | 3.84/13.06 | 4622.7 |
+| 2048 | 4 | forced | soa | 258.740 | 266.150 | -2.86 | 0/5 | 6.87/7.01 | 3.84/3.94 | 96.0 |
+| 2048 | 4 | forced | aosoa4 | 255.209 | 260.682 | -2.14 | 0/5 | 6.74/6.99 | 3.84/3.94 | 96.0 |
+| 2048 | 4 | forced | cluster4 | 256.137 | 445.034 | -73.75 | 0/5 | 6.83/12.12 | 3.86/15.72 | 4620.9 |
+| 2048 | 8 | no-rebuild | soa | 247.749 | 287.429 | -16.02 | 0/5 | 6.93/7.11 | 4.03/4.09 | 96.0 |
+| 2048 | 8 | no-rebuild | aosoa4 | 248.213 | 286.581 | -15.46 | 1/5 | 6.92/7.00 | 4.00/4.08 | 96.0 |
+| 2048 | 8 | no-rebuild | cluster4 | 249.182 | 335.826 | -34.77 | 1/5 | 6.90/12.29 | 3.98/13.28 | 4622.7 |
+| 2048 | 8 | forced | soa | 287.194 | 297.617 | -3.63 | 1/5 | 7.77/7.91 | 4.00/4.06 | 96.0 |
+| 2048 | 8 | forced | aosoa4 | 255.099 | 260.036 | -1.94 | 0/5 | 6.81/6.93 | 4.02/4.06 | 96.0 |
+| 2048 | 8 | forced | cluster4 | 256.121 | 444.055 | -73.38 | 0/5 | 6.82/12.19 | 4.00/15.84 | 4620.9 |
+| 2048 | 11d | no-rebuild | soa | 248.184 | 287.097 | -15.68 | 0/5 | 6.84/6.98 | 4.08/4.22 | 96.0 |
+| 2048 | 11d | no-rebuild | aosoa4 | 249.751 | 286.051 | -14.53 | 0/5 | 6.86/7.10 | 4.11/4.22 | 96.0 |
+| 2048 | 11d | no-rebuild | cluster4 | 244.546 | 327.152 | -33.78 | 0/5 | 6.85/12.11 | 4.17/13.36 | 4622.7 |
+| 2048 | 11d | forced | soa | 260.163 | 267.766 | -2.92 | 1/5 | 6.90/7.03 | 4.12/4.25 | 96.0 |
+| 2048 | 11d | forced | aosoa4 | 259.245 | 264.406 | -1.99 | 0/5 | 6.93/7.06 | 4.08/4.17 | 96.0 |
+| 2048 | 11d | forced | cluster4 | 259.081 | 453.283 | -74.96 | 0/5 | 6.88/12.21 | 4.12/16.02 | 4620.9 |
+| 5000 | 1 | no-rebuild | soa | 264.940 | 296.066 | -11.75 | 0/5 | 14.47/14.74 | 11.44/11.44 | 234.4 |
+| 5000 | 1 | no-rebuild | aosoa4 | 269.916 | 304.870 | -12.95 | 0/5 | 14.59/14.88 | 11.44/11.44 | 234.4 |
+| 5000 | 1 | no-rebuild | cluster4 | 264.861 | 377.999 | -42.72 | 0/5 | 14.58/27.96 | 11.44/33.22 | 11021.0 |
+| 5000 | 1 | forced | soa | 259.299 | 267.663 | -3.23 | 0/5 | 14.29/14.68 | 11.75/11.89 | 234.4 |
+| 5000 | 1 | forced | aosoa4 | 265.229 | 267.647 | -0.91 | 0/5 | 14.33/14.53 | 11.78/11.89 | 234.4 |
+| 5000 | 1 | forced | cluster4 | 259.643 | 498.046 | -91.82 | 0/5 | 14.27/27.55 | 11.77/39.98 | 11021.4 |
+| 5000 | 4 | no-rebuild | soa | 266.640 | 296.921 | -11.36 | 0/5 | 7.02/7.32 | 12.22/12.03 | 234.4 |
+| 5000 | 4 | no-rebuild | aosoa4 | 264.329 | 299.774 | -13.41 | 0/5 | 6.95/7.40 | 12.20/12.08 | 234.4 |
+| 5000 | 4 | no-rebuild | cluster4 | 266.186 | 377.898 | -41.97 | 0/5 | 7.08/20.41 | 11.84/33.78 | 11021.0 |
+| 5000 | 4 | forced | soa | 121.392 | 126.180 | -3.94 | 0/5 | 7.03/7.45 | 12.55/12.80 | 234.4 |
+| 5000 | 4 | forced | aosoa4 | 120.026 | 127.033 | -5.84 | 0/5 | 7.06/7.32 | 12.58/12.67 | 234.4 |
+| 5000 | 4 | forced | cluster4 | 119.938 | 360.070 | -200.21 | 0/5 | 6.96/20.26 | 12.56/41.08 | 11021.4 |
+| 5000 | 8 | no-rebuild | soa | 266.123 | 327.231 | -22.96 | 0/5 | 6.33/6.70 | 12.55/12.44 | 234.4 |
+| 5000 | 8 | no-rebuild | aosoa4 | 261.674 | 296.407 | -13.27 | 0/5 | 6.18/6.61 | 12.56/12.36 | 234.4 |
+| 5000 | 8 | no-rebuild | cluster4 | 261.367 | 371.565 | -42.16 | 0/5 | 6.27/19.37 | 12.66/34.19 | 11021.0 |
+| 5000 | 8 | forced | soa | 106.505 | 111.465 | -4.66 | 0/5 | 6.29/6.53 | 13.41/13.23 | 234.4 |
+| 5000 | 8 | forced | aosoa4 | 104.733 | 111.283 | -6.25 | 0/5 | 6.24/6.57 | 13.64/13.52 | 234.4 |
+| 5000 | 8 | forced | cluster4 | 104.264 | 341.766 | -227.79 | 0/5 | 6.21/19.31 | 13.69/41.53 | 11021.4 |
+| 5000 | 11d | no-rebuild | soa | 265.410 | 295.967 | -11.51 | 0/5 | 6.09/6.37 | 12.30/12.75 | 234.4 |
+| 5000 | 11d | no-rebuild | aosoa4 | 264.981 | 301.293 | -13.70 | 0/5 | 5.94/6.46 | 12.62/12.31 | 234.4 |
+| 5000 | 11d | no-rebuild | cluster4 | 261.501 | 366.943 | -40.32 | 0/5 | 5.96/19.37 | 12.64/34.30 | 11021.0 |
+| 5000 | 11d | forced | soa | 101.901 | 108.055 | -6.04 | 0/5 | 5.83/6.24 | 13.78/14.42 | 234.4 |
+| 5000 | 11d | forced | aosoa4 | 103.382 | 110.198 | -6.59 | 0/5 | 6.10/6.42 | 14.62/14.86 | 234.4 |
+| 5000 | 11d | forced | cluster4 | 102.504 | 344.286 | -235.88 | 0/5 | 6.15/19.43 | 14.19/43.05 | 11021.4 |
+| 10000 | 1 | no-rebuild | soa | 267.400 | 296.873 | -11.02 | 0/5 | 26.93/27.50 | 17.16/17.17 | 468.8 |
+| 10000 | 1 | no-rebuild | aosoa4 | 268.546 | 301.024 | -12.09 | 0/5 | 26.95/27.59 | 17.17/17.16 | 468.8 |
+| 10000 | 1 | no-rebuild | cluster4 | 267.960 | 368.249 | -37.43 | 0/5 | 27.04/55.35 | 17.17/53.64 | 21544.8 |
+| 10000 | 1 | forced | soa | 509.204 | 519.401 | -2.00 | 1/5 | 27.12/31.00 | 17.81/18.30 | 468.8 |
+| 10000 | 1 | forced | aosoa4 | 488.480 | 501.172 | -2.60 | 0/5 | 26.75/27.43 | 17.81/18.28 | 468.8 |
+| 10000 | 1 | forced | cluster4 | 498.250 | 993.073 | -99.31 | 0/5 | 27.04/55.29 | 17.81/73.89 | 21537.4 |
+| 10000 | 4 | no-rebuild | soa | 269.093 | 297.332 | -10.49 | 0/5 | 13.42/13.74 | 18.61/18.59 | 468.8 |
+| 10000 | 4 | no-rebuild | aosoa4 | 268.488 | 299.137 | -11.42 | 0/5 | 13.16/13.74 | 20.98/18.34 | 468.8 |
+| 10000 | 4 | no-rebuild | cluster4 | 268.567 | 373.095 | -38.92 | 0/5 | 13.08/41.81 | 18.58/60.59 | 21544.8 |
+| 10000 | 4 | forced | soa | 225.425 | 235.723 | -4.57 | 0/5 | 13.09/13.69 | 23.42/24.34 | 468.8 |
+| 10000 | 4 | forced | aosoa4 | 225.291 | 238.178 | -5.72 | 0/5 | 13.31/13.67 | 23.47/24.36 | 468.8 |
+| 10000 | 4 | forced | cluster4 | 224.388 | 715.453 | -218.85 | 0/5 | 13.00/41.30 | 23.00/78.58 | 21537.4 |
+| 10000 | 8 | no-rebuild | soa | 269.370 | 296.963 | -10.24 | 0/5 | 11.95/12.54 | 20.23/20.22 | 468.8 |
+| 10000 | 8 | no-rebuild | aosoa4 | 268.947 | 301.441 | -12.08 | 0/5 | 11.77/12.60 | 19.16/19.69 | 468.8 |
+| 10000 | 8 | no-rebuild | cluster4 | 267.819 | 372.455 | -39.07 | 0/5 | 11.81/39.55 | 19.61/61.89 | 21544.8 |
+| 10000 | 8 | forced | soa | 201.319 | 212.037 | -5.32 | 0/5 | 11.84/12.48 | 23.33/23.38 | 468.8 |
+| 10000 | 8 | forced | aosoa4 | 202.534 | 217.147 | -7.22 | 0/5 | 12.04/12.61 | 22.97/23.02 | 468.8 |
+| 10000 | 8 | forced | cluster4 | 201.156 | 697.405 | -246.70 | 0/5 | 11.66/40.81 | 23.42/77.45 | 21537.4 |
+| 10000 | 11d | no-rebuild | soa | 263.935 | 291.279 | -10.36 | 0/5 | 11.14/11.79 | 20.77/20.67 | 468.8 |
+| 10000 | 11d | no-rebuild | aosoa4 | 268.374 | 300.041 | -11.80 | 0/5 | 11.67/12.07 | 20.45/21.41 | 468.8 |
+| 10000 | 11d | no-rebuild | cluster4 | 272.404 | 384.548 | -41.17 | 0/5 | 11.51/39.98 | 20.09/63.14 | 21544.8 |
+| 10000 | 11d | forced | soa | 197.118 | 208.934 | -5.99 | 0/5 | 11.57/12.28 | 27.78/28.78 | 468.8 |
+| 10000 | 11d | forced | aosoa4 | 196.647 | 208.934 | -6.25 | 0/5 | 11.53/12.09 | 25.44/28.86 | 468.8 |
+| 10000 | 11d | forced | cluster4 | 196.303 | 693.030 | -253.04 | 0/5 | 11.57/39.63 | 25.81/83.12 | 21537.4 |
+
+## Memory and regression assessment
+
+No candidate has a case meeting the fixed time-saving bar in either protocol. The process high-water ranges below include every warmup, measured and control row. Primary includes retained snapshot Values and output allocation; secondary omits those allocations. Packed capacity is partial telemetry and excludes core neighbor/workspace and transient reconstruction maps. No new memory acceptance threshold is invented.
+
+| N | Mode | Primary RSS min/max MiB | Secondary RSS min/max MiB | Packed capacity min/max KiB |
+|---:|:---|---:|---:|---:|
+| 864 | interleaved-serial | 17.88/18.33 | 2.83/3.28 | 0.0/0.0 |
+| 864 | interleaved | 17.89/18.36 | 2.83/3.25 | 0.0/0.0 |
+| 864 | soa | 17.94/18.33 | 2.86/3.28 | 40.5/40.5 |
+| 864 | aosoa4 | 17.94/18.34 | 2.86/3.27 | 40.5/40.5 |
+| 864 | cluster4 | 21.94/24.56 | 6.88/10.67 | 1991.1/1994.1 |
+| 2048 | interleaved-serial | 38.52/38.94 | 3.77/4.22 | 0.0/0.0 |
+| 2048 | interleaved | 38.53/38.89 | 3.77/4.14 | 0.0/0.0 |
+| 2048 | soa | 38.59/38.97 | 3.84/4.31 | 96.0/96.0 |
+| 2048 | aosoa4 | 38.61/38.95 | 3.84/4.30 | 96.0/96.0 |
+| 2048 | cluster4 | 47.73/48.27 | 13.00/16.05 | 4620.9/4622.7 |
+| 5000 | interleaved-serial | 88.28/92.42 | 11.03/14.95 | 0.0/0.0 |
+| 5000 | interleaved | 88.28/94.69 | 11.30/16.38 | 0.0/0.0 |
+| 5000 | soa | 88.53/92.50 | 11.02/14.89 | 234.4/234.4 |
+| 5000 | aosoa4 | 88.56/93.23 | 11.44/15.78 | 234.4/234.4 |
+| 5000 | cluster4 | 110.50/114.98 | 32.83/43.69 | 11021.0/11021.4 |
+| 10000 | interleaved-serial | 172.98/179.20 | 17.16/31.47 | 0.0/0.0 |
+| 10000 | interleaved | 173.98/184.03 | 17.16/30.81 | 0.0/0.0 |
+| 10000 | soa | 173.39/179.45 | 17.16/32.56 | 468.8/468.8 |
+| 10000 | aosoa4 | 173.42/179.44 | 17.16/31.14 | 468.8/468.8 |
+| 10000 | cluster4 | 215.64/225.72 | 53.64/86.52 | 21537.4/21544.8 |
+
+| Protocol | Layout | Time-saved range across 32 cases |
+|:---|:---|---:|
+| primary | soa | -49.65% to -1.54% |
+| primary | aosoa4 | -47.65% to -1.83% |
+| primary | cluster4 | -258.29% to -32.00% |
+| secondary | soa | -45.22% to -2.00% |
+| secondary | aosoa4 | -47.53% to -0.91% |
+| secondary | cluster4 | -253.04% to -33.57% |
+
+Packing and scatter run on every force evaluation. Cluster sorting/mask construction runs once during setup and on every forced rebuild; its exact timed reconstruction count is steps for forced and zero for no-rebuild. Setup and full-step policy times above charge these costs. There are no exclusive packing/sort timers, so differences are not presented as isolated component timings. The cluster retained buffers and RSS are materially larger; full-step timing already includes that implementation cost.
+
+## Separate production-auto controls
+
+These five-sample medians are descriptive controls and never enter scalar layout acceptance. Each cell also has a separately retained warmup.
+
+| N | Pool | Policy | Primary VV ms | Secondary VV ms | Primary/secondary child CPU ms | Primary/secondary child wall ms | Primary/secondary peak RSS MiB |
+|---:|---:|:---|---:|---:|---:|---:|---:|
+| 864 | 1 | no-rebuild | 254.084 | 264.371 | 980.37/268.14 | 983.27/269.65 | 17.97/2.86 |
+| 864 | 1 | forced | 243.723 | 252.478 | 953.17/256.24 | 956.53/257.61 | 17.97/2.86 |
+| 864 | 4 | no-rebuild | 256.275 | 297.435 | 854.00/301.78 | 858.42/303.34 | 18.05/2.92 |
+| 864 | 4 | forced | 245.583 | 255.218 | 911.13/259.02 | 914.29/260.31 | 18.03/2.94 |
+| 864 | 8 | no-rebuild | 254.936 | 264.966 | 894.21/269.56 | 897.44/270.44 | 18.19/3.08 |
+| 864 | 8 | forced | 244.003 | 249.367 | 900.93/254.41 | 903.79/254.92 | 18.22/3.09 |
+| 864 | 11d | no-rebuild | 253.687 | 264.691 | 958.17/270.44 | 961.15/270.19 | 18.36/3.19 |
+| 864 | 11d | forced | 244.608 | 289.152 | 962.94/295.01 | 966.23/295.11 | 18.28/3.25 |
+| 2048 | 1 | no-rebuild | 239.954 | 244.654 | 1818.28/254.40 | 1824.29/255.77 | 38.58/3.78 |
+| 2048 | 1 | forced | 253.976 | 257.523 | 1752.80/267.42 | 1761.23/268.82 | 38.56/3.80 |
+| 2048 | 4 | no-rebuild | 240.614 | 247.716 | 1665.18/257.85 | 1671.65/259.29 | 38.64/3.89 |
+| 2048 | 4 | forced | 260.672 | 255.819 | 1918.53/265.71 | 1924.45/266.86 | 38.64/3.88 |
+| 2048 | 8 | no-rebuild | 250.014 | 248.411 | 1841.89/259.34 | 1847.14/260.07 | 38.77/4.06 |
+| 2048 | 8 | forced | 259.381 | 258.872 | 1847.04/269.66 | 1851.98/270.38 | 38.78/4.08 |
+| 2048 | 11d | no-rebuild | 247.996 | 245.146 | 1858.62/256.60 | 1861.63/256.95 | 38.89/4.14 |
+| 2048 | 11d | forced | 263.279 | 259.239 | 1788.97/270.97 | 1807.01/271.02 | 38.86/4.14 |
+| 5000 | 1 | no-rebuild | 264.305 | 298.494 | 3972.92/319.64 | 3981.33/321.40 | 88.34/11.45 |
+| 5000 | 1 | forced | 265.126 | 262.089 | 4145.19/281.26 | 4157.14/283.26 | 88.52/11.78 |
+| 5000 | 4 | no-rebuild | 70.761 | 74.791 | 3857.54/280.26 | 3672.39/85.42 | 89.11/12.22 |
+| 5000 | 4 | forced | 77.659 | 77.416 | 4236.34/293.66 | 4040.81/88.04 | 89.98/13.52 |
+| 5000 | 8 | no-rebuild | 64.706 | 64.273 | 4157.42/413.33 | 3796.17/74.35 | 94.69/13.20 |
+| 5000 | 8 | forced | 67.262 | 60.696 | 4165.97/392.42 | 3822.65/70.59 | 93.84/14.97 |
+| 5000 | 11d | no-rebuild | 63.188 | 67.269 | 4240.61/523.93 | 3827.06/76.86 | 91.84/12.72 |
+| 5000 | 11d | forced | 56.812 | 57.446 | 4147.76/453.46 | 3784.13/67.19 | 93.70/16.38 |
+| 10000 | 1 | no-rebuild | 256.595 | 267.621 | 7988.78/301.19 | 8015.65/302.93 | 178.52/17.17 |
+| 10000 | 1 | forced | 479.834 | 496.455 | 7888.48/529.80 | 7923.30/531.86 | 179.08/17.81 |
+| 10000 | 4 | no-rebuild | 69.901 | 81.366 | 8266.33/340.69 | 8081.09/100.44 | 174.27/21.00 |
+| 10000 | 4 | forced | 136.044 | 139.300 | 8554.36/542.99 | 8195.81/156.48 | 175.28/27.06 |
+| 10000 | 8 | no-rebuild | 58.835 | 61.673 | 8272.69/417.56 | 7994.74/77.29 | 177.56/19.94 |
+| 10000 | 8 | forced | 104.582 | 108.625 | 8504.83/700.00 | 7988.36/124.22 | 178.77/23.55 |
+| 10000 | 11d | no-rebuild | 56.847 | 61.400 | 8694.56/500.54 | 8326.64/76.65 | 180.31/21.95 |
+| 10000 | 11d | forced | 90.662 | 106.479 | 8842.86/780.07 | 8265.12/122.48 | 184.03/30.81 |
+
+## Observed counters and scoped decision
+
+| N | Policy | Steps | Initial/final neighbor pairs | Final active pairs | Timed neighbor visits | Packed evaluated pairs | Timed rebuilds / cluster reconstructions |
+|---:|:---|---:|---:|---:|---:|---:|---:|
+| 864 | no-rebuild | 700 | 33696/33696 | 23328 | 23587200 | 16329600 | 0/0 |
+| 864 | forced | 190 | 33696/33696 | 23328 | 6402240 | 4432320 | 190/190 |
+| 2048 | no-rebuild | 200 | 79872/79872 | 55296 | 15974400 | 11059200 | 0/0 |
+| 2048 | forced | 40 | 79872/79872 | 55296 | 3194880 | 2211840 | 40/40 |
+| 5000 | no-rebuild | 90 | 187600/187600 | 129798 | 16884000 | 11681820 | 0/0 |
+| 5000 | forced | 20 | 187600/187600 | 129798 | 3752000 | 2595960 | 20/20 |
+| 10000 | no-rebuild | 45 | 372400/372400 | 257808 | 16758000 | 11601360 | 0/0 |
+| 10000 | forced | 20 | 372400/372400 | 257808 | 7448000 | 5156160 | 20/20 |
+
+Cluster reconstruction is zero in both interleaved controls and the non-cluster layouts; the last table reconstruction column describes Cluster4 only. Setup rebuilds are one in every run, and setup cluster reconstruction is one only for Cluster4. Interleaved evaluated-pair counts remain null/unavailable, never zero.
+
+Reject these measured serial-scalar prototypes for the declared reduced-LJ workloads and keep production unchanged. No explicit SIMD or parallel packed implementation was measured or rejected. The second matrix addresses the material snapshot-retention concern, but its output lacks vectors/full-state SHA and is not a replacement for the complete-state primary. Host user processes were not stopped; observed load is retained and cross-session absolute timings are not a causal measurement of instrumentation alone. No engine/chemistry parity or universal storage-layout result is claimed.
+
+The snapshot-free launch was clean commit `0c54db355b830c49e687e97e2e9aa8502bbaa5d1`, loaded driver SHA256 `fc3baeb1cc309667fadd6b0160bf6de4b682ed3a35f89c5380c40ad1853df58b`, using `/Users/ricardoleal20/.pyenv/versions/3.14.5/bin/python3` (Python 3.14.5). It completed in 6.779 minutes, with binary/source/config/reference hashes unchanged. The final documentation commit does not relabel either measurement epoch. Seven targeted driver tests pass under Python 3.12.8 and 3.14.5; Rust/core source is unchanged from the reviewed Task1 implementation.

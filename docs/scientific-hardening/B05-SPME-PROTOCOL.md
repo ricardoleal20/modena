@@ -595,3 +595,94 @@ d6352e2752f50a0684ab61d8f1d3694e3c69585149355ade22715c8b94a31795 special-3-selec
 
 No reference, candidate accuracy, timing, or profile outcome was observed when
 this materialization roster was recorded. These are input identity records only.
+
+
+### Task 2 derivative geometry registration (2026-11-06)
+
+The independent oracle derivative regression uses the fixed three-ion rectangular
+selection fixtures (neutral/charged, bare/scaled), kappa=1.1/2.2, R=8.73 and
+K=3.75 in absolute reduced units. Force steps remain h=1e-5*a and h/2; isotropic
+strain steps remain 1e-5 and 0.5e-5. All original residual thresholds apply.
+Exact real-image and reciprocal integer membership sets are compared before
+perturbed energies; a changed membership fails the derivative test.
+
+The first trial registered K=3.71 but its strain membership precondition failed
+before either strained energy was evaluated: the four modes (±5,±2,0) have
+|k|=3.7099640827968456 and cross K under lambda=.99999. This failed raw trace is
+retained. The controller separately registered K=3.75 using geometry only,
+without energy/force/W evaluations: a covering [-12,12]^3 reciprocal cube has
+872 members at all five lambda values, with minimum cutoff margin
+0.0036247514070448794. A covering [-3,3]^3 real-image cube has 14 ordered members
+at all five lambda values for selection and confirmation geometry; minimum
+real margins are 0.05911002364431539 and 0.024110251081122414. The controller
+receipt is `controller-fd-geometry-preflight.json` in the Task 2 evidence directory.
+This repairs an invalid regression stencil; it changes no convergence ladder,
+candidate grid, fixture, step, cap, or physical error threshold. The first and
+repaired derivative source epochs and raw results remain separate.
+
+
+### Task 2 separately registered extended Madelung regression (2026-11-06)
+
+The default four-level cubic-64 crystal sequence failed the two-consecutive-pass
+prerequisite: the (5,10) to (6,12) W/atom change was
+1.746796041146581e-9, above 1e-9*E_unit=4.545454545454545e-10; only its final
+refinement passed. This remains a `ReferenceUnconverged` negative regression,
+with the original raw run retained as `madelung-first.log`. It is not accepted
+using the approximate Madelung constant or its loose sanity tolerance.
+
+Before any extended-reference or candidate evaluation, the controller authorized
+separate immutable cubic-64 and cubic-216 prepared protocols with the existing
+`--reference-extended` option: exactly (4,8),(5,10),(6,12),(7,14),(8,16),(9,18).
+The two consecutive strict differences and both final cross-kappa checks
+(0.9/a and 1.3/a), original caps and tolerances remain required. Their prepare
+artifacts are separate `extended-cubic-64` and `extended-cubic-216` directories
+under the Task 2 evidence root. No additional refinement level is allowed.
+Any positive Madelung sign/factor sanity result belongs only to this extended
+regression epoch after those strict prerequisites actually pass. The default
+campaign protocol and the later candidate campaign remain unchanged.
+
+
+### Task 2 observed oracle evidence (2026-11-06)
+
+The independent streamed all-image/full-±k implementation passed 72 force FD
+component checks (four fixed selection variants, all nine components, two
+steps), maximum absolute residual 1.3239451202018415e-11, and eight isotropic
+strain checks, maximum absolute residual 4.4044601299475516e-11. At the registered
+R=8.73/K=3.75 stencil, all exact geometry sets and actual streamed membership
+fingerprints agreed: 14 included real tuples and 872 reciprocal vectors. The
+independent pair-difference half-space reciprocal sum agreed with the full sum;
+maximum energy/W differences were 5.551115123125783e-17 and
+1.1102230246251565e-16. Periodic self-image, background, bare special-pair,
+rigid-translation and raw signed full-box-wrap regressions passed their original
+gates. Removing self images in an explicitly induced test mutation caused the
+self-energy gate to fail by 0.1633567233; restoring the image loop passed.
+
+The separately prepared six-level crystal regressions passed the final two
+strict refinements and both final cross-kappa checks for 64 and 216 ions.
+Energy per ion pair was respectively -1.58869508603016474 and
+-1.58869508603016496, passing only the registered Madelung sign/normalization
+sanity check. The default four-level regression remains `ReferenceUnconverged`.
+The secondary core-direct-Ewald comparison passed strict reference budgets on
+the four three-ion variants only after the separately registered high-kappa
+full-image refinements, cross-kappa comparisons and omitted-image/real-tail
+comparisons passed. Matching core/reference cutoffs were not used as an accuracy
+certificate.
+
+Stable-toolchain reference-filtered tests: 14 passed; remaining original pure
+tests: 15 passed. Rust 1.90: all 29 passed. Relevant clippy (`-D warnings`) and
+format checks passed. Raw failed and successful logs, exact derivative membership
+sets, work/heap/deadline records, controller geometry receipt, separate extended
+prepare artifacts and source epochs are retained under
+`/private/tmp/modena-b05-target/b05-evidence/task2-reference-20261106`.
+
+Work counters count actual examined ordered real tuples (including spherical
+rejects, excluding only zero self) and actual atom visits in the two included-k
+passes; conservative rectangular preflight bounds are separate. The 216-ion
+extended regression used 218068416 real tuples and 5338656 atom-k visits across
+eight calls. Per-call accounted vector/string capacities peaked at 27682 bytes
+for that fixture, excluding caller-owned retained data unless supplied via the
+explicit baseline. These are reference allocation records, not a process-RSS or
+complete-family-memory acceptance claim. Family orchestration must retain the
+budget context, caller-owned capacities and elapsed time across phases. No
+candidate SPME evaluation, ranking, target acceptance, phase profiling, production
+convergence workflow or full-campaign claim is made by these oracle regressions.

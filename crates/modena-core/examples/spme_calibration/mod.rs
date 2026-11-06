@@ -1,4 +1,4 @@
-//! Offline calibration wire records and pure preparation. No force evaluator is linked here.
+//! Offline calibration records, pure preparation, and independent reference evaluation.
 #![allow(dead_code)] // Wire records are consumed by later offline phases.
 use std::{
     collections::BTreeMap,
@@ -8,11 +8,14 @@ use std::{
 };
 mod fixtures;
 mod metrics;
+mod reference;
 #[allow(unused_imports)]
 // Public pure APIs are also used by the integration test and later phases.
 pub use fixtures::{frozen_protocol, materialize, validate_frozen, validate_snapshot};
 #[allow(unused_imports)]
 pub use metrics::{metrics, passes_target};
+#[allow(unused_imports)]
+pub use reference::{reference, reference_with_budget, ReferenceAudit, ReferenceBudget};
 pub const SCHEMA: &str = "modena-spme-calibration-v1";
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

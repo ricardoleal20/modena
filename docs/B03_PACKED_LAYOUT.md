@@ -527,3 +527,10 @@ Cluster reconstruction is zero in both interleaved controls and the non-cluster 
 Reject these measured serial-scalar prototypes for the declared reduced-LJ workloads and keep production unchanged. No explicit SIMD or parallel packed implementation was measured or rejected. The second matrix addresses the material snapshot-retention concern, but its output lacks vectors/full-state SHA and is not a replacement for the complete-state primary. Host user processes were not stopped; observed load is retained and cross-session absolute timings are not a causal measurement of instrumentation alone. No engine/chemistry parity or universal storage-layout result is claimed.
 
 The snapshot-free launch was clean commit `0c54db355b830c49e687e97e2e9aa8502bbaa5d1`, loaded driver SHA256 `fc3baeb1cc309667fadd6b0160bf6de4b682ed3a35f89c5380c40ad1853df58b`, using `/Users/ricardoleal20/.pyenv/versions/3.14.5/bin/python3` (Python 3.14.5). It completed in 6.779 minutes, with binary/source/config/reference hashes unchanged. The final documentation commit does not relabel either measurement epoch. Seven targeted driver tests pass under Python 3.12.8 and 3.14.5; Rust/core source is unchanged from the reviewed Task1 implementation.
+
+A final post-timing metadata guard rejects JSON booleans used as numeric IDs,
+masses or step counters, and integer values used as periodic booleans. Real
+subprocess fixtures first demonstrated eight failing subcases, then passed with
+strict saved-state types. This only strengthens tooling validation after both
+measurement epochs; neither source epoch, binary, tolerance, timer nor outcome
+is relabeled or rerun.

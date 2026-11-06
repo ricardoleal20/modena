@@ -104,7 +104,7 @@ class DriverTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             good, snap, expected = fixture()
-            for mutation in ("mode", "n", "steps_completed", "missing_energy", "nonfinite", "mass", "missing_state", "snapshot_subset", "pool_time", "rebuilds", "seed", "actual_threads", "saved_nonfinite", "input_position"):
+            for mutation in ("mode", "n", "steps_completed", "missing_energy", "nonfinite", "mass", "missing_state", "snapshot_subset", "pool_time", "rebuilds", "seed", "actual_threads", "saved_nonfinite", "input_position", "mass_bool", "id_bool", "periodic_integer", "saved_step_bool"):
                 r, s = json.loads(json.dumps(good)), json.loads(json.dumps(snap))
                 if mutation in ("mode", "n", "steps_completed"):
                     r[mutation] = "wrong" if mutation == "mode" else 999
@@ -126,6 +126,14 @@ class DriverTests(unittest.TestCase):
                     s["final"]["forces"][0] = float("inf")
                 elif mutation == "input_position":
                     s["initial_input"]["positions"][0] += 0.1
+                elif mutation == "mass_bool":
+                    for name in ("initial_input","initial_force_ready","final"): s[name]["masses"][0] = True
+                elif mutation == "id_bool":
+                    s["initial_input"]["logical_ids"][0] = False
+                elif mutation == "periodic_integer":
+                    s["initial_input"]["periodic"] = [1,1,1]
+                elif mutation == "saved_step_bool":
+                    s["initial_input"]["steps_completed"] = False
                 else:
                     r[mutation] += 1
                 if mutation != "snapshot_subset":

@@ -99,6 +99,25 @@ def capture(command, prefix):
             "load_before":load_before, "load_after":os.getloadavg()}
 
 
+def validate_state_types(state):
+    # JSON booleans compare equal to 0/1 in Python, but are not numeric IDs,
+    # masses or step counters in the executable snapshot contract.
+    for key in ('n','steps_completed'):
+        if type(state[key]) is not int: raise ValueError('saved integer type '+key)
+    for key in ('logical_ids','species','atomic_numbers','masses','charges','periodic',
+                'positions','velocities','forces','cell_vectors'):
+        if type(state[key]) is not list: raise ValueError('saved array type '+key)
+    for key in ('logical_ids','species','atomic_numbers'):
+        if any(type(x) is not int for x in state[key]): raise ValueError('saved integer type '+key)
+    for key in ('masses','charges'):
+        for x in state[key]: finite(x,key)
+    if any(type(x) is not bool for x in state['periodic']): raise ValueError('saved periodic boolean type')
+    if len(state['cell_vectors'])!=3: raise ValueError('saved cell shape')
+    for vector in state['cell_vectors']:
+        if type(vector) is not list or len(vector)!=3: raise ValueError('saved cell shape')
+        for x in vector: finite(x,'cell')
+
+
 def validate(row, snap, expected):
     for key, value in expected.items():
         if type(row.get(key)) is not type(value) or row.get(key) != value:
@@ -140,6 +159,7 @@ def validate(row, snap, expected):
     elif type(row["evaluated_pairs"]) is not int or not 0 <= row["evaluated_pairs"] <= row["neighbor_pair_visits"]: raise ValueError("evaluated count")
     for name in ("initial_input", "initial_force_ready", "final"):
         state = snap[name]
+        validate_state_types(state)
         if state["n"] != n or state["logical_ids"] != list(range(n)) or state["periodic"] != [True]*3: raise ValueError("logical identity")
         for key, expected_values in (("masses",[1.]*n),("species",[0]*n),("charges",[0.]*n),("atomic_numbers",[0]*n)):
             if state[key] != expected_values: raise ValueError(key)

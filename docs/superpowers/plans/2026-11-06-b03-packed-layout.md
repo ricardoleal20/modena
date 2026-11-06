@@ -30,11 +30,11 @@ selector Interleaved/Soa/Aosoa4/Cluster4, a ForceModel for each packed view and
 a full-step example with JSON results suitable for a future Python driver.
 Read the spec first for domains/gates; inspect existing interfaces before coding.
 
-- [ ] Establish focused baseline with force_hardening and pair_scales tests, saving command/status evidence under a new target/b03-evidence directory, preserving all B02 files.
-- [ ] Write independent scalar oracle and exact mapping/mask tests first. The key assertions are `assert_eq!(unpack(pack(logical_ids)), logical_ids)` and equality of BTreeSet `(logical_i,logical_j,scale_bits)` from masks vs neighbor half pairs. Perturb positions/box and force rebuild to catch stale masks; padded indices never appear.
-- [ ] Record meaningful RED before implementation, then implement layouts, safe masking/permutation, current-coordinate packing and additive force scatter. Test E/F/W numerical gates and edge cases in the spec; fail unsupported input explicitly.
-- [ ] Build a full-step experiment example with CLI mode/N/threads/steps/rebuild-policy/seed and JSON counters. Integrate using existing velocity-Verlet with same initial state for each mode; include packing, neighbor rebuild, cluster reconstruction/scatter inside elapsed region. Report setup independently, checksum final state and include actual completed steps/rebuild/pair counts and finite E/F/W.
-- [ ] Run focused tests GREEN, fmt/clippy and Rust1.90 check for changed targets; self-review, commit with required format and report exact commands/results/source hashes. No timing acceptance claim in Task1.
+- [x] Establish focused baseline with force_hardening and pair_scales tests, saving command/status evidence under a new target/b03-evidence directory, preserving all B02 files.
+- [x] Write independent scalar oracle and exact mapping/mask tests first. The key assertions are `assert_eq!(unpack(pack(logical_ids)), logical_ids)` and equality of BTreeSet `(logical_i,logical_j,scale_bits)` from masks vs neighbor half pairs. Perturb positions/box and force rebuild to catch stale masks; padded indices never appear.
+- [x] Record meaningful RED before implementation, then implement layouts, safe masking/permutation, current-coordinate packing and additive force scatter. Test E/F/W numerical gates and edge cases in the spec; fail unsupported input explicitly.
+- [x] Build a full-step experiment example with CLI mode/N/threads/steps/rebuild-policy/seed and JSON counters. Integrate using existing velocity-Verlet with same initial state for each mode; include packing, neighbor rebuild, cluster reconstruction/scatter inside elapsed region. Report setup independently, checksum final state and include actual completed steps/rebuild/pair counts and finite E/F/W.
+- [x] Run focused tests GREEN, fmt/clippy and Rust1.90 check for changed targets; self-review, commit with required format and report exact commands/results/source hashes. No timing acceptance claim in Task1.
 
 ## Task 2: frozen matched campaign and decision
 

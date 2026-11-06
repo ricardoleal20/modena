@@ -12,7 +12,7 @@ experimental outcomes, with measurements and reasons retained.
 
 | Case | State | Dependencies / acceptance focus |
 | --- | --- | --- |
-| B03 | in progress, ricardo/b03-packed-layout based604039e | Internal packed layouts and cluster masks; include conversion/rebuild, exact logical identity and scalar oracle. |
+| B03 | Task1 reviewed at66af0e4; campaign pending, ricardo/b03-packed-layout based604039e | Internal packed layouts and cluster masks; include conversion/rebuild, exact logical identity and scalar oracle. |
 | B04 | pending | Periodic directed graph images, independent enumeration; keep classical half list distinct. |
 | B05 | pending | SPME convergence/cost against converged Ewald; declared calibration domain. |
 | B07 | pending | Tensor strain derivatives, constraint impulses, periodic and timestep oracles. |
@@ -26,3 +26,17 @@ Execute per-case design, plan, implementation/review, validation and publication
 do not repeat closed B01/B02/B06/B09 work or overwrite prior evidence. Address
 available independent work before asking for an external resource. No spending,
 weight downloads or destructive actions inferred from the request.
+
+## Selected domain and resource inventory (2026-11-06)
+
+The user selected **FCC aluminium** for B10 before labels/model evaluation.
+The known ASE venv has ASE/NumPy but no Torch/FAIR-Chem; pw.x is absent from
+PATH. Local OpenMPI5.0.10 is available, and system metadata identifies Apple
+M3 Pro with Metal. These inventory observations do not prove a current GPU
+run, MPI trajectory, DFT convergence or ML inference. Fortran16.2 and make
+are present; a Quantum ESPRESSO installation still needs preparation.
+
+B04/B05 read-only design preparations are ready; their implementations and
+acceptance remain pending. B03's packed prototypes use scalar execution and
+require an equivalent serial interleaved control. Production-auto remains a
+separate control; results cannot reject unimplemented parallel/SIMD designs.

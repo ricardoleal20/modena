@@ -59,7 +59,7 @@ Other mandatory fixtures:
 
 1. **Net charge/background:** selection seed 19 perturbed 64-ion snapshot, change atom 1 charge from -1 to -0.5 (`Q=+0.5`); confirmation seed 59 with the same change. All background/self terms stay enabled and Q, sum(q²), boundary convention are reported.
 2. **Special pairs, rectangular cell:** `L=[9,10,11]`, positions `[[1.1,2.3,3.4],[2.7,3.2,3.8],[6.2,5.8,7.0]]`, charges `[1,-0.7,-0.3]`; pair scales `(0,1,c=0)` and `(0,2,c=0.4)`, LJ weights one. First pair is inside every proposed rc and second outside every rc. Also evaluate c=1 and c=0.7 pair-policy algebra separately. Confirmation positions add `[0.031,-0.017,0.023]` to atom 1 before wrapping. A charged variant changes final charge to +0.4 (`Q=+0.7`). Model and neighbor-list scales are supplied consistently, exactly once.
-3. **Orthorhombic anisotropy:** selection seed 31 lattice uniformly remap fractional coordinates from cubic box to `[4.4,5.06,5.72]`; confirmation seed 43 remapped identically. This is a separate declared fixture family, not permission to generalize to arbitrary aspect ratios.
+3. **Orthorhombic anisotropy:** uniformly remap fractional coordinates of the full cubic roster into the orthorhombic cell: neutral selection seeds/amplitudes `(7,.02),(19,.05),(31,.08)`, neutral confirmation `(43,.035),(59,.065)`, background selection `(19,.05)` and confirmation `(59,.065)` with atom 1 charge `-0.5`, and the unperturbed regression crystal. For replicas 2 the edges are `[4.4,5.06,5.72]`; replicas 3 uses `(a*3)*[1,1.15,1.3]`. The originally named seed 31 and seed 43 remain included with their original roles. This controller clarification was frozen before any force evaluation; it makes the section 5 “their anisotropic variants” grouping explicit. This is a separate declared fixture family, not permission to generalize to arbitrary aspect ratios.
 4. **Integer periodic wrap:** shift any atom by each full box vector; E/F/W must agree to regression tolerances. This is distinct from sub-grid translation.
 5. **Unsupported/degenerate fixtures:** triclinic box; empty/zero-charge input; NaN/Inf; overlapping atoms; invalid/duplicate conflicting pair policies; unsupported units; particle count or mesh over caps. Ensure explicit rejection/status with no configuration emitted.
 
@@ -467,3 +467,131 @@ creation remains pending, without restart or a claim of terminal failure.
 No performance lease is active. Early Tasks1–3 are independent example-only
 work; final B04 synchronization and source/interface verification precede
 Task4. All team compute/builds/writes pause during any exclusive campaign.
+
+### Task 1 concrete preparation interface and source policy
+
+Frozen before any oracle/SPME force calls: `prepare` writes one family's
+`protocol.json`, `snapshots.json`, per-ID `fixtures/*.json`, and `manifest.json`
+into a new directory. Existing directories/files are never overwritten.
+Hashable physical JSON has no timestamps. Individual snapshot hashes cover
+pretty JSON plus one final LF, after wrapping and canonical pair policies;
+collection hashes cover the same serialization convention in fixture order.
+Wrap regression IDs retain the axis/sign of the canonicalized full-box probe;
+the later physical regression must also apply that full-box shift to the raw
+evaluator input, rather than interpreting wrapped arrays as the raw probe.
+
+The sorted source bundle is root `Cargo.toml`, `Cargo.lock`, core `Cargo.toml`,
+all actual `crates/modena-core/src/**/*.rs`, the actual example entry point,
+and all actual `examples/spme_calibration/**/*.rs`. It intentionally invalidates
+old certification after source/base changes, including later B04 integration.
+The protocol Markdown is hashed separately from that physical source bundle;
+protocol and snapshot JSON are hashed separately as well. The historical seven
+controller interface checks and historical section 8 research reads are not an
+exhaustive runtime source bundle. Tests and logs are report evidence, not physical
+source dependencies. Task 1 preparation is not a build/binary/source binding
+certificate; later launch-freeze work must establish that binding.
+
+Controller ruling replaces the planned synthetic force-call counter with actual
+prepare contract tests and review of the pure module boundary: the preparation
+code imports the lattice builder and has no evaluator, force-model construction,
+or compute path. It defines future serialized records without fake physics
+implementations. Numerical phases will recheck this boundary separately.
+
+### Task 1 materialized SHA-256 roster (before force evaluation)
+
+Default reference ladder, one thread; pretty JSON plus final LF.
+The snapshots hash is independent of thread count and extended-reference choice.
+
+| Family | Protocol JSON SHA-256 | Snapshots JSON SHA-256 |
+| --- | --- | --- |
+| cubic-64 | `31df92c0d443c2b8e22a6c171bd5ded0a7f882b5fa9c39e9fbb5c7b691003817` | `b3c8833c77185a93d799b0f2eee83df95695e9bf007cbd1b9033b3f943ece514` |
+| cubic-216 | `01968a5a4a7e670e472c13a8bc6b0ba6319cb0cd0dea9e1f3af366f12d282491` | `13de8ab7275ef2c317cbe73ebfac405c9030f5dacd6d3b28bf29b81cb622f3b9` |
+| ortho-64 | `6d08dbda363728d10359a0a50847fc3166d36eed1d97ac5600831c6d1be2697b` | `9a1f626df4aabe9338d6f31f5a41f938de24fee65826c10ea633fce9c347eefe` |
+| ortho-216 | `0a9d3931b80cfbcd36775605494659211bd7ce5aba17e56b53e0b04a3ad93789` | `9c43eab24ee2e13a035772d30f487923c66c7d8673bfaba51a1fc9ce2b5e3dc6` |
+| special-3 | `446238deeda0dfe273273f5e1c4b4800afada80a00884f5319a1385a694f0fd8` | `43c697afef02cf27c9f22f2acb69fa3208bbbda564c6d345485928488593cc62` |
+
+Individual canonical snapshot JSON hashes:
+
+```text
+54626050ea3af6c6b6a62ce0e39776e781fc18e96020fa9fbd870594af6cf034 cubic-64-background-seed-19
+e018779cc665f7a5a3113fcaffd38519f70670302c6dc61ff3b49406f94588d0 cubic-64-background-seed-59
+af2f2b53f25da4783a08c31189f9d04c3a1a4467e6fe8db0a2261fbb6bf2f547 cubic-64-crystal
+4c5487f8f7017d62bd6243edde2fd4c9f097df9ab9d8d73bfc5757ba9683f306 cubic-64-neutral-seed-19
+3af638f9c9008d9a87a618d39af6bc53dc56871c323a680f2e8d098df444d9ed cubic-64-neutral-seed-31
+f182d82943d76856235b124747bc03ab4764c431a19eb2a09359493953db93fd cubic-64-neutral-seed-43
+eedd6d22a2ac3649c8a5034c411cbec2194ff3e533ff2ea533afcdc596987167 cubic-64-neutral-seed-59
+3bbca1d7cd35bd3bb7ba0ae3495fba1170d75e08de91fe5b81f78294316074e8 cubic-64-neutral-seed-7
+840c65a7a832910de1a72ade8c4819b580b6745748a2a524d9444a6f8ba567e9 cubic-64-neutral-seed-7-wrap-0-minus
+ac8db954cb266c031c0ce82ac5ea86ac888a7e931661d176bad6a0116f0c5587 cubic-64-neutral-seed-7-wrap-0-plus
+d539d53da2ec18ed8257983259dc9bc21128753188debd67e3ca9a49be0c63f0 cubic-64-neutral-seed-7-wrap-1-minus
+1423e7f9d8d415782f8ad9ed8764625742f40ef64bad29e9791cebe8077b6c5c cubic-64-neutral-seed-7-wrap-1-plus
+8e62cba1034df350887751993b6b2b3198192c54afc443382ad9a825f3acca34 cubic-64-neutral-seed-7-wrap-2-minus
+a70846a2e5a549ca9e6715c501972cf149611f2315ff31ee6db0c8d6096bb3e2 cubic-64-neutral-seed-7-wrap-2-plus
+1b78fe459b665c01c8aea7cc7660bcbf813bdbec3d2440fe1eec35cb59a21d55 cubic-216-background-seed-19
+2bba3b29277fd7920eea10fed4799b4eb727c344cbea8e5023782291d4da01fa cubic-216-background-seed-59
+304d1d9ef5da4a55dbc1d1214022ef1ce62b3e18af2168cd66cf232391cf6e61 cubic-216-crystal
+8b7ac8a44dde676698f5ee7abe5d0b711fed91a743d45a9a4bbdb89615d52bff cubic-216-neutral-seed-19
+f4f8dae04af9ab4e660b2cc65e67ff6ee3037903f3702b5e1d3e53d98702bc32 cubic-216-neutral-seed-31
+4b3fbb65c8023f5b323984c1de38ee0c71c89a0733673e6b68c0b4cb6243bac1 cubic-216-neutral-seed-43
+d8d7d51b398c99a243c95fd78c649cf011ba3d65d576c860b9961b60a9bd15a8 cubic-216-neutral-seed-59
+644ba481a9553913bf9c7ab6f513d1fa771c0b07bf6e101030eea0b4b3d94edd cubic-216-neutral-seed-7
+e681eded1ef7bcd961dc6928dd17bdc6a18d3e707db1cfa7dda6b3a6e6a4e6b8 cubic-216-neutral-seed-7-wrap-0-minus
+39d302992d9c0455b15a9223e30b16411c92459526e2146d7e7f3453b5dbfd15 cubic-216-neutral-seed-7-wrap-0-plus
+f1ecab4c6c11aaa55ea0352730626b200e002510757e16cad8fcb15f77a82326 cubic-216-neutral-seed-7-wrap-1-minus
+8f2264e97099315dc42ea1fc4c9d1d17f57d920f5cef218268c829d4bc481bac cubic-216-neutral-seed-7-wrap-1-plus
+ce5648e8a4ce05d84d35f911a998c2c4136767f037499c9d72f9f68d61a5994d cubic-216-neutral-seed-7-wrap-2-minus
+8136536a03e0930a4735abd8e9094aa8a401fda4dd810886d36c7b5405e226b9 cubic-216-neutral-seed-7-wrap-2-plus
+247a927795d724bfa022af406894c0f659ebdfa6c92fe9c9ed41102a7b909a67 ortho-64-background-seed-19
+095b5412594f3808baeb9cf45fbcb7e2bebb97fc2b40f202c820cf933229d44a ortho-64-background-seed-59
+7a059b1d96bc7518cd74db6590dd5ebd65d2b1d01396ee31fd4acc9700ac78a8 ortho-64-crystal
+e5945a66d5362ea2f2615b8cb7f7c6fcff7de2f19b430a65b2a0922b75b74e0a ortho-64-neutral-seed-19
+ec4439fe43b0bedf07137dbf9ffdc6a34476a60abbd040a29262303593c35485 ortho-64-neutral-seed-31
+bed41ef42fb7fd762d742cbf991865b1a46772c7142c3d726727a8674f489d7b ortho-64-neutral-seed-43
+2e3c519b4d2c5d4abcf90fa1c01c5374d26b2860532fe9a860f0d2b77a563e97 ortho-64-neutral-seed-59
+9fc5661dba87135a66172525720b8f3dffbbc64d546080d070d017067c1f6f44 ortho-64-neutral-seed-7
+f15ae42ca850dca611eea28188e0ef8377ff7370938ea1477dfb1b36a8db1f14 ortho-64-neutral-seed-7-wrap-0-minus
+ff49cffad918f56a4a0fa9cfe64f368216a7dbb2664cfcda33a88703a6ebe8a9 ortho-64-neutral-seed-7-wrap-0-plus
+822e132109700006eb098dd5a7a30ab4226eed3371b2b1ff0aa75b77f28713fd ortho-64-neutral-seed-7-wrap-1-minus
+d786b7b9eb96d0a933bcb828d1cca014541b59712ac2ff696147e66b0a853a19 ortho-64-neutral-seed-7-wrap-1-plus
+b39fab9076f96880c6e60af22d44ed2bfc7ac64da07c45d8ad72bd06dd0fc82f ortho-64-neutral-seed-7-wrap-2-minus
+25ee0f76cc4a5480ffbb3ac9acde7c0d85496f829fc2cc1030135ea309234362 ortho-64-neutral-seed-7-wrap-2-plus
+e3fcc43ab90ba6c65c6bb6182b9efa2d4eaaa64e631ba196b00feb7b9ca9259b ortho-216-background-seed-19
+76cf5966c78ee71de268ffeba45bade1a152cd00fc38a979b9b2150bafb6b1bd ortho-216-background-seed-59
+07068df58a2178ae2b96bbdaad3838d22f50cbba38695b0cb5c61e44c112c232 ortho-216-crystal
+88a58d9af101e014619b7e44802e96a5edfe3b2cdd9cddc643e7c57d95f33fd5 ortho-216-neutral-seed-19
+7d0dfc93b9fab73882dc4e093fecc0e4a9750e22006b90b3180fb2901dd8fda5 ortho-216-neutral-seed-31
+872776dbc98b5bfc4c41c4a0c7c911de2d6443ae0962eb703753b09f8352f9cf ortho-216-neutral-seed-43
+a0916936eb518ad44fc86c48ea620ba7802d70f234dfa0d81539974d831dfcc4 ortho-216-neutral-seed-59
+f1258a8588d61f25eb7e9d4564247f6f6a58aa97ef411625d4943a05e67364b6 ortho-216-neutral-seed-7
+c471bed189e4a5335250701d269803cdb356a824aa946643dda72d45c6cd9f3c ortho-216-neutral-seed-7-wrap-0-minus
+cd4eb339ddb2a16b0a161b5162e6e123c0f215193a20aaad1c216f9dfc94f4c9 ortho-216-neutral-seed-7-wrap-0-plus
+5d2e53a58282214a3974c5a91bb4b934aa928dfa4f92a561c8088b33fe07f9ec ortho-216-neutral-seed-7-wrap-1-minus
+e0cfa7ee2b8f9a92033972c116fa09c31c129be94296094ed525322ceab178bb ortho-216-neutral-seed-7-wrap-1-plus
+59969f053394688725ff96a444c4fb536fc986cb648fec439aaf2e4fe1acb463 ortho-216-neutral-seed-7-wrap-2-minus
+dd4f0459e8ca49ad4f0bf2fe2859eb70991f8e6f505fe44f8e9fa5774e9018bd ortho-216-neutral-seed-7-wrap-2-plus
+0051f7f566befa725ed93e1e1066762d64b908e8504210db9386d0929abd8acf special-3-confirmation-charged-bare
+b0e9ec135f70f1d45f443c6d796870964166dfd969840149cda433ab10a8f023 special-3-confirmation-charged-c07
+9cd003f6ce98a08f53de0e32a03b3599e54d7009a6f57fd37ec5338d1cab95cb special-3-confirmation-charged-c1
+d6127856805f1e25c830c69c11bf0a644d606ea2c3b8f723e90d534c083ba5f0 special-3-confirmation-charged-scaled
+5005c4edf026dc4048cd25bd895a7fe44072ffd3285529ac379f112dc17adfc9 special-3-confirmation-neutral-bare
+f6fdcaa7737c65ffc052b31de7b0c9d7e0793b057d28f6eb63d983bb82780a3b special-3-confirmation-neutral-c07
+3f6e021fe5ed70e603d61a29c9918414e242cd4ee8d6cae06e709e290b638e13 special-3-confirmation-neutral-c1
+67950f0cf4f4cd323057d6362fa741ebc57c90be6cd6f0ab953c114ccde12ba6 special-3-confirmation-neutral-scaled
+56961c3ff8d6aa74207653342296452583434643abb1d34633ddc36cbf3f6927 special-3-selection-charged-bare
+9ad3e5dd63647beb58acc0eb23470feb5ddd6d6ff1f102d1dd6fd7aa4da78816 special-3-selection-charged-c07
+5f4c6b54dbf80fb2c692c343f76078bf99221c4192d72e07e1149faf6a4e70ea special-3-selection-charged-c1
+53af84ef194811f077f77ef5836efe7eeac03625ad6de70d6a834435beb3fba1 special-3-selection-charged-scaled
+695770d2ec23535ad6eb1e77fde3bc9a0f1effc345602ad980ed25310699795a special-3-selection-neutral-bare
+459bcf435f18b9b77c8f4158ee3f479f6bc0336271fd8041158fecefa1922543 special-3-selection-neutral-bare-wrap-0-minus
+9228307d4619c0a606712682eda32c2bb8d1d081afd37d87568faa057c6ea0d2 special-3-selection-neutral-bare-wrap-0-plus
+1e24f7e7d92fa7a9af71f6670a7853b0a2256757ca44ee451d0bdd7abefd8296 special-3-selection-neutral-bare-wrap-1-minus
+0de08bb53658bd48b0ed9fa2142dd63c2e4966aacd6b86db2da3e49c64720db8 special-3-selection-neutral-bare-wrap-1-plus
+11a78c4eff024756ac194a1f4e189f564fa14bb864a3faed5eb930844e831532 special-3-selection-neutral-bare-wrap-2-minus
+be39d5214fe77b09ee361167c7bdb540942d1e678caf537e7264c2fe24caa42f special-3-selection-neutral-bare-wrap-2-plus
+edc66f4a206e2d79d94cd7af707a7fb34348b4ab7fb95d7074dc4e4081c5d233 special-3-selection-neutral-c07
+3d93e082d213eb586a09852cc38f61fbb81f86a2ed0e1a57eb2473153a8fc1b0 special-3-selection-neutral-c1
+d6352e2752f50a0684ab61d8f1d3694e3c69585149355ade22715c8b94a31795 special-3-selection-neutral-scaled
+```
+
+No reference, candidate accuracy, timing, or profile outcome was observed when
+this materialization roster was recorded. These are input identity records only.

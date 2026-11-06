@@ -45,7 +45,20 @@ def table(ratio=0.8, skin=0.0):
                     pair_equal=True, physics_passed=True))
     return dict(schema_version=1, status="complete", metadata=metadata,
                 validation={"initial": True, "final": True, "minimum_distance": 1.0,
-                            "minimum_cutoff_margin": 0.01}, records=records, error=None)
+                            "minimum_cutoff_margin": 0.01,
+                            "initial_diagnostics": {"scalar": {"requested": "scalar", "selected": "scalar", "fallback": None},
+                                                    "candidate": {"requested": "fractional", "selected": "fractional", "fallback": None}}}, records=records, error=None)
+
+
+def control_table(family="boundary", reason="fractional_boundary", skin=0.0):
+    d = table(ratio=1.0, skin=skin)
+    d["metadata"].update(case_id=family, family=family, n=8)
+    d["validation"]["initial_diagnostics"]["candidate"].update(selected="scalar", fallback=reason)
+    for r in d["records"]:
+        if r["strategy"] == "fractional":
+            r.update(selected="scalar", fallback=reason, selected_counts={"scalar": 10},
+                     fallback_counts={reason: 10} if reason else {})
+    return d
 
 
 class ParserTests(unittest.TestCase):
@@ -147,6 +160,61 @@ class ParserTests(unittest.TestCase):
         for r in d["records"]:
             r.update(selected="scalar", selected_counts={"scalar": 10})
         self.assertTrue(campaign.analyze_case(d)["fallback_overhead_ok"])
+
+    def test_control_wrong_reason_cannot_count_as_coverage(self):
+        for family in ["boundary", "grid_cap"]:
+            for reason in ["all_bins", None]:
+                d = control_table(family, reason)
+                d["validation"]["initial_diagnostics"]["candidate"]["fallback"] = campaign.CONTROL_REASONS[family]
+                self.assert_invalid(d)
+
+    def test_one_wrong_new_build_cannot_hide_in_last_reason(self):
+        d = control_table()
+        r = next(r for r in d["records"] if r["phase"] == "measured" and r["strategy"] == "fractional")
+        r["fallback_counts"] = {"fractional_boundary": 9, "all_bins": 1}
+        self.assert_invalid(d)
+
+    def test_initial_control_reason_is_checked_independently(self):
+        d = control_table()
+        d["validation"]["initial_diagnostics"]["candidate"]["fallback"] = "all_bins"
+        self.assert_invalid(d)
+
+    def test_exact_control_reason_covers_all_measured_new_builds(self):
+        for family, reason in campaign.CONTROL_REASONS.items():
+            report = campaign.analyze_case(control_table(family, reason))
+            self.assertTrue(report["control_fallback_coverage"])
+            self.assertEqual(report["measured_rebuilds"]["fractional"], 200)
+            self.assertEqual(report["control_expected_reason"], reason)
+
+    def test_no_measured_control_builds_is_inconclusive(self):
+        d = control_table(skin=0.3)
+        for r in d["records"]:
+            r.update(rebuild_count=0, candidate_checks=0, selected_counts={}, fallback_counts={})
+        report = campaign.analyze_case(d)
+        self.assertEqual(report["status"], "inconclusive_control_no_measured_builds")
+        self.assertFalse(report["control_fallback_coverage"])
+        self.assertFalse(report["fallback_overhead_ok"])
+
+    def test_auto_dispatch_does_not_fabricate_fractional_coverage(self):
+        d = control_table(reason=None)
+        d["metadata"]["candidate"] = "auto"
+        d["validation"]["initial_diagnostics"]["candidate"]["requested"] = "auto"
+        for r in d["records"]:
+            if r["strategy"] == "fractional": r.update(strategy="auto", requested="auto")
+        report = campaign.analyze_case(d)
+        self.assertEqual(report["control_scope"], "auto_scalar_dispatch_only")
+        self.assertFalse(report["control_fallback_coverage"])
+        self.assertTrue(report["fallback_overhead_ok"])
+
+    def test_boundary_recipe_is_fixed_before_physical_evaluation(self):
+        d = campaign.make_control_snapshot("boundary")
+        self.assertEqual(d["basis"], [[32., 0., 0.], [6.4, 32., 0.], [3.2, 4.8, 32.]])
+        self.assertEqual(d["generation"]["density"], 8/32768)
+        self.assertEqual(d["positions"][0], [0., 0., 0.])
+        self.assertEqual(d["velocities"][0], [0., 0., 0.])
+        self.assertEqual(d["positions"][1], [22.2, 18.4, 16.])
+        self.assertEqual(d["velocities"][1], [-0.005305125941427159, -0.005305125941427156, -0.005305125941427156])
+        for k in range(3): self.assertLess(abs(sum(v[k] for v in d["velocities"][1:])), 1e-16)
 
 
 if __name__ == "__main__": unittest.main()

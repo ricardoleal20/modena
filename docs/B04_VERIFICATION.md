@@ -583,3 +583,62 @@ The detailed handoff is
 `.superpowers/sdd/2026-11-06-b04-periodic-neighbors/task-7-report.md`.
 These checks establish preparation only, with no model/tool-engine parity,
 chemical efficacy, G4 pass or B10 claim.
+
+### Task 7 I1 correction — explicit fallback coverage
+
+Review I1 identified that the original small boundary cell returned AllBins
+before reaching fractional bin certification. That original input and all
+prior smoke/prepared epochs remain preserved and are superseded for boundary
+coverage. Before new numerical evaluation, the controller fixed the separate
+boundary recipe below and recorded exact coordinates/velocities in the Task7
+handoff. The density-.8 ladder, grid-cap input, basis-change input, physics,
+velocity formula and fixed timing protocol are unchanged; fourteen snapshot
+hashes agree exactly with the previous prepared collection.
+
+Boundary control: N=8, basis columns (32,0,0), (6.4,32,0), (3.2,4.8,32), actual
+density 0.000244140625. Atom0 is isolated at (0,0,0) with v=(0,0,0). Atoms1..7
+are the seven nonzero-bit corners of a Cartesian cube with spacing1.4 anchored
+at H*(.5,.5,.5)=(20.8,18.4,16); x/y/z correspond to bits0/1/2. Initial cluster
+velocities use the same .05 formula for i=1..7, with their own seven-atom
+component means removed in atom order. Exact f64 coordinates and velocities
+are retained in the new snapshot/recipe, with all eight explicit vectors in
+the pre-evaluation handoff. The large cell avoids the earlier all-bins cap,
+and the isolated atom remains exactly at the ambiguous fractional boundary
+under continuous VV. No state reset or velocity modification occurs in timers.
+
+The frozen manifest now declares boundary=>fractional_boundary and
+grid_cap=>grid_cap. For forced-fractional controls, binary and analyzer require
+actual Scalar selection and the expected initial reason. Every new build in
+each block must have that exact reason, verified from selected/fallback counts
+as well as the last timed report; a wrong reason cannot hide behind a correct
+last report. Initial diagnostics are serialized as actual requested/selected/
+fallback triples for both replicas. The analyzer independently validates them.
+Zero measured relevant builds gives `inconclusive_control_no_measured_builds`,
+with fallback coverage and overhead acceptance false. Auto separately checks
+scalar-dispatch overhead and reports `auto_scalar_dispatch_only`, never forced
+fractional safety-path coverage and never a fabricated fallback reason.
+
+Fix verification: 23 Python tests pass, including meaningful wrong/missing
+reason RED/GREEN, one-hidden-wrong-build rejection, independently wrong initial
+reason, no-measured-build inconclusiveness and Auto dispatch separation. Five
+Rust tests pass on stable and Rust1.90; real fixtures evolve continuously for
+250 steps at both skins with exact pairs/E/F/W/state parity. Actual diagnostics
+match the intended paths at initialization and every new build. Atom0's
+position, velocity and force remain exactly zero without reset. An actual
+AllBins substitute is rejected by the native initial-control guard.
+
+A new immutable release/source epoch and eight eight-atom CLI correctness
+smokes are retained under
+`target/b04-evidence/task7-harness-20261106/fix1-boundary-20261106/`:
+boundary and grid_cap each run fractional step/skin0/thread1, fractional
+rebuild/skin.3/thread4, fractional step/skin.3/thread4 and Auto step/skin0/thread4.
+Forced step/skin0 and rebuild/skin.3 each observe200 measured builds per
+replica, every candidate build with the expected reason. Natural skin.3 sees
+zero measured builds, remains inconclusive and is not extended. Auto selects
+Scalar with no fallback and makes no fractional coverage claim. All five
+physical/state error maxima are zero. A CLI negative using unchanged old
+boundary bytes retains actual AllBins diagnostics and fails before kernels.
+The new fifteen-snapshot collection is generated only; the large ladder is
+not numerically evaluated. Focused Clippy/rustfmt and release compilation pass.
+All smoke durations are excluded from G4 performance acceptance. No CPU lease,
+selector promotion or performance run is claimed by this correction.

@@ -21,6 +21,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 PHYSICS = dict(model="LennardJones", precision="f64", sigma=1.0, epsilon=1.0,
                mass=1.0, cutoff=2.5, cutoff_treatment="shifted_force", tail_correction=False)
 PROTOCOL = dict(dt=0.0005, warmup_blocks=5, sample_blocks=20, block_steps=10)
+CONTROL_REASONS = {"boundary": "fractional_boundary", "grid_cap": "grid_cap"}
+FALLBACK_REASONS = {"uncertified_geometry", "fractional_boundary", "image_domain", "grid_cap",
+                    "stencil_cap", "work_cap", "memory_cap", "all_bins", "candidate_cost"}
 
 
 class DataError(ValueError):
@@ -95,8 +98,21 @@ def analyze_case(data, expected=None):
     for key, value in PROTOCOL.items():
         require(type(m[key]) is type(value) and m[key] == value, "protocol: " + key)
     v = data["validation"]
-    exact_keys(v, "initial final minimum_distance minimum_cutoff_margin", "validation")
+    exact_keys(v, "initial final minimum_distance minimum_cutoff_margin initial_diagnostics", "validation")
     require(v["initial"] is True and v["final"] is True and number(v["minimum_distance"]) and v["minimum_distance"] > 0 and number(v["minimum_cutoff_margin"]) and v["minimum_cutoff_margin"] > 1e-8, "physical preflight/final failure")
+    exact_keys(v["initial_diagnostics"], "scalar candidate", "initial diagnostics")
+    expected_reason = CONTROL_REASONS.get(m["family"])
+    for role, requested in [("scalar", "scalar"), ("candidate", m["candidate"])]:
+        d = v["initial_diagnostics"][role]
+        exact_keys(d, "requested selected fallback", "initial build diagnostic")
+        require(d["requested"] == requested and d["selected"] in ("scalar", "fractional") and
+                (d["fallback"] is None or d["fallback"] in FALLBACK_REASONS), "initial strategy/fallback")
+        if requested == "scalar":
+            require(d["selected"] == "scalar" and d["fallback"] is None, "initial scalar report")
+        if expected_reason and role == "candidate":
+            require(d["selected"] == "scalar", "initial control selection")
+            if requested == "fractional":
+                require(d["fallback"] == expected_reason, "initial control fallback reason")
     require(type(data["records"]) is list and len(data["records"]) == 50, "incomplete paired roster")
     ratios = []; counts = {"scalar": 0, m["candidate"]: 0}; measured = []
     cursor = 0
@@ -111,7 +127,7 @@ def analyze_case(data, expected=None):
                 require(r["phase"] == phase and integer(r["sample_index"]) and r["sample_index"] == i and integer(r["order"]) and r["order"] == at, "phase/index/ABBA order")
                 require(r["strategy"] == r["requested"] == strategy, "strategy mixing")
                 require(r["selected"] in ("scalar", "fractional") and (strategy != "scalar" or r["selected"] == "scalar"), "selected strategy")
-                reasons = {"uncertified_geometry", "fractional_boundary", "image_domain", "grid_cap", "stencil_cap", "work_cap", "memory_cap", "all_bins", "candidate_cost"}
+                reasons = FALLBACK_REASONS
                 require(r["fallback"] is None or r["fallback"] in reasons, "fallback")
                 require(r["fallback"] is None or r["selected"] == "scalar", "fallback selected fractional")
                 for key in ["rebuild_count", "candidate_checks", "n_pairs", "requested_bytes", "retained_bytes", "allocation_count", "block_steps", "elapsed_ns"]:
@@ -127,6 +143,13 @@ def analyze_case(data, expected=None):
                     require(set(r["selected_counts"]) <= {"scalar"} and not r["fallback_counts"] and r["fallback"] is None, "scalar report")
                 if r["rebuild_count"] == 0:
                     require(r["candidate_checks"] == 0 and r["requested_bytes"] == 0, "cached report counted twice")
+                if expected_reason and strategy == m["candidate"]:
+                    require(r["selected"] == "scalar", "control must select scalar")
+                    if strategy == "fractional":
+                        require(r["fallback"] == expected_reason, "control last fallback reason")
+                        if r["rebuild_count"]:
+                            require(r["selected_counts"] == {"scalar": r["rebuild_count"]} and
+                                    r["fallback_counts"] == {expected_reason: r["rebuild_count"]}, "every new control build must have expected reason")
                 require(r["pair_equal"] is True and r["physics_passed"] is True, "pair/physics parity")
                 # Binary enforces atol+rtol for each actual component; these are
                 # maxima of |a-b|/(1+max(|a|,|b|)), so this independent guard is meaningful.
@@ -142,7 +165,9 @@ def analyze_case(data, expected=None):
     even = statistics.median(ratios[::2]); odd = statistics.median(ratios[1::2])
     drift = abs(statistics.median(ratios[:10]) / statistics.median(ratios[10:]) - 1)
     status = "no_gain"
-    if m["mode"] == "step" and m["skin"] == 0.3 and min(counts.values()) < 2:
+    if expected_reason and m["candidate"] == "fractional" and counts["fractional"] == 0:
+        status = "inconclusive_control_no_measured_builds"
+    elif m["mode"] == "step" and m["skin"] == 0.3 and min(counts.values()) < 2:
         status = "inconclusive_rebuilds"
     elif abs(even / odd - 1) > 0.10 or drift > 0.10 or interval[1] - interval[0] > 0.10 * median:
         status = "inconclusive_order_or_noise"
@@ -155,6 +180,10 @@ def analyze_case(data, expected=None):
                 bootstrap_samples=10000, bootstrap_seed=SEED, measured_rebuilds=counts,
                 order_medians=[even, odd], first_last_ratio_drift=drift,
                 fallback_overhead_required=fallback_regime, fallback_overhead_ok=fallback_overhead_ok,
+                control_expected_reason=expected_reason,
+                control_fallback_coverage=bool(expected_reason and m["candidate"] == "fractional" and counts["fractional"] > 0),
+                control_scope=("auto_scalar_dispatch_only" if m["candidate"] == "auto" else
+                               "forced_fractional_fallback" if expected_reason else "not_control"),
                 absolute_ns={s: [p[s]["elapsed_ns"] for p in measured] for s in counts})
 
 
@@ -187,6 +216,28 @@ def sha(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
 
+def make_control_snapshot(family):
+    d = make_snapshot(8 if family != "basis_change" else 256, "moderate")
+    d.update(case_id=family, family=family)
+    if family == "grid_cap":
+        d["basis"] = [[1000., 0., 0.], [0.2, 1000., 0.], [0.1, 0.15, 1000.]]
+        d["generation"]["density"] = 8 / 1000**3
+    elif family == "boundary":
+        d["basis"] = [[32., 0., 0.], [6.4, 32., 0.], [3.2, 4.8, 32.]]
+        d["generation"]["density"] = 8 / 32**3
+        anchor = [(d["basis"][0][k]*0.5 + d["basis"][1][k]*0.5) + d["basis"][2][k]*0.5 for k in range(3)]
+        d["positions"] = [[0., 0., 0.]] + [[anchor[k] + 1.4*((i >> k) & 1) for k in range(3)] for i in range(1, 8)]
+        raw = [[0.05*(2*((i*1664525+(k+1)*1013904223+SEED) % 65536)/65535-1) for k in range(3)] for i in range(1, 8)]
+        mean = [sum(v[k] for v in raw)/7 for k in range(3)]
+        d["velocities"] = [[0., 0., 0.]] + [[v[k]-mean[k] for k in range(3)] for v in raw]
+    elif family == "basis_change":
+        d["cell_after"] = [row[:] for row in d["basis"]]
+        d["cell_after"][1][0] = 0.21 * d["basis"][0][0]
+    else:
+        raise DataError("unknown separate control")
+    return d
+
+
 def source_identity():
     # Actual bytes, including uncommitted edits. Docs/evidence do not change code identity.
     names = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
@@ -214,18 +265,7 @@ def generate(output, binary):
             cases.append(make_snapshot(n, family))
     # Separate fallback and full-basis cache-invalidation controls. No selector tuning.
     for family in ["grid_cap", "boundary", "basis_change"]:
-        d = make_snapshot(8 if family != "basis_change" else 256, "moderate")
-        d.update(case_id=family, family=family)
-        if family == "grid_cap":
-            d["basis"] = [[1000., 0., 0.], [0.2, 1000., 0.], [0.1, 0.15, 1000.]]
-            d["generation"]["density"] = 8 / 1000**3
-            # Keep the serialized positions: sparse control with interacting pairs.
-        elif family == "boundary":
-            d["positions"][0] = [0., 0., 0.]
-        else:
-            d["cell_after"] = [row[:] for row in d["basis"]]
-            d["cell_after"][1][0] = 0.21 * d["basis"][0][0]
-        cases.append(d)
+        cases.append(make_control_snapshot(family))
     snapshots = []
     for d in cases:
         path = output/(d["case_id"] + ".snapshot.json")
@@ -237,6 +277,7 @@ def generate(output, binary):
                     host=platform.platform(), protocol=PROTOCOL, physics=PHYSICS, snapshots=snapshots,
                     skins=[0., 0.3], threads=[1, 4], modes=["rebuild", "step"],
                     candidate="fractional", case_cap_seconds=600, campaign_cap_seconds=7200,
+                    control_expected_fallbacks=CONTROL_REASONS,
                     bootstrap_samples=10000, bootstrap_seed=SEED,
                     scope="G4 preparation only; no model/tool-engine parity claim")
     write_new(output/"manifest.json", manifest)
@@ -250,7 +291,8 @@ def roster(manifest):
 
 
 def validate_manifest(m):
-    exact_keys(m, "schema_version status base_rev source_sha256 binary_sha256 binary host protocol physics snapshots skins threads modes candidate case_cap_seconds campaign_cap_seconds bootstrap_samples bootstrap_seed scope", "manifest")
+    exact_keys(m, "schema_version status base_rev source_sha256 binary_sha256 binary host protocol physics snapshots skins threads modes candidate case_cap_seconds campaign_cap_seconds bootstrap_samples bootstrap_seed scope control_expected_fallbacks", "manifest")
+    require(m["control_expected_fallbacks"] == CONTROL_REASONS, "fixed control fallback contract")
     require(type(m["schema_version"]) is int and m["schema_version"] == 1 and m["status"] == "generated_not_evaluated", "manifest schema/status")
     for key, width in [("base_rev", 40), ("source_sha256", 64), ("binary_sha256", 64)]:
         require(type(m[key]) is str and len(m[key]) == width and all(c in "0123456789abcdef" for c in m[key]), "manifest " + key)

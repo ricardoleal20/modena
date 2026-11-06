@@ -424,6 +424,45 @@ fn compare(a: &Replica, b: &Replica) -> Result<Errors> {
     })
 }
 
+fn expected_control_reason(family: &str) -> Option<modena_core::NeighborBuildFallbackReason> {
+    use modena_core::NeighborBuildFallbackReason::{FractionalBoundary, GridCap};
+    match family {
+        "boundary" => Some(FractionalBoundary),
+        "grid_cap" => Some(GridCap),
+        _ => None,
+    }
+}
+
+fn initial_diagnostic(r: &Replica, requested: &str) -> Result<Value> {
+    let d = r
+        .neighbors
+        .triclinic_build_diagnostics()
+        .ok_or("missing initial build diagnostics")?;
+    Ok(
+        json!({"requested":requested,"selected":strategy_name(d.selected),"fallback":d.fallback.map(fallback_name)}),
+    )
+}
+
+fn validate_control_initial(r: &Replica, family: &str, requested: &str) -> Result<()> {
+    if let Some(expected) = expected_control_reason(family) {
+        let d = r
+            .neighbors
+            .triclinic_build_diagnostics()
+            .ok_or("missing control initial diagnostics")?;
+        check(
+            d.selected == NeighborBuildStrategy::Scalar,
+            "control initial selection must be scalar",
+        )?;
+        if requested == "fractional" {
+            check(
+                d.fallback == Some(expected),
+                "control initial fallback reason mismatch",
+            )?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Default)]
 struct Counters {
     elapsed: u128,
@@ -437,6 +476,30 @@ struct Counters {
     last_selected: Option<NeighborBuildStrategy>,
     last_fallback: Option<&'static str>,
     n_pairs: usize,
+}
+fn validate_control_counts(c: &Counters, family: &str, requested: &str) -> Result<()> {
+    if let Some(expected) = expected_control_reason(family) {
+        // Zero relevant builds is analyzed as inconclusive, never coverage.
+        if c.rebuilds == 0 {
+            return Ok(());
+        }
+        check(
+            c.last_selected == Some(NeighborBuildStrategy::Scalar) && c.selected == [c.rebuilds, 0],
+            "every control new build must select scalar",
+        )?;
+        if requested == "fractional" {
+            let expected = fallback_name(expected);
+            check(
+                c.last_fallback == Some(expected)
+                    && c.fallback.get(expected) == Some(&c.rebuilds)
+                    && c.fallback
+                        .iter()
+                        .all(|(&reason, &count)| count == 0 || reason == expected),
+                "every control new build must have expected fallback reason",
+            )?;
+        }
+    }
+    Ok(())
 }
 fn account(r: &Replica, before: usize, c: &mut Counters) -> Result<()> {
     let delta = r
@@ -671,7 +734,10 @@ fn execute(args: &Args, document: &mut Value) -> Result<()> {
         let requested = if args.strategy=="paired" { args.candidate.as_str() } else { args.strategy.as_str() };
         let mut a = Replica::new(&s.system,"scalar",args.skin)?;
         let mut b = Replica::new(&s.system,requested,args.skin)?;
+        document["validation"] = json!({"initial":false,"final":false,"minimum_distance":minimum,"minimum_cutoff_margin":margin,
+            "initial_diagnostics":{"scalar":initial_diagnostic(&a,"scalar")?,"candidate":initial_diagnostic(&b,requested)?}});
         compare(&a,&b)?;
+        validate_control_initial(&b,&s.family,requested)?;
         if let Some(after) = s.cell_after {
             let mut changed = s.system.clone(); changed.box_size=after;
             let (d,m)=preflight(&changed,args.skin,start)?; minimum=minimum.min(d); margin=margin.min(m);
@@ -679,7 +745,9 @@ fn execute(args: &Args, document: &mut Value) -> Result<()> {
             let cb=Replica::new(&changed,requested,args.skin)?;
             compare(&ca,&cb)?;
         }
-        document["validation"] = json!({"initial":true,"final":false,"minimum_distance":minimum,"minimum_cutoff_margin":margin});
+        document["validation"]["initial"]=json!(true);
+        document["validation"]["minimum_distance"]=json!(minimum);
+        document["validation"]["minimum_cutoff_margin"]=json!(margin);
         let records = document["records"].as_array_mut().ok_or("records")?;
         records.reserve_exact(50);
         for (phase,count) in [("warmup",args.warmup_blocks),("measured",args.sample_blocks)] {
@@ -700,6 +768,7 @@ fn execute(args: &Args, document: &mut Value) -> Result<()> {
                     if i%2==0 { records.push(ra); records.push(rb); } else { records.push(rb); records.push(ra); }
                 } else { records.push(rb); }
                 comparison?;
+                validate_control_counts(&cb,&s.family,requested)?;
             }
         }
         compare(&a,&b)?;
@@ -784,5 +853,90 @@ mod tests {
         assert!(compare(&a, &b).is_ok());
         b.system.forces[0] += 1e-3;
         assert!(compare(&a, &b).is_err());
+    }
+
+    fn control_fixture(family: &str) -> Snapshot {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let code = format!("import runpy,json; m=runpy.run_path('bench/triclinic_neighbors.py'); print(json.dumps(m['make_control_snapshot']({family:?})))");
+        let raw = Command::new("python3")
+            .current_dir(root)
+            .args(["-c", &code])
+            .output()
+            .unwrap();
+        assert!(
+            raw.status.success(),
+            "{}",
+            String::from_utf8_lossy(&raw.stderr)
+        );
+        snapshot(&raw.stdout).unwrap()
+    }
+
+    #[test]
+    fn wrong_real_fallback_is_rejected_for_named_control() {
+        let mut s = System::new(SimBox::triclinic([
+            Vec3::new(3., 0., 0.),
+            Vec3::new(0.6, 3., 0.),
+            Vec3::new(0.3, 0.45, 3.),
+        ]));
+        s.resize(2);
+        s.set_pos(1, Vec3::new(1.1, 0., 0.));
+        let r = Replica::new(&s, "fractional", 0.).unwrap();
+        assert_eq!(
+            r.neighbors.triclinic_build_diagnostics().unwrap().fallback,
+            Some(modena_core::NeighborBuildFallbackReason::AllBins)
+        );
+        assert!(validate_control_initial(&r, "boundary", "fractional").is_err());
+        assert!(validate_control_initial(&r, "grid_cap", "fractional").is_err());
+    }
+
+    #[test]
+    fn real_controls_keep_expected_reason_through_continuous_steps() {
+        for family in ["boundary", "grid_cap"] {
+            let s = control_fixture(family);
+            for skin in [0., 0.3] {
+                let mut a = Replica::new(&s.system, "scalar", skin).unwrap();
+                let mut b = Replica::new(&s.system, "fractional", skin).unwrap();
+                validate_control_initial(&b, family, "fractional").unwrap();
+                let expected = if family == "boundary" {
+                    modena_core::NeighborBuildFallbackReason::FractionalBoundary
+                } else {
+                    modena_core::NeighborBuildFallbackReason::GridCap
+                };
+                assert_eq!(
+                    b.neighbors.triclinic_build_diagnostics().unwrap().fallback,
+                    Some(expected)
+                );
+                assert_eq!(
+                    b.neighbors.triclinic_build_diagnostics().unwrap().selected,
+                    NeighborBuildStrategy::Scalar
+                );
+                compare(&a, &b).unwrap();
+                let mut new_builds = 0;
+                for _ in 0..250 {
+                    let before = b.neighbors.rebuild_count();
+                    a.advance(0.0005).unwrap();
+                    b.advance(0.0005).unwrap();
+                    compare(&a, &b).unwrap();
+                    if b.neighbors.rebuild_count() > before {
+                        new_builds += 1;
+                        let d = b.neighbors.triclinic_build_diagnostics().unwrap();
+                        assert_eq!(d.selected, NeighborBuildStrategy::Scalar);
+                        assert_eq!(d.fallback, Some(expected));
+                    }
+                    if family == "boundary" {
+                        assert_eq!(&b.system.positions[..3], &[0., 0., 0.]);
+                        assert_eq!(&b.system.velocities[..3], &[0., 0., 0.]);
+                        assert_eq!(&b.system.forces[..3], &[0., 0., 0.]);
+                    }
+                }
+                if skin == 0. {
+                    assert_eq!(new_builds, 250);
+                }
+            }
+        }
     }
 }

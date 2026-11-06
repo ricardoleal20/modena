@@ -10,7 +10,9 @@
 
 **Tech Stack:** Rust 2021/MSRV 1.90, existing thiserror/serde_json/Rayon, official ASE reference, isolated Python 3.12.8 + pinned official MACE 0.3.13/PyTorch CPU float64.
 
-**Spec:** `docs/superpowers/specs/2026-11-06-b04-periodic-neighbors-design.md`, to be copied from `/private/tmp/modena-b04-spec-ready.md` only after final B03; temporary draft companion is `/private/tmp/modena-b04-plan-ready.md`.
+**Spec:** `docs/superpowers/specs/2026-11-06-b04-periodic-neighbors-design.md`.
+
+**Execution outcome (Task8):** G1/G2/G3 approved; G4 not passed/incomplete. Auto remains Scalar. The once-only campaign completed 80 cases, timed out one at 600s and retained 35 unstarted cases. Required natural-skin and small/fallback gates remain unresolved/unsatisfied. See `docs/B04_VERIFICATION.md` for the frozen identities, individual outcomes and final checks. Task8 and whole-branch review remain controller-owned acceptance steps.
 
 ## Global Constraints
 
@@ -526,13 +528,13 @@ python bench/triclinic_neighbors.py --output-dir PATH --analyze-only
 
 JSON records include schema_version=1, base_rev, binary_sha256, snapshot_sha256, model/precision, host/compiler/threads, strategy/requested/selected/fallback, mode, skin, sample_index, order, block_steps, elapsed_ns, rebuild_count, candidate_checks, n_pairs, requested/retained_bytes, allocation_count, max_energy_error,max_force_error,virial_error. Timing schema rejects missing/nonfinite/negative values, snapshot/revision mismatch, strategy mixing and insufficient paired samples.
 
-- [ ] Add meaningful parser/statistical tests before benchmark wiring: reject mismatched snapshot/revision, missing scalar counterpart, force parity failures, unavailable sample, thermal/noise inconclusiveness, and verify known paired ratios/seeded bootstrap on a fixed synthetic timing table. These are timing arithmetic tests, not scientific model substitutes.
-- [ ] Implement deterministic snapshot generation. For atom i with integer grid indices x,y,z on side M=ceil(cuberoot(N)), use fractional coordinate `(axis_index+.31+jitter(i,k))/M`, where `jitter=.06*((i*1103515245+(k+1)*12345+20261106)%65536/65535-.5)`. Compute hash arithmetic in u64 with declared modulo, serialize exact resulting f64 positions. Initial velocity component uses `.05*(2*((i*1664525+(k+1)*1013904223+20261106)%65536)/65535-1)`, then subtract component mean in atom order. Store resulting vectors; no regeneration by strategy.
+- [x] Add meaningful parser/statistical tests before benchmark wiring: reject mismatched snapshot/revision, missing scalar counterpart, force parity failures, unavailable sample, thermal/noise inconclusiveness, and verify known paired ratios/seeded bootstrap on a fixed synthetic timing table. These are timing arithmetic tests, not scientific model substitutes.
+- [x] Implement deterministic snapshot generation. For atom i with integer grid indices x,y,z on side M=ceil(cuberoot(N)), use fractional coordinate `(axis_index+.31+jitter(i,k))/M`, where `jitter=.06*((i*1103515245+(k+1)*12345+20261106)%65536/65535-.5)`. Compute hash arithmetic in u64 with declared modulo, serialize exact resulting f64 positions. Initial velocity component uses `.05*(2*((i*1664525+(k+1)*1013904223+20261106)%65536)/65535-1)`, then subtract component mean in atom order. Store resulting vectors; no regeneration by strategy.
 
 Use spec N/shape/skin/thread ladder and LJ epsilon=sigma=mass=1, force cutoff=2.5, no tail correction, VelocityVerlet dt=.0005. Call the same existing PairForceModel/Integrator construction APIs identified in Task 0; retain actual default cutoff shift treatment identically in both strategies and record it. If post-B03 APIs require additional physical parameters, fix/record them before the first numerical run, not between strategies.
 
-- [ ] Implement paired execution in one release build with scalar/candidate controls differing only strategy. The harness invokes `--strategy paired --candidate fractional` before any selector exists and `--candidate auto` to validate a promoted selector. The binary owns both replicas, alternates AB/BA by sample_index, initializes both from the identical serialized state, and evolves each continuously between paired blocks. Warmup 5 blocks, 20 paired blocks, 10 steps each; rebuild mode times the entire forced build, step mode times complete repeated steps. Include cell changes as separate forced rebuild cases. Use monotonic clocks and retain raw nanoseconds; no generation/parsing inside timed kernels. Enforce per-case wall-time cap 600 seconds and total campaign cap 7200 seconds; cap aborts are incomplete evidence, not passes. Natural skin=.3 amortized claims require at least two measured rebuilds per replica; if absent, report that regime inconclusive without extending the protocol after results. Count all conversion/grid/sort/reduction/fallback costs. No timing of an unvalidated strategy.
-- [ ] Run small harness tests and compile the named binary once:
+- [x] Implement paired execution in one release build with scalar/candidate controls differing only strategy. The harness invokes `--strategy paired --candidate fractional` before any selector exists and `--candidate auto` to validate a promoted selector. The binary owns both replicas, alternates AB/BA by sample_index, initializes both from the identical serialized state, and evolves each continuously between paired blocks. Warmup 5 blocks, 20 paired blocks, 10 steps each; rebuild mode times the entire forced build, step mode times complete repeated steps. Include cell changes as separate forced rebuild cases. Use monotonic clocks and retain raw nanoseconds; no generation/parsing inside timed kernels. Enforce per-case wall-time cap 600 seconds and total campaign cap 7200 seconds; cap aborts are incomplete evidence, not passes. Natural skin=.3 amortized claims require at least two measured rebuilds per replica; if absent, report that regime inconclusive without extending the protocol after results. Count all conversion/grid/sort/reduction/fallback costs. No timing of an unvalidated strategy.
+- [x] Run small harness tests and compile the named binary once:
 
 ```sh
 rtk proxy python3 -m unittest discover -s bench/tests -p test_triclinic_neighbors.py
@@ -541,7 +543,7 @@ rtk cargo build --locked --release -p modena-bench --features neighbor-diagnosti
 
 Do not start performance trials if any of G1-G3 is pending or the CPU lease is unavailable. Generate-only can prepare input bytes outside the timed run once authorized.
 
-- [ ] Commit the harness and predeclared manifest contract:
+- [x] Commit the harness and predeclared manifest contract:
 
 ```sh
 rtk git add crates/modena-bench/Cargo.toml crates/modena-bench/src/bin/triclinic_neighbors.rs bench/triclinic_neighbors.py bench/tests/test_triclinic_neighbors.py docs/B04_VERIFICATION.md
@@ -556,7 +558,7 @@ rtk git commit -m ':white_check_mark: Add: paired triclinic neighbor cost campai
 
 **Consumes:** passed G1-G3, preregistered manifests, released CPU lease, one release binary. **Produces:** explicit G4 decision and honest B04 acceptance scope.
 
-- [ ] Execute the frozen campaign once, preserving all samples and failures:
+- [x] Execute the frozen campaign once, preserving all samples and failures:
 
 ```sh
 rtk proxy python3 bench/triclinic_neighbors.py --binary target/release/triclinic_neighbors --output-dir target/b04-triclinic-campaign --generate-only
@@ -566,17 +568,17 @@ rtk proxy python3 bench/triclinic_neighbors.py --output-dir target/b04-triclinic
 
 Analyze median paired optimized/scalar ratio and seeded 10_000-resample 95% bootstrap interval. Moderate-tilt N>=2048 cases at every enabled thread/skin setting require median<=.95 and interval upper<1; small/fallback cases require <=5% median overhead. Retain full-rebuild results, memory/counters and cases that lose.
 
-- [ ] If criteria fail, leave Auto=Scalar and record G4 failed/pending with actual reasons. Do not manufacture acceptance by narrowing the campaign after results. If criteria pass, add a selector restricted to measured N>=2048, shape/cost eligibility and measured hardware; record exact host/platform predicate and require scalar on unknown hosts. Re-run selector decisions against saved case manifests and small correctness regressions. Changing the selector or compiled production branch requires a fresh performance validation of that exact binary; do not reuse pre-selector timings as if identical.
-- [ ] Write API docs showing borrowed graph construction, integer convention, all-image/self policy, budgets/errors, graph-only partial PBC and rebuilding. Write verification with every actual command/revision/hash/tolerance/outcome; label initialized MACE as software parity, preserve FAIR-Chem/B10 separation. No global statement that all FAIR-Chem/MACE/NequIP graph contracts match.
-- [ ] Run required repository checks once after final changes, including full core suite, meaningful graph/triclinic regressions, explicit official gates and harness tests. Use the commands actually required by the post-B03 repository; if an unrelated baseline failure occurs, record it rather than mislabel the change complete. Do not repeatedly broaden tests after all required checks pass without a new change/concern.
-- [ ] Commit the measured decision/evidence:
+- [x] If criteria fail, leave Auto=Scalar and record G4 failed/pending with actual reasons. Do not manufacture acceptance by narrowing the campaign after results. If criteria pass, add a selector restricted to measured N>=2048, shape/cost eligibility and measured hardware; record exact host/platform predicate and require scalar on unknown hosts. Re-run selector decisions against saved case manifests and small correctness regressions. Changing the selector or compiled production branch requires a fresh performance validation of that exact binary; do not reuse pre-selector timings as if identical.
+- [x] Write API docs showing borrowed graph construction, integer convention, all-image/self policy, budgets/errors, graph-only partial PBC and rebuilding. Write verification with every actual command/revision/hash/tolerance/outcome; label initialized MACE as software parity, preserve FAIR-Chem/B10 separation. No global statement that all FAIR-Chem/MACE/NequIP graph contracts match.
+- [x] Run required repository checks once after final changes, including full core suite, meaningful graph/triclinic regressions, explicit official gates and harness tests. Use the commands actually required by the post-B03 repository; if an unrelated baseline failure occurs, record it rather than mislabel the change complete. Do not repeatedly broaden tests after all required checks pass without a new change/concern.
+- [x] Commit the measured decision/evidence:
 
 ```sh
 rtk git add crates/modena-core/src/neighbor/triclinic.rs docs/B04_PERIODIC_GRAPHS.md docs/B04_VERIFICATION.md docs/superpowers/plans/2026-11-06-b04-periodic-neighbors.md
 rtk git commit -m ':memo: Document: B04 graph parity and triclinic cost decision'
 ```
 
-**Final gate:** report G1/G2/G3/G4 individually. B04 optimization is not accepted when its required performance gate is unresolved. A correct graph with unprofitable stencil may remain useful, with scalar default and incomplete broader optimization acceptance clearly stated. No implementation or scientific acceptance is claimed by these draft documents.
+**Final gate:** report G1/G2/G3/G4 individually. B04 optimization is not accepted when its required performance gate is unresolved. A correct graph with unprofitable stencil may remain useful, with scalar default and incomplete broader optimization acceptance clearly stated. Actual scoped G1–G3 evidence and the unaccepted G4 outcome are recorded in verification; no broader optimization or trained-chemical acceptance is claimed.
 
 ## Self-review and remaining execution gates
 

@@ -8,8 +8,9 @@ B03 timing/audits finished and its CPU lease was released before this work.
 After Tasks1–4 review, unpublished B04 was synchronized onto delivered B03
 `12e4ab13efd2aff2d3693b7fc7fb4f50af12668f`. Every B04 source byte and commit
 patch matched its pre-sync identity; the mapping and proof are recorded below.
-B04 remains unpublished. G1–G3 have independent approval; G4 and final
-whole-branch review/delivery remain pending.
+B04 remains unpublished. G1–G3 have independent approval. G4 is not passed
+(incomplete frozen campaign); Auto remains Scalar. Final whole-branch
+review/delivery remain pending.
 
 Controller preflight confirmed native managed worktree creation, branch prefix
 `ricardo/`, source-tree equivalence and the actual Vec3 dot/wrap operation
@@ -20,7 +21,7 @@ orders used by the proof. Subsequent G1 implementation evidence is recorded belo
 | G1 | passed; Task 3 independently approved through ce04b4f | Fixed-cube/resource tests and explicitly executed official ASE exact tuples |
 | G2 | passed; Task 4 independently approved at f45be2d, mapped to2aa3960 | Actual initialized official MACE graph/E/F parity |
 | G3 | passed; Task 6 independently approved at04343c1 | Certified stencil, scalar/cube pairs, E/F/W, skin/bounded and cap checks |
-| G4 | pending | Paired complete-step benefit and fallback overhead |
+| G4 | not passed / incomplete; Auto=Scalar | Natural-rebuild/overhead requirements unresolved; one 600s timeout, 35 later unstarted cases |
 
 Source epochs, commands, numerical tolerances, package/model hashes and measured
 results will be appended when actually executed. Prepared source contracts do
@@ -597,7 +598,7 @@ hashes agree exactly with the previous prepared collection.
 
 Boundary control: N=8, basis columns (32,0,0), (6.4,32,0), (3.2,4.8,32), actual
 density 0.000244140625. Atom0 is isolated at (0,0,0) with v=(0,0,0). Atoms1..7
-are the seven nonzero-bit corners of a Cartesian cube with spacing1.4 anchored
+are the seven nonzero-bit corners of a Cartesian cube with spacing 1.4 anchored
 at H*(.5,.5,.5)=(20.8,18.4,16); x/y/z correspond to bits0/1/2. Initial cluster
 velocities use the same .05 formula for i=1..7, with their own seven-atom
 component means removed in atom order. Exact f64 coordinates and velocities
@@ -642,3 +643,365 @@ The new fifteen-snapshot collection is generated only; the large ladder is
 not numerically evaluated. Focused Clippy/rustfmt and release compilation pass.
 All smoke durations are excluded from G4 performance acceptance. No CPU lease,
 selector promotion or performance run is claimed by this correction.
+
+
+## G4 — frozen campaign decision, 2026-11-06
+
+**Not passed / incomplete; Auto remains Scalar.** The first accepted campaign
+ran once at clean `f56f28854865e8068402eebf7a0548f60da8ecfd` with the approved
+Task7/I1 controls. No selector or other production source changed. The required
+moderate N>=2048 skin=.3 step regimes each observed zero measured rebuilds per
+replica, below the fixed requirement of two. They remain inconclusive; their
+trajectories were not extended. No narrower post-hoc promotion is made.
+
+The driver finished with exit 1 after 6344.874002933502 seconds. Eighty cases
+completed; `unreduced-8192-rebuild-skin0-t1` hit the fixed 600-second parent
+timeout and retained an empty result file plus its child failure receipt.
+The fail-closed driver then stopped. Thirty-five later cases were not started;
+all 36 invalid/incomplete rows remain in the 116-case analysis. The 7200-second
+total cap was not reached. The boundary/grid-cap and basis-change campaign
+controls were among the unstarted cases, so their performance/reason coverage
+is unavailable. Earlier Task7 correctness smokes remain a separate epoch.
+
+| Analysis status | Cases |
+| --- | --- |
+| rebuild_gain_only | 26 |
+| inconclusive_order_or_noise | 17 |
+| no_gain | 12 |
+| inconclusive_rebuilds | 12 |
+| eligible_gain | 13 |
+| invalid | 36 |
+
+All 80 completed cases (4,000 raw warmup/measured records) passed exact pair
+comparison and the specified E/F/W/position/velocity component checks; all five
+maximum normalized errors are zero. This claim excludes the timed-out and
+unstarted cases. Initial overlap/cutoff-margin checks, source/binary/input
+identity, AB/BA order, cadence and counter guards passed for every accepted
+case. The controller independently audited the 4,000 records before freezing
+the data and releasing the team CPU lease.
+
+### Required moderate full-step regimes
+
+Ratios are paired forced-request/scalar block medians from the instrumented
+binary, not ratios of independently pooled timings. The fixed 10,000-resample
+bootstrap uses seed 20261106 and order statistics 249/9749. Raw full precision
+governs eligibility; values below are rounded for display.
+
+| Full-step case | Paired median ratio | 95% bootstrap CI | Measured rebuilds S/C | Outcome |
+| --- | --- | --- | --- | --- |
+| moderate-2048-step-skin0-t1 | 0.24017377 | [0.23609382, 0.24586326] | 200/200 | eligible_gain |
+| moderate-2048-step-skin0-t4 | 0.24147685 | [0.23692591, 0.24456883] | 200/200 | eligible_gain |
+| moderate-2048-step-skin0.3-t1 | 0.99344971 | [0.99265936, 0.99429888] | 0/0 | inconclusive_rebuilds |
+| moderate-2048-step-skin0.3-t4 | 0.99978947 | [0.99953754, 1.0001539] | 0/0 | inconclusive_rebuilds |
+| moderate-8192-step-skin0-t1 | 0.072528684 | [0.072351043, 0.072616933] | 200/200 | eligible_gain |
+| moderate-8192-step-skin0-t4 | 0.065565116 | [0.065368546, 0.065785975] | 200/200 | eligible_gain |
+| moderate-8192-step-skin0.3-t1 | 1.0011997 | [0.9978052, 1.0020715] | 0/0 | inconclusive_rebuilds |
+| moderate-8192-step-skin0.3-t4 | 0.99869308 | [0.99826903, 0.99999206] | 0/0 | inconclusive_rebuilds |
+
+The zero-skin rows satisfy the numerical gain criterion for this executable
+and host. That does not close G4: all four required moderate natural-skin rows
+are inconclusive. Seventeen other rows fail the fixed order/drift/CI-width
+noise screens and remain inconclusive; no thermal cause is assigned. Forced
+rebuild gains are labeled separately and cannot establish full-step acceptance.
+
+The small/fallback requirement is also unresolved/unsatisfied. Only six of the
+sixteen completed N=256 step rows satisfy the scalar-selection/<=5% overhead
+rule. The other ten include noise, absent rebuilds and actual fractional
+selection in elongated cases; favorable timing does not satisfy required
+scalar selection. The declared fallback controls were not reached. No losing,
+noisy, missing or unexpected-selection row was filtered out. Complete rebuild
+and step ratios, intervals, absolute durations and every status remain in the
+full analysis and the detailed Task8 report.
+
+### Counter scopes and measured platform
+
+Across the 3,200 accepted measured records, candidate checks range 0..335,503,360,
+temporary neighbor requested bytes 0..132,160, process-live requested heap
+562,525..22,066,359 bytes and timed allocation attempts 0..20 per block.
+New-build selected counts across both roles are Scalar 18,240 and Fractional 7,380;
+actual candidate fallback counts are AllBins 3,618 and FractionalBoundary 1,812.
+These incidental ladder fallbacks do not replace the unrun declared controls.
+
+`allocation_count` counts process-wide Rust alloc/alloc_zeroed/realloc attempts
+inside timers, including failures. `retained_bytes` includes BOTH replicas,
+pool, scratch, benchmark maps and prior records; it is neither per-strategy
+ownership nor usable size or OS RSS. `requested_bytes` covers temporary neighbor
+workspace only, and zero on cached/scalar records is not zero process memory.
+Both arms use identical relaxed-atomic counting instrumentation. Its overhead
+is unquantified; uninstrumented production throughput is not established.
+
+Host: Mac15,6, Apple M3 Pro, 11 physical/logical cores, 19,327,352,832 bytes RAM;
+macOS 26.6.2 arm64 (Darwin 25.6.0). The native executable is Mach-O arm64.
+Compiler: `rustc 1.97.1 (8bab26f4f 2026-07-14)`. Cargo release profile is opt3,
+thin LTO, one codegen unit, debug=false; both arms use `neighbor-diagnostics`.
+The dedicated target directory preserved prior binaries. Build receipts record
+the actual B04 revision/source/compiler variables and selected environment;
+RUSTFLAGS, encoded flags, compiler wrappers, target and release-profile overrides
+were absent. No applicable Cargo configuration file was found during the
+provenance inspection. The controller reserved team CPU/write access; no user
+process was stopped and the lease marker is not a machine-level lock.
+
+### Frozen identities and local archive
+
+| Artifact | SHA256 |
+| --- | --- |
+| Source identity (tracked Rust/Cargo and harness bytes) | `59f1544ad6351c8330bbbf66faaeefd3cb9228cf63eb18ea1121c246667f1e21` |
+| Named release executable | `24ab6722a6fe4578907bedcdb5cffdf1405784bcda47673f09be0332791e4f91` |
+| Campaign manifest (15 snapshot hashes /116 cases) | `8908fc21bc294de14a97e5a470ab3bcc6a341d25e6d4c5b1b3d56e9a202dbc9c` |
+| Integrated analysis | `8a6117f056806269a782926fc9ceaac8fa2af3d585a75adc4b3975af3954fc34` |
+| Controller freeze manifest | `d73e1e4d68f994d2a162789ee57e72aa0864a9b99f251a670d90a3da7da7b3bc` |
+| Additive raw artifact manifest | `b7080c8fdf973dfd0891c694af005c5f137b4930401f1211714f4249382db0bd` |
+| Source tar at clean f56f288 | `b7a2120d2554b623cd40372cedd04e35c6a9be825adaaa2f9f2ea89d91ab8d34` |
+| Raw/source/executable archive | `e04e877c522bbac5fd4fb1796e7a2a47ec3723ed6af0ba628198175413825159` |
+
+Stable local archive:
+`/Users/ricardoleal20/Documents/Code/Misc/modena/target/b04-evidence/task8-g4-f56f288-20261106/raw-campaign-f56f288.tar.gz`.
+Raw files remain in `target/b04-triclinic-campaign/`; receipts, independent
+controller freeze, source tar, frozen executable and additive manifests remain
+under `target/b04-evidence/task8-g4-f56f288-20261106/`. These ignored local
+artifacts are unavailable in a fresh clone. Older prepared/smoke/failed epochs
+were preserved, not overwritten or relabeled.
+
+The integrated analysis was independently repeated using `--analyze-only` on
+a byte-for-byte mirror. All numerical/status fields match; only35 missing-file
+error directory prefixes differ. The archive helper's initial full-JSON equality
+assertion failed on those expected path differences; its failed helper and both
+analyses are retained. A path-only normalization then verified exact equality.
+This correction did not change the harness, raw data, cases or timings.
+
+Actual command vectors, raw stdout/stderr, UTC starts, durations and exits are
+in numbered JSON receipts. The retained private wrappers are also archived:
+
+```sh
+rtk proxy python3 /private/tmp/b04-task8.py build
+rtk proxy python3 /private/tmp/b04-task8.py run
+rtk proxy python3 /private/tmp/b04-task8-freeze.py
+rtk proxy python3 /private/tmp/b04-task8-checks.py
+```
+
+Build invokes `cargo build --locked --release -p modena-bench --features
+neighbor-diagnostics --bin triclinic_neighbors` with actual B04 compiler
+variables and a new CARGO_TARGET_DIR. Generation/run use the dedicated Python
+driver with the frozen binary and fresh campaign directory. `--run` executes
+once; standalone analysis uses `offline-analysis/` because writes are exclusive.
+No timing restart occurred after the execution session became unavailable:
+recovery read the terminal receipt and existing analysis. The controller froze
+those files and released the lease before documentation and final checks.
+
+Task7 preparation and I1 correction are independently approved through `f56f288`;
+that approval adds no G4 acceptance. G1/G2/G3 retain their individual approved
+software scopes and historical execution epochs. G2 remains initialized MACE
+software parity only, with its disclosed dependency warnings; no FAIR-Chem
+task/checkpoint, trained chemical accuracy or B10 acceptance is added.
+The documentation commit changes revision while preserving measured source
+bytes; the retained binary's runtime revision guard remains bound to `f56f288`.
+Final whole-branch review and PR delivery remain controller-owned.
+
+## Controller decisions and costs preserved from execution
+
+These eleven decisions were made at the recorded execution stages, before
+the affected evaluation. They preserve the controller's literal ruling scope,
+rationale and costs from the private execution ledger for later public review.
+They add no performance acceptance; G4 remains not passed.
+
+1. **Independent B04 start and later B03 synchronization.** B04 numerical work
+   began in a separate checkout while B03 closed derived reporting/review,
+   because the immutable reviewed core was identical and B03's measurement
+   lease had been explicitly released. The cost was mandatory synchronization
+   of the unpublished B04 branch with final reviewed B03 before publication,
+   with source changes verified, no force-push and no unauthorized merge.
+   Only one B04 implementer could work at a time; independent B03 metadata
+   closure could not edit B04 files. The later source/patch identity and commit
+   mapping receipts above record the completed synchronization.
+
+2. **Bounded f64 geometry with explicit rejection.** The graph certifies its
+   executable f64 predicate and all-image coverage for accepted requests,
+   rejecting uncertainty instead of silently omitting images. The cost is
+   that some huge, skew or ill-conditioned finite inputs reject, and interval
+   arithmetic adds implementation cost. Search bounds never widen the final
+   physical cutoff predicate or return a truncated graph.
+
+3. **Initialized official MACE software scope.** An actual initialized official
+   MACE instance tests graph/API/math software parity because B04 is not a
+   trained-chemistry validation. The cost is that this establishes no chemical
+   accuracy or FAIR-Chem checkpoint parity. B10 still requires its own actual
+   domain, model and reference validation.
+
+4. **Unconditional tuple guards under Python optimization.** The plan's Python
+   assert snippet was replaced with an unconditional mismatch exception and
+   an optimization-enabled negative control: exact integer tuple identity
+   remains mandatory under `PYTHONOPTIMIZE`/`-O`. The cost is a small explicit
+   verifier/test divergence from the snippet and maintenance of the error path.
+   Historical ASE evidence was retained, and the changed helper received a new
+   source/evaluation epoch; no performance retiming was authorized by this fix.
+
+5. **G2 NumPy compatibility revision before evaluation.** Only NumPy 2.2.6 was
+   revised to 1.26.4 because actual matscipy 1.1.1 requires NumPy<2 and official
+   NumPy 1.26.4 supports Python 3.12. The 44-package hashed candidate and direct
+   binary dry-sync checks preceded evaluation. The cost is a different NumPy
+   ABI/arithmetic baseline requiring actual import, E/F and finite-difference
+   revalidation; no numerical comparison with the superseded, unexecuted NumPy
+   2 candidate is claimed. Failed original pins/logs remain preserved. All other
+   direct pins, model, seed, fixtures and gates stayed fixed. The published,
+   hashed python-hostlist 2.3.0 sdist build was authorized with build provenance;
+   no implicit framework/Python revision was allowed. Spec/plan/brief were
+   updated before execution; compatibility resolution itself was not G2.
+
+6. **Scoped `builtins.slice` allowlist for pinned e3nn constants.** Only
+   `builtins.slice` is temporarily allowed through
+   `torch.serialization.safe_globals` around e3nn 0.4.4 imports of its
+   hash-recorded packaged `constants.pt`; Torch 2.6's restricted weights-only
+   loader otherwise rejects that library constant. The cost is trust in the
+   pinned packaged constant/source provenance and future import compatibility
+   maintenance. Restoration of the prior allowlist was verified. Unrestricted
+   pickle loading, global `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD` and additional
+   allowed types without review were excluded. Pins/model/gates stayed fixed;
+   imports were not model acceptance. Package, constant-file SHA, source and
+   runtime receipts are retained. The audited primary API source is PyTorch
+   v2.6.0 `torch/serialization.py` (`safe_globals`); no retrieved model/checkpoint,
+   authorization or license gate was involved in this library-constant import.
+
+7. **Deterministic change-shift mutation repair.** The first nonzero shift
+   component now increases in absolute value. The original first edge
+   `[-1,0,0]` plus x=1 produced a forbidden zero self edge and nonfinite MACE
+   forces, making that control invalid rather than demonstrating model-parity
+   failure. The cost is coverage of this fixed away-from-zero mutation, not
+   arbitrary shift mutations. The first failed gate and preflight model digest
+   were retained; the replacement rule was fixed before rerun. No seed/model/
+   fixture/tolerance tuning occurred, and all three mutation classes plus
+   finite differences, repeat stability and official/native parity remained
+   mandatory.
+
+8. **Private bounded builder and orthorhombic snapshot facade.** The bounded
+   builder stays crate-private and the public snapshot facade stays
+   orthorhombic, preserving existing visibility/domain while proving actual
+   triclinic invariants. Real triclinic bounded, zero-skin, cap, failure and
+   recovery checks live in private neighbor units; integration controls use
+   the actual public orthorhombic snapshot path. The cost is coverage split
+   across unit/integration locations and no new public bounded-triclinic
+   snapshot capability.
+
+9. **Explicit elongated matrix before generation.** The elongated family
+   retains moderate off-diagonals `(.2L,.1L,.15L)` with diagonal factors
+   `(2,.5,1)`, resolving the draft's unspecified shear so all four families
+   have explicit frozen triclinic matrices. The cost is that anisotropic
+   evidence covers this one declared shape/shear, not arbitrary elongated
+   cells. This was fixed before snapshot generation/performance; determinant
+   L^3, density, N, velocities, dt, blocks, caps and criteria stayed unchanged.
+
+10. **Benchmark-local counting allocator.** Existing private capacities were
+    not replaced by fabricated estimates or exposed through a new production
+    API. Allocation count is actual timed process-wide Rust allocation and
+    reallocation attempts; retained bytes are live Rust-requested heap after
+    the block, including both replicas, pool and benchmark data; requested
+    bytes are diagnostic temporary neighbor workspace only. The cost is
+    instrumentation overhead and no per-model/per-strategy memory ownership
+    or OS-RSS attribution. These scopes were frozen/disclosed before timing,
+    with matched immutable timing/control mode/source hashes. No uninstrumented
+    production claim or zero-total-memory inference from zero temporary
+    workspace is allowed. Failed allocation attempts are included in the
+    final instrumented implementation.
+
+11. **Separate boundary recipe before accepted timing.** Only the separate
+    boundary control was corrected: N=8, moderate L=32 cell; isolated origin
+    atom 0 with zero velocity; seven mobile Cartesian cube corners, indices
+    1..7, spacing 1.4 and anchor H*(.5,.5,.5); existing velocity formula applied
+    only to that cluster, then its component means removed. The density-.8
+    ladder stayed unchanged. The reason was to preserve FractionalBoundary
+    under continuous dynamics without physical resets and avoid the earlier
+    AllBins preflight. The cost is a separate low-density control, not dense
+    production boundary-performance evidence. An unsupported recipe had to
+    stop with diagnostics; all older prepared/smoke bytes were retained.
+    Forced-fractional grid-cap/boundary controls require the intended actual
+    initial reason and every measured new build's reason, distinct from Auto
+    dispatch. A new immutable epoch was generated after the fix; no old timing
+    was relabeled. Task7 correctness checks covered this rule, while Task8's
+    later timeout left the campaign controls unrun and their G4 coverage absent.
+
+
+### Final repository checks — actual Task8 execution
+
+After the controller froze the raw campaign and released its lease, the full
+default-enabled core suite plus `neighbor-diagnostics` passed **364 tests, zero
+failures**, across 34 reported suites. It included the actual graph/triclinic,
+bounded/skin/pair-policy and compile-fail borrow regressions. Four tests were
+ignored in that main command: the three explicit official gates and one
+pre-existing configuration-builder doc example. The three official tests were
+then explicitly executed: **3 passed, zero ignored**, including 27 ASE fixtures,
+the optimized wrong-tuple control and actual initialized MACE graph/autograd/
+finite-difference/mutation guards. There were no optional `SKIP` markers in the
+core output. GPU/MPI features were not enabled or validated by these checks.
+
+Python harness: **23 passed**. Rust harness: **5 passed**. Core/harness Clippy
+with `-D warnings` and full workspace formatting passed. The API guide's actual
+Rust example passed **1/1** after binding to Cargo's exact stable library
+artifact. Its first check selected a cached Rust 1.90 rlib by modification time
+and failed E0514 against Rust 1.97.1; that failed receipt is retained. A narrow
+`cargo build --message-format=json` identified the correct artifact, followed
+only by the documentation recheck. No cargo clean, broad test repetition,
+production source change or timing rerun was performed.
+
+Native checks emitted no warning diagnostics. The historical upstream
+MACE/TorchScript annotation warnings remain disclosed and were not resolved by
+changing pins or suppressing warnings. The official driver captures helper
+stderr internally on success; absence from its success log does not establish
+that the dependency warning was removed. Existing pinned environments and
+dependency/source receipts were reused; no weights/packages were downloaded.
+Stable final checks are fresh; earlier Rust 1.90 evidence retains its own
+historical execution epoch and is not relabeled as a Task8 rerun.
+
+Unchanged thresholds: graph vectors atol=rtol=2e-12; MACE E/F atol=rtol=1e-10 and finite differences 1e-6; classical component normalization threshold 1e-10; initial cutoff margin >1e-8. No tolerance was widened.
+
+Fresh initialized-MACE state SHA256 remains `1d1a81cf8cfaa7885469757c26b82d49944cd188034ba7f5c481ad020974066e`
+(1968 parameters). Maximum native/official E error is
+5.5511151231257827e-17; maximum force
+component error is 1.717376241217039e-16;
+the nine-component central-difference error is 1.6931400725894719e-11.
+Repeat differences are zero. All three fixed mutation classes and optimized
+tuple/fractional/schema negative controls passed. The helper/fixture/lock and
+dependency provenance hashes remain explicit in receipt 11 and retained preflight
+manifests. This is scoped software parity, with no trained-chemical/B10 claim.
+
+Actual child command vectors below are rendered from the JSON receipts; every
+agent shell entrypoint used RTK, while child/runtime argv have no RTK dependency.
+Receipt directories are relative to
+`target/b04-evidence/task8-g4-f56f288-20261106/`. Each JSON retains raw output,
+exact cwd, UTC start, wall duration and exit. Receipt 17 is the preserved
+documentation artifact-selection failure; receipt 19 is its narrow passing fix.
+
+| Receipt | Actual inner argv | Exit |
+| --- | --- | --- |
+| `01-build.json` | `cargo build --locked --release -p modena-bench --features neighbor-diagnostics --bin triclinic_neighbors` | 0 |
+| `02-generate.json` | `python3 bench/triclinic_neighbors.py --binary /Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/b04-evidence/task8-g4-f56f288-20261106/frozen/triclinic_neighbors --output-dir /Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/b04-triclinic-campaign --generate-only` | 0 |
+| `03-run.json` | `python3 bench/triclinic_neighbors.py --binary /Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/b04-evidence/task8-g4-f56f288-20261106/frozen/triclinic_neighbors --output-dir /Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/b04-triclinic-campaign --run` | 1 |
+| `04-analyze-only.json` | `python3 bench/triclinic_neighbors.py --output-dir /Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/b04-evidence/task8-g4-f56f288-20261106/offline-analysis --analyze-only` | 1 |
+| `05-source-archive.json` | `git archive --format=tar --output=/Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/b04-evidence/task8-g4-f56f288-20261106/frozen/source-f56f288.tar f56f28854865e8068402eebf7a0548f60da8ecfd` | 0 |
+| `06-host.json` | `sysctl hw.model machdep.cpu.brand_string hw.ncpu hw.physicalcpu hw.logicalcpu hw.memsize` | 0 |
+| `07-binary-format.json` | `file /Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/b04-evidence/task8-g4-f56f288-20261106/frozen/triclinic_neighbors` | 0 |
+| `10-full-core.json` | `env MODENA_ASE_PYTHON=/Users/ricardoleal20/Documents/Code/Misc/modena/target/b01-ase-venv/bin/python cargo test --locked -p modena-core --features neighbor-diagnostics -- --nocapture` | 0 |
+| `11-official-gates.json` | `env MODENA_ASE_PYTHON=/Users/ricardoleal20/Documents/Code/Misc/modena/target/b01-ase-venv/bin/python MODENA_MACE_PYTHON=/Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/b04-mace-venv/bin/python MODENA_MACE_EVIDENCE=/Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/b04-evidence/task8-g4-f56f288-20261106/official-mace cargo test --locked -p modena-core --features neighbor-diagnostics --test periodic_graph_official -- --ignored --nocapture` | 0 |
+| `12-python-harness.json` | `python3 -m unittest discover -s bench/tests -p test_triclinic_neighbors.py` | 0 |
+| `13-rust-harness.json` | `cargo test --locked -p modena-bench --features neighbor-diagnostics --bin triclinic_neighbors` | 0 |
+| `14-core-clippy.json` | `cargo clippy --locked -p modena-core --features neighbor-diagnostics --lib --tests -- -D warnings` | 0 |
+| `15-harness-clippy.json` | `cargo clippy --locked -p modena-bench --features neighbor-diagnostics --bin triclinic_neighbors -- -D warnings` | 0 |
+| `16-fmt.json` | `cargo fmt --all -- --check` | 0 |
+| `17-api-doctest.json` | `rustdoc --edition=2021 --test docs/B04_PERIODIC_GRAPHS.md --extern modena_core=/Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/debug/deps/libmodena_core-94d2d062254895a0.rlib -L dependency=/Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/debug/deps` | 101 |
+| `18-doc-library.json` | `cargo build --locked -p modena-core --features neighbor-diagnostics --lib --message-format=json` | 0 |
+| `19-api-doctest-final.json` | `rustdoc --edition=2021 --test docs/B04_PERIODIC_GRAPHS.md --extern modena_core=/Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/debug/libmodena_core.rlib -L dependency=/Users/ricardoleal20/.codex/worktrees/modena-b04/modena/target/debug/deps` | 0 |
+
+The build additionally set B04_BUILD_REV to clean f56f288 (full revision above),
+B04_BUILD_SOURCE_SHA256 to 59f1544a… and B04_RUSTC_VERSION to the recorded full
+rustc string; CARGO_TARGET_DIR was the dedicated evidence `build/` directory.
+`build-environment.json` retains exact values and each source file's SHA256.
+The run wrapper set MODENA_B04_CPU_LEASE=exclusive. The archive's first helper
+assertion and its corrected path-only comparison are retained separately from
+the expected analyzer exit 1 for an incomplete campaign.
+
+Final independent rehashing verifies every controller-freeze entry, every
+additive raw-manifest entry and every corresponding file inside the archive.
+No original campaign or historical evidence file changed. Source bytes remain
+identical to clean f56f288; only the three owned Markdown documents changed.
+
+The final documentation diff check passed (receipt `20-diff-check.json`, actual inner argv `git diff --check`, exit0, empty stdout/stderr).
+
+Final additive check/receipt manifest: `target/b04-evidence/task8-g4-f56f288-20261106/final-check-manifest.json`, SHA256 `b49ca8263604b738f879842da559240cb6977f7f2e4d01b9bc4703622e3bacd2`. It binds 233 evidence files, including all check receipts, official preflight/source receipts and preserved failed attempts. The prior raw/controller manifests remain unchanged.

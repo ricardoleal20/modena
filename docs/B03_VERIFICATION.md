@@ -7,11 +7,11 @@ parallel packed implementation was measured. [The complete experiment guide](B03
 publishes every case's full-step medians, paired directions, setup, RSS and
 retained capacity, plus separate production-auto controls.
 
-This record prepares closure of the experiment. Task 1 implementation and Task 2
-campaign/tooling have independent review approval, including two focused Task 2
-fix rounds. Whole-branch review, any grouped final fixes and assigned/labeled
-PR publication remain controller-owned delivery gates. No merge is authorized
-by this record. The other seven remaining research cases retain their own
+All three tasks and the final whole-branch review approved the experiment,
+including two focused Task 2 fix rounds. [PR #57](https://github.com/ricardoleal20/modena/pull/57)
+is open, assigned and labeled against B02. [Review closure and decisions](B03_REVIEW.md)
+record the approved source, deferred Minor and actual remote CI limitation.
+No merge was performed. The other seven research cases retain their own
 acceptance gates; B04 is already active in a separate worktree.
 
 ## Fixed criteria and observed outcome

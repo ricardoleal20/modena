@@ -12,8 +12,8 @@ experimental outcomes, with measurements and reasons retained.
 
 | Case | State | Dependencies / acceptance focus |
 | --- | --- | --- |
-| B03 | Scalar experiment rejected in all 96 cases in each of two protocols; Tasks 1/2 independently reviewed; Task 3 verification recorded; whole-branch review and PR delivery pending on ricardo/b03-packed-layout | [Verification and source epochs](B03_VERIFICATION.md), [all-case timing/resource evidence](B03_PACKED_LAYOUT.md). Production unchanged; no SIMD/parallel packed rejection. |
-| B04 | Independently active in separate modena-b04 worktree; acceptance pending | Periodic directed graph images, independent enumeration; keep classical half list distinct. Preserve the active plan and source isolation. |
+| B03 | Delivered in open [PR #57](https://github.com/ricardoleal20/modena/pull/57), assigned/labeled, task and whole-branch reviews approved; all 96 cases reject in each protocol | [Verification and source epochs](B03_VERIFICATION.md), [all-case timing/resource evidence](B03_PACKED_LAYOUT.md). Production unchanged; no SIMD/parallel packed rejection. |
+| B04 | Independently active in separate modena-b04 worktree; G1 reviewed, actual initialized MACE G2 executed with review pending; G3/G4 pending | Periodic directed graph images, independent enumeration; keep classical half list distinct. Preserve the active plan and source isolation. |
 | B05 | pending | SPME convergence/cost against converged Ewald; declared calibration domain. |
 | B07 | pending | Tensor strain derivatives, constraint impulses, periodic and timestep oracles. |
 | B08 | pending | Molecular MC volume measure, periodic molecules, full rejection restoration and analytic volume distribution. |
@@ -42,7 +42,7 @@ with implementation and acceptance pending. B03's packed prototypes use scalar
 execution with an equivalent serial interleaved control. Production-auto remains
 a separate control; results cannot reject unimplemented parallel/SIMD designs.
 
-## B03 experiment closure preparation (2026-11-06)
+## B03 experiment delivery (2026-11-06)
 
 Both frozen protocols retain 1,344 invocations each, plus 32 separate pilot
 invocations. All 96 comparisons per protocol fail the fixed >=5% median full-step
@@ -64,11 +64,12 @@ See [B03 verification](B03_VERIFICATION.md) for exact commands, hashes, counts,
 resources and preserved artifact receipts. These checks do not establish a
 remote CI result; the known Actions account/billing lock remains.
 
-Task 3 prepares the evidence and docs. Controller-owned whole-branch review,
-any grouped final fix wave and scoped rereview, and an assigned/labeled PR
-against the appropriate B02 base remain before B03 delivery is complete. B04
-is already active; do not restart it or treat this B03 outcome as completing
-the eight-case goal. B05/B07/B08/B10/B11/B12 still require their actual source,
+All three tasks and the final whole-branch review approved B03, delivered in
+assigned/labeled open PR #57 against B02. [Review closure](B03_REVIEW.md) records
+all controller decisions, the nonblocking writer Minor, workflow archive and
+actual Community billing failure before any job step. Main CI's base-main
+filter excludes the stacked PR. No additional merge was performed. B04 is
+already active; do not restart it or treat B03 as completing the eight-case goal. B05/B07/B08/B10/B11/B12 still require their actual source,
 implementation, validation, independent review and PR evidence. B10 remains
 FCC aluminium; build-only GPU/MPI checks and unvalidated DFT/ML fixtures cannot
 close their scientific/runtime requirements.

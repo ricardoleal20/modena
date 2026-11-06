@@ -41,15 +41,19 @@ Read the spec first for domains/gates; inspect existing interfaces before coding
 Files: bench/layout_step.py and bench/tests/test_layout_step.py, docs/B03_PACKED_LAYOUT.md.
 Consume Task1 example binary JSON/counters; preserve original raw subprocess outputs.
 
-- [ ] Write failure-sensitive real-subprocess driver tests for wrong mode/N/steps, missing/nonfinite physics, invalid output reuse and process failure. Product argv uses direct tools, never RTK. Validate fixed inputs and output identity independently of a declared checksum.
-- [ ] Build and freeze ordinary release executable, source/compiler/input hashes. Pilot to fix duration, then execute the spec matrix with five AB/BA pairs and separate warmups including rebuild/no-rebuild scenarios. Run variants sequentially; retain every failed/unfavorable case and CPU/RSS/load rows.
-- [ ] Apply the spec acceptance bar; repeat five pairs in each candidate favorable case. Record all cases, logical/mask correctness, packing/sort/rebuild costs, memory high water and scoped conclusion. If rejected, leave production unchanged. If accepted, controller amends a concrete promotion spec/plan before kernel integration; never silently enable new default.
-- [ ] Commit evidence guide, tooling and report; obtain independent task review.
+- [x] Write failure-sensitive real-subprocess driver tests for wrong mode/N/steps, missing/nonfinite physics, invalid output reuse and process failure. Product argv uses direct tools, never RTK. Validate fixed inputs and output identity independently of a declared checksum.
+- [x] Build and freeze ordinary release executable, source/compiler/input hashes. Pilot to fix duration, then execute the spec matrix with five AB/BA pairs and separate warmups including rebuild/no-rebuild scenarios. Run variants sequentially; retain every failed/unfavorable case and CPU/RSS/load rows.
+- [x] Apply the spec acceptance bar; repeat five pairs in each candidate favorable case. Record all cases, logical/mask correctness, packing/sort/rebuild costs, memory high water and scoped conclusion. If rejected, leave production unchanged. If accepted, controller amends a concrete promotion spec/plan before kernel integration; never silently enable new default.
+- [x] Commit evidence guide, tooling and report; obtain independent task review.
 
 ## Task 3: closure validation and delivery
 
 Files: docs/B03_VERIFICATION.md, docs/CORE_RESEARCH_EXECUTION.md and validated-scope/changelog only as applicable.
 
-- [ ] Run tests appropriate to the final diff, Rust floor/fmt/clippy and existing scientific smoke when production is touched; for experimental-only changes, verify unchanged production hashes and new full-step numerical/convergence checks without relabeling old runs as fresh.
-- [ ] Record source epochs, all commands, limits, acceptance/rejection, then whole-branch review and its grouped fix wave/scoped rereview if necessary.
-- [ ] Publish assigned/labeled B03 PR against B02 if still open (otherwise synchronize base safely), with four normative sections; no merge. Update overall execution record and continue B04 immediately.
+- [x] Run tests appropriate to the final diff, Rust floor/fmt/clippy and existing scientific smoke when production is touched; for experimental-only changes, verify unchanged production hashes and new full-step numerical/convergence checks without relabeling old runs as fresh.
+- [x] Record source epochs, all commands, limits, acceptance/rejection, then whole-branch review and its grouped fix wave/scoped rereview if necessary.
+- [x] Publish assigned/labeled B03 PR against B02 if still open (otherwise synchronize base safely), with four normative sections; no merge. Update overall execution record and continue B04 immediately.
+
+Delivery: [PR #57](https://github.com/ricardoleal20/modena/pull/57), open against
+B02. [Review closure](../../B03_REVIEW.md) records final approval, all rulings,
+local evidence and actual remote CI limitations. No merge; B04 already active.

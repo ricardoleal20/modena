@@ -12,8 +12,8 @@ experimental outcomes, with measurements and reasons retained.
 
 | Case | State | Dependencies / acceptance focus |
 | --- | --- | --- |
-| B03 | Task1 reviewed at66af0e4; campaign pending, ricardo/b03-packed-layout based604039e | Internal packed layouts and cluster masks; include conversion/rebuild, exact logical identity and scalar oracle. |
-| B04 | pending | Periodic directed graph images, independent enumeration; keep classical half list distinct. |
+| B03 | Scalar experiment rejected in all 96 cases in each of two protocols; Tasks 1/2 independently reviewed; Task 3 verification recorded; whole-branch review and PR delivery pending on ricardo/b03-packed-layout | [Verification and source epochs](B03_VERIFICATION.md), [all-case timing/resource evidence](B03_PACKED_LAYOUT.md). Production unchanged; no SIMD/parallel packed rejection. |
+| B04 | Independently active in separate modena-b04 worktree; acceptance pending | Periodic directed graph images, independent enumeration; keep classical half list distinct. Preserve the active plan and source isolation. |
 | B05 | pending | SPME convergence/cost against converged Ewald; declared calibration domain. |
 | B07 | pending | Tensor strain derivatives, constraint impulses, periodic and timestep oracles. |
 | B08 | pending | Molecular MC volume measure, periodic molecules, full rejection restoration and analytic volume distribution. |
@@ -36,7 +36,39 @@ M3 Pro with Metal. These inventory observations do not prove a current GPU
 run, MPI trajectory, DFT convergence or ML inference. Fortran16.2 and make
 are present; a Quantum ESPRESSO installation still needs preparation.
 
-B04/B05 read-only design preparations are ready; their implementations and
-acceptance remain pending. B03's packed prototypes use scalar execution and
-require an equivalent serial interleaved control. Production-auto remains a
-separate control; results cannot reject unimplemented parallel/SIMD designs.
+B04 has advanced from design preparation to independent work in its separate
+worktree; its acceptance remains pending. B05 design preparation is available,
+with implementation and acceptance pending. B03's packed prototypes use scalar
+execution with an equivalent serial interleaved control. Production-auto remains
+a separate control; results cannot reject unimplemented parallel/SIMD designs.
+
+## B03 experiment closure preparation (2026-11-06)
+
+Both frozen protocols retain 1,344 invocations each, plus 32 separate pilot
+invocations. All 96 comparisons per protocol fail the fixed >=5% median full-step
+gain and >=4/5 favorable-pair criterion; zero independent reproduction runs
+trigger. Masks/identity, independent force/energy/virial and full-step/timestep
+gates pass in the reviewed evidence. Large Cluster4 retained memory and timing
+regressions reinforce rejection. The primary protocol retains snapshot Values
+during steps; the separate snapshot-free protocol emits no vectors/full-state
+SHA. No results are pooled across protocols and no candidate is promoted.
+
+Final tested implementation epoch is `885a2ac26a3ac8a5f40f51a11dcd5095529ce5da`.
+Task 3 freshly passes Python 3.12.8 benchmark discovery 47 tests (including 10 layout
+tests and mandatory real Rust executable contracts), scoped benchmark Rust
+7 integration + 4 example tests, fmt/clippy and Rust 1.90. Production core remains
+tree `39b46c7496c6820219056fe38a821378a32633e8`, and Rust sources are unchanged
+since reviewed `66af0e4`. Historical measured executable `5001bb6` and driver/audit
+epochs stay intact; the fresh CI-contract executable `822b000` is a distinct epoch.
+See [B03 verification](B03_VERIFICATION.md) for exact commands, hashes, counts,
+resources and preserved artifact receipts. These checks do not establish a
+remote CI result; the known Actions account/billing lock remains.
+
+Task 3 prepares the evidence and docs. Controller-owned whole-branch review,
+any grouped final fix wave and scoped rereview, and an assigned/labeled PR
+against the appropriate B02 base remain before B03 delivery is complete. B04
+is already active; do not restart it or treat this B03 outcome as completing
+the eight-case goal. B05/B07/B08/B10/B11/B12 still require their actual source,
+implementation, validation, independent review and PR evidence. B10 remains
+FCC aluminium; build-only GPU/MPI checks and unvalidated DFT/ML fixtures cannot
+close their scientific/runtime requirements.

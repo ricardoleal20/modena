@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add B03's benchmark-only scalar SoA/AoSoA4/Cluster4 full-step experiment,
+  strict executable/saved-state checks and reproducible all-case rejection.
+  Preserve production storage, dispatch and defaults; no SIMD/parallel packed
+  performance claim. See [B03 verification and limits](docs/B03_VERIFICATION.md).
+
 - Add B02's model-owned dense native CPU pair workspace and parallel output
   block reduction, with a nonblocking serial fallback for shared/nested calls.
   Preserve serial arithmetic and bounded snapshot neighbors; retain O(TN)

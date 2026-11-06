@@ -18,7 +18,7 @@ orders used by the proof. Subsequent G1 implementation evidence is recorded belo
 | --- | --- | --- |
 | G1 | passed; Task 3 independently approved through ce04b4f | Fixed-cube/resource tests and explicitly executed official ASE exact tuples |
 | G2 | passed; Task 4 independently approved at f45be2d, mapped to2aa3960 | Actual initialized official MACE graph/E/F parity |
-| G3 | pending | Scalar/stencil pairs, E/F/W, skin/bounded regressions |
+| G3 | implementation checks passed; independent Task 6 review pending | Certified stencil, scalar/cube pairs, E/F/W, skin/bounded and cap checks |
 | G4 | pending | Paired complete-step benefit and fallback overhead |
 
 Source epochs, commands, numerical tolerances, package/model hashes and measured
@@ -323,3 +323,122 @@ The full receipt and before/after patches are retained under
 results and source hashes retain their actual historical epochs; they are not
 relabeled as new evaluations after rebase. Source identity is the evidence
 for carrying those reviews forward. Later delivery metadata changes only docs.
+
+
+## G3 — certified fractional triclinic stencil (2026-11-06)
+
+Task 6 implements forced FractionalStencil execution after reviewed Task 5 base
+`76143e76d6d190f4f2bbd74810fa1651ebf5c824`. Auto still executes Scalar without
+running stencil preparation. G3 functional/numerical checks pass; independent
+Task 6 review remains required. G4 is pending, with no timing or default promotion.
+
+The existing Task 1 scalar radius proof is consumed, not replaced. Its
+subtraction/dot error and inner-index calculations were extracted into private
+helpers for direct numeric tests without changing their arithmetic. The scalar
+operation audit still matches `SimBox::min_image` and Vec3: one coordinate
+subtraction, five dot operations, exact `t-round(t)` below 2^52, coefficient
+subtraction, and five Cartesian reconstruction operations. The norm envelope
+covers three products/two sums and gradual underflow; J must be <=4096. The
+stored list cutoff squared is converted to an upward-rounded search radius,
+so its reconstructed square covers the original threshold. Final pruning uses
+the original `min_image(...).norm2() < list_cutoff2`, unchanged.
+
+For each atom, interval evaluation of A*r plus the certified inverse residual
+`eta*||r||inf` encloses the true U*r. Equal endpoint floors certify periodic
+range reduction with an exactly representable integer. Outward subtraction and
+multiplication by m must place the entire closed interval in one bin; seam or
+face ambiguity falls back. For a scalar-accepted image, Q encloses its real
+Cartesian displacement. Hence each fractional image difference is bounded by
+w=Q*||U_row||, and bin differences necessarily satisfy
+`dist(q/m, integers) <= w + 1/m`. Both the offset range and filter are outward;
+a rejection requires a lower distance bound to exceed the upper threshold.
+The reciprocal's lower endpoint determines a possibly coarser m at an integer
+boundary, which preserves this proof.
+
+For m>1, m*w<=1; one outward endpoint ulp gives at most seven enumerated
+pre-wrap offsets per axis. For w>=1, `m=max(1,floor(1/w))=1` and all integer
+offsets are the same residue, collapsed before any range enumeration. Modulo
+residues are deduplicated before their Cartesian product, then translated to
+unique target bins. Thus the fixed 4096-offset cap is defensive under this
+grid rule (at most 7^3 offsets), not a physically triggered failure claimed by
+the fixtures. The fixed cap was not retuned.
+
+A fallibly allocated, sorted (bin, atom) list inserts each atom once. Visiting
+only source-bin<=target-bin counts each unordered occupied-bin pair once;
+same-bin counts use C(n,2), cross-bin counts use n*m. Checked u128 arithmetic
+implements the specified candidate_estimate < 0.8*all_pairs rule before pair
+emission. The grid, offset, N*offset, i32-index and workspace caps precede heap
+requests. Workspace includes the requested atom/offset buffers and fixed
+plan/certificate/axis storage, excludes the existing output buffer, and is
+checked again using actual Vec capacities. There is no dense global pair set,
+unbounded candidate staging, or accepted-pair deduplication. Output is sorted
+lexicographically. The shared bounded emitter propagates max_pairs failures;
+these cannot become successful scalar retries.
+
+Actual optimized fixtures all compare exact ordered pairs with retained Scalar
+and independent fixed-cube membership. The original 30 fixed snapshots also
+compare against Scalar; their full-PBC subset compares to the cube. Partial-PBC
+fixture masks remain graph metadata, since classical neighbors are full PBC.
+Empty builds retain their existing no-diagnostics behavior.
+
+| Actual selected shape (8 atoms, 4 accepted pairs) | Predicate checks | Requested workspace |
+| --- | ---: | ---: |
+| 32-cell, tilts -8/0/8/24 | 4 vs 28 Scalar | 1216 bytes |
+| Unreduced tilts -128/+128, individual atom lattice translations | 12 vs 28 Scalar | 1216 bytes |
+| First-axis dimension 1 (length 4) | 4 vs 28 Scalar | 784 bytes |
+| First-axis dimension 2 (length 6) | 4 vs 28 Scalar | 1000 bytes |
+| First-axis dimension 3 (length 8) | 4 vs 28 Scalar | 1216 bytes |
+
+Real fallback diagnostics cover uncertified geometry, fractional boundary,
+image domain, grid cap, all bins and candidate cost, with exact Scalar parity.
+WorkCap and MemoryCap are exercised by count-only preflight at the fixed
+production limits, without allocating huge atom vectors. StencilCap is likewise
+a defensive count test; overflow cases are checked directly. These are separate
+from admitted-geometry diagnostics. Memory/allocation uncertainty always falls
+back before candidate emission. No allocator-failure injection was added.
+
+The meaningful RED run executed 13 tests: eight existing tests passed and five
+new tests failed specifically because forced requests still selected Scalar
+or lacked the boundary reason. Final targeted tests cover exact ordered pairs,
+zero/independent/amplified pair policies, additive force/virial seeds, E/F/W
+at atol=rtol=1e-10, list-radius skin membership, the half-skin threshold, a
+periodic seam crossing, full-box cache invalidation, and actual private bounded
+stencil overflow/recovery. Numeric tests directly cover t_error, the 2^52
+wrapping domain, J<=4096, certified closed bins, and the actual scalar-selected
+real-image counterpart on every fixed cube fixture. The earlier Task 1 Q test
+now derives all tested displacement components from its supplied snapshot.
+
+Verification commands (all run through RTK with complete logs):
+
+```sh
+rtk cargo test --locked -p modena-core --features neighbor-diagnostics --test triclinic_neighbors --test force_hardening --test snapshot --test pair_scales
+rtk cargo test --locked -p modena-core --features neighbor-diagnostics --lib periodic_geometry::tests
+rtk cargo test --locked -p modena-core --features neighbor-diagnostics --lib neighbor::
+rtk proxy cargo +1.90.0 test --locked -p modena-core --features neighbor-diagnostics --test triclinic_neighbors --test force_hardening --test snapshot --test pair_scales
+rtk proxy cargo +1.90.0 test --locked -p modena-core --features neighbor-diagnostics --lib periodic_geometry::tests
+rtk proxy cargo +1.90.0 test --locked -p modena-core --features neighbor-diagnostics --lib neighbor::triclinic::tests
+rtk proxy cargo +1.90.0 test --locked -p modena-core --features neighbor-diagnostics --lib bounded_stencil_overflow_never_succeeds
+rtk cargo test --locked -p modena-core --no-default-features --test force_hardening --test snapshot --test pair_scales
+rtk cargo test --locked -p modena-core --no-default-features --lib bounded_stencil_overflow_never_succeeds
+rtk proxy cargo +1.90.0 check --locked -p modena-core --no-default-features
+rtk cargo clippy --locked -p modena-core --features neighbor-diagnostics --lib --test triclinic_neighbors --test force_hardening --test snapshot --test pair_scales -- -D warnings
+rtk cargo clippy --locked -p modena-core --no-default-features --lib -- -D warnings
+rtk cargo fmt --all -- --check
+```
+
+Final feature integration suite: 36 pass (16+11+3+6), including Rust 1.90.
+Geometry: 18 pass; neighbor unit scope: 18 pass. Focused MSRV cap/bounded units:
+3+1 pass. Default integration: 20 pass; default actual bounded stencil: 1 pass.
+Feature and default Clippy are warning-free with `-D warnings`; previously
+staged Rust warnings are resolved by real helper/variant use and feature-gating
+only the diagnostic report fields. Existing TorchScript warnings belong to the
+unchanged G2 environment and were not rerun or suppressed.
+
+Fresh RED/GREEN/failed-attempt/MSRV/default/lint logs, source identities and full
+commands are retained under `target/b04-evidence/task6-stencil-20261106` and in
+`.superpowers/sdd/2026-11-06-b04-periodic-neighbors/task-6-report.md`. The first
+implementation compile needed an explicit generic error type; a later private
+test was initially placed outside its module. Both failed logs are preserved.
+No graph/model/helper semantics, System/Vec3 arithmetic, exclusions, frozen
+ELFs or historical evidence changed. These results do not establish G4,
+trained chemical accuracy or B10 acceptance.

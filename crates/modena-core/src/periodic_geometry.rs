@@ -394,6 +394,37 @@ pub(crate) fn scalar_min_image_search_radius(
     radius: f64,
 ) -> Result<f64, GeometryError> {
     let r2 = cutoff_squared(radius)?;
+    let t_error = scalar_fractional_errors(cell, positions)?;
+    let coefficient_bound = scalar_coefficient_bounds(cell)?;
+    let mut e = [ZERO; 3];
+    for (k, error) in e.iter_mut().enumerate() {
+        let mut propagated = ZERO;
+        let mut magnitude = ZERO;
+        for l in 0..3 {
+            let h = point(cell.basis[l].0[k].abs())?;
+            let coefficient_error = point(f64::EPSILON)?
+                .mul(coefficient_bound[l])?
+                .add(point(TINY)?)?;
+            propagated = propagated.add(h.mul(t_error[l].add(coefficient_error)?)?)?;
+            // Coefficients here are the ROUNDED s-n; include their subtraction
+            // error in the gamma_5 product/sum magnitude as well.
+            magnitude = magnitude.add(h.mul(coefficient_bound[l].add(coefficient_error)?)?)?;
+        }
+        *error = propagated
+            .add(gamma(5.0)?.mul(magnitude)?)?
+            .add(underflow(5.0)?)?;
+    }
+    // If the scalar accepts, its computed vector norm is <=Q_fp. The exact
+    // physical image differs by <=||e||2, hence lies inside this search Q.
+    Ok(fp_radius(r2)?.add(norm(e)?)?.hi)
+}
+
+// Separated to audit the scalar's wrapping domain and inner index bound;
+// both helpers remain private and are used by the production radius proof.
+fn scalar_fractional_errors(
+    cell: &CertifiedCell,
+    positions: &[f64],
+) -> Result<[Interval; 3], GeometryError> {
     if !positions.len().is_multiple_of(3) || positions.iter().any(|x| !x.is_finite()) {
         return Err(GeometryError::Invalid);
     }
@@ -431,6 +462,10 @@ pub(crate) fn scalar_min_image_search_radius(
             return Err(GeometryError::ShiftRange);
         }
     }
+    Ok(t_error)
+}
+
+fn scalar_coefficient_bounds(cell: &CertifiedCell) -> Result<[Interval; 3], GeometryError> {
     // In this domain t-round(t) is exact: Sterbenz for |t|>=.5, identity
     // otherwise. Its coefficient magnitude is <=.5. Interval evaluation
     // encloses each rounded intermediate in the actual initial a*s+b*s+c*s,
@@ -460,27 +495,49 @@ pub(crate) fn scalar_min_image_search_radius(
         }
         *coefficient = point(0.5)?.add(point(j)?)?;
     }
-    let mut e = [ZERO; 3];
-    for (k, error) in e.iter_mut().enumerate() {
-        let mut propagated = ZERO;
-        let mut magnitude = ZERO;
+    Ok(coefficient_bound)
+}
+
+/// Enclose U*r for the exact supplied position, independently of pair wrapping.
+/// The inverse residual bounds each row's 1-norm error, hence eta*||r||inf
+/// encloses the missing inverse contribution; interval dots cover all five
+/// arithmetic roundings and gradual underflow. No floating remainder is used.
+pub(crate) fn fractional_position(
+    cell: &CertifiedCell,
+    r: Vec3,
+) -> Result<[Interval; 3], GeometryError> {
+    validate_position(r)?;
+    let error = point(cell.inverse_error_inf)?.mul(point(max_abs(r))?)?.hi;
+    let inflation = point(-error)?.hull(point(error)?);
+    let mut result = [ZERO; 3];
+    for (k, value) in result.iter_mut().enumerate() {
+        let mut dot = ZERO;
         for l in 0..3 {
-            let h = point(cell.basis[l].0[k].abs())?;
-            let coefficient_error = point(f64::EPSILON)?
-                .mul(coefficient_bound[l])?
-                .add(point(TINY)?)?;
-            propagated = propagated.add(h.mul(t_error[l].add(coefficient_error)?)?)?;
-            // Coefficients here are the ROUNDED s-n; include their subtraction
-            // error in the gamma_5 product/sum magnitude as well.
-            magnitude = magnitude.add(h.mul(coefficient_bound[l].add(coefficient_error)?)?)?;
+            dot = dot.add(point(cell.inverse[k].0[l])?.mul(point(r.0[l])?)?)?;
         }
-        *error = propagated
-            .add(gamma(5.0)?.mul(magnitude)?)?
-            .add(underflow(5.0)?)?;
+        *value = dot.add(inflation)?;
     }
-    // If the scalar accepts, its computed vector norm is <=Q_fp. The exact
-    // physical image differs by <=||e||2, hence lies inside this search Q.
-    Ok(fp_radius(r2)?.add(norm(e)?)?.hi)
+    Ok(result)
+}
+
+/// A closed enclosure must fit entirely inside one half-open wrapped bin.
+/// Equal floors certify the integer range reduction, with the integer exactly
+/// representable below 2^52. Subtraction/multiplication are outward; any seam
+/// or bin-face ambiguity is rejected rather than assigning a rounded midpoint.
+pub(crate) fn fractional_bin(s: Interval, m: usize) -> Result<usize, GeometryError> {
+    if m == 0 || m > 1_000_000 || s.abs_upper() >= MAX_EXACT_SHIFT as f64 {
+        return Err(GeometryError::ShiftRange);
+    }
+    let integer = s.lo.floor();
+    if integer != s.hi.floor() {
+        return Err(GeometryError::Uncertified);
+    }
+    let scaled = s.sub(point(integer)?)?.mul(point(m as f64)?)?;
+    let bin = scaled.lo.floor();
+    if bin != scaled.hi.floor() || bin < 0.0 || bin >= m as f64 {
+        return Err(GeometryError::Uncertified);
+    }
+    Ok(bin as usize)
 }
 
 #[cfg(test)]
@@ -854,11 +911,14 @@ mod tests {
     fn scalar_radius_encloses_accepted_skew_pairs_and_rejects_domain() {
         let cell = triangular();
         let c = certified_cell(cell).unwrap();
-        let p = [0., 0., 0., 4., 1., 0.];
+        let mut p = vec![0., 0., 0.];
+        for x in -16..=16 {
+            p.extend_from_slice(&[x as f64 / 4., 0.25, 0.5]);
+        }
         let q = scalar_min_image_search_radius(&c, &p, 1.5).unwrap();
         assert!((1.5..1.50000001).contains(&q));
-        for x in -16..=16 {
-            let delta = Vec3::new(x as f64 / 4., 0.25, 0.5);
+        for coordinates in p[3..].chunks_exact(3) {
+            let delta = Vec3::new(coordinates[0], coordinates[1], coordinates[2]);
             if cell.min_image(delta).norm2() < 2.25 {
                 // Independent fixed cube finds the exact dyadic physical image,
                 // without production inverse/wrapping/search-radius helpers.
@@ -878,5 +938,178 @@ mod tests {
         }
         assert!(scalar_min_image_search_radius(&c, &[1e100; 3], 1.5).is_err());
         assert!(scalar_min_image_search_radius(&c, &[0.; 2], 1.5).is_err());
+    }
+    #[test]
+    fn scalar_t_error_encloses_dyadic_inverse_and_wrap_domain() {
+        let c = certified_cell(triangular()).unwrap();
+        for scale in [1., 1024., (1_u64 << 40) as f64] {
+            let ri = Vec3::new(scale, -scale / 2., scale / 4.);
+            let rj = Vec3::new(-scale / 4., scale / 8., -scale / 16.);
+            let positions: Vec<_> = ri.0.into_iter().chain(rj.0).collect();
+            let errors = scalar_fractional_errors(&c, &positions).unwrap();
+            let d = delta(rj, ri).unwrap();
+            let exact = [
+                d[0].mul(point(0.5).unwrap())
+                    .unwrap()
+                    .sub(d[1].mul(point(0.25).unwrap()).unwrap())
+                    .unwrap(),
+                d[1].mul(point(0.5).unwrap()).unwrap(),
+                d[2].mul(point(0.25).unwrap()).unwrap(),
+            ];
+            for k in 0..3 {
+                let computed = c.inverse[k].dot(ri - rj);
+                assert!(
+                    point(computed).unwrap().sub(exact[k]).unwrap().abs_upper() <= errors[k].hi
+                );
+            }
+        }
+        let unit = certified_cell(SimBox::cubic(1.)).unwrap();
+        assert!(scalar_fractional_errors(&unit, &[(1_u64 << 51) as f64 - 16., 0., 0.]).is_ok());
+        assert!(matches!(
+            scalar_fractional_errors(&unit, &[(1_u64 << 51) as f64, 0., 0.]),
+            Err(GeometryError::ShiftRange)
+        ));
+        assert!(matches!(
+            scalar_fractional_errors(&unit, &[(1_u64 << 52) as f64, 0., 0.]),
+            Err(GeometryError::ShiftRange)
+        ));
+    }
+
+    #[test]
+    fn scalar_inner_index_cap_is_certified_before_enumeration() {
+        let c = certified_cell(triangular()).unwrap();
+        assert!(scalar_coefficient_bounds(&c)
+            .unwrap()
+            .into_iter()
+            .all(|x| x.hi <= 4096.5_f64.next_up()));
+        let c = certified_cell(SimBox::triclinic([
+            Vec3::new(1., 0., 0.),
+            Vec3::new(10_000., 1., 0.),
+            Vec3::new(0., 0., 1.),
+        ]))
+        .unwrap();
+        assert!(matches!(
+            scalar_coefficient_bounds(&c),
+            Err(GeometryError::ShiftRange)
+        ));
+        assert!(matches!(
+            scalar_min_image_search_radius(&c, &[0.; 3], 1.),
+            Err(GeometryError::ShiftRange)
+        ));
+    }
+
+    #[test]
+    fn fractional_single_bin_rejects_closed_faces_and_seams() {
+        for x in [0.125, -0.875, 2.125] {
+            assert_eq!(fractional_bin(point(x).unwrap(), 4).unwrap(), 0);
+        }
+        for x in [0., 0.25, 1., -1.] {
+            assert!(fractional_bin(point(x).unwrap(), 4).is_err());
+        }
+        assert!(fractional_bin(
+            Interval {
+                lo: 0.249999999999,
+                hi: 0.250000000001
+            },
+            4
+        )
+        .is_err());
+        assert!(matches!(
+            fractional_bin(point((1_u64 << 52) as f64).unwrap(), 4),
+            Err(GeometryError::ShiftRange)
+        ));
+        let c = certified_cell(triangular()).unwrap();
+        let r = Vec3::new(0.5, 0.5, 0.5);
+        for (s, exact) in fractional_position(&c, r)
+            .unwrap()
+            .into_iter()
+            .zip([0.125, 0.25, 0.125])
+        {
+            contains(s, exact);
+        }
+    }
+
+    #[test]
+    fn scalar_selected_real_images_fit_q_on_all_fixed_cube_fixtures() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            cell: [[f64; 3]; 3],
+            positions: Vec<[f64; 3]>,
+            cutoff: f64,
+        }
+        let cases: Vec<Case> =
+            serde_json::from_str(include_str!("../tests/fixtures/periodic_graph/cases.json"))
+                .unwrap();
+        let mut accepted = 0;
+        for f in cases {
+            let cell = SimBox::triclinic(f.cell.map(Vec3));
+            let c = certified_cell(cell).unwrap();
+            let positions: Vec<_> = f.positions.iter().flatten().copied().collect();
+            let q = scalar_min_image_search_radius(&c, &positions, f.cutoff).unwrap();
+            for i in 0..f.positions.len() {
+                for j in i + 1..f.positions.len() {
+                    let ri = Vec3(f.positions[i]);
+                    let rj = Vec3(f.positions[j]);
+                    let d = ri - rj;
+                    let t = c.inverse.map(|row| row.dot(d));
+                    let wrap = t.map(f64::round);
+                    let s = std::array::from_fn::<_, 3, _>(|k| t[k] - wrap[k]);
+                    let [a, b, cc] = c.basis;
+                    let mut best = a * s[0] + b * s[1] + cc * s[2];
+                    let mut shift = wrap.map(|x| x as i64);
+                    let radius = best.norm2().sqrt();
+                    // Test-only trace of the unchanged scalar selection records
+                    // WHICH image won, not just the independent cube minimum.
+                    let bounds = std::array::from_fn::<_, 3, _>(|k| {
+                        let width = c.inverse[k].norm() * radius;
+                        let margin = 32. * f64::EPSILON * (1. + width);
+                        (
+                            (s[k] - width - margin).ceil() as i64,
+                            (s[k] + width + margin).floor() as i64,
+                        )
+                    });
+                    for x in bounds[0].0..=bounds[0].1 {
+                        for y in bounds[1].0..=bounds[1].1 {
+                            for z in bounds[2].0..=bounds[2].1 {
+                                let candidate = a * (s[0] - x as f64)
+                                    + b * (s[1] - y as f64)
+                                    + cc * (s[2] - z as f64);
+                                if candidate.norm2() < best.norm2() {
+                                    best = candidate;
+                                    shift = [
+                                        wrap[0] as i64 + x,
+                                        wrap[1] as i64 + y,
+                                        wrap[2] as i64 + z,
+                                    ];
+                                }
+                            }
+                        }
+                    }
+                    assert_eq!(best, cell.min_image(d));
+                    if best.norm2() < f.cutoff * f.cutoff {
+                        // Every supplied fixed-cube fixture winner lies in
+                        // [-16,16]^3. Exact-real Cartesian image via outward
+                        // intervals is independent of the scalar inverse path.
+                        assert!(shift.into_iter().all(|x| x.abs() <= 16));
+                        let mut real = delta(rj, ri).unwrap();
+                        for (k, component) in real.iter_mut().enumerate() {
+                            for (l, n) in shift.into_iter().enumerate() {
+                                *component = component
+                                    .sub(
+                                        point(f.cell[l][k])
+                                            .unwrap()
+                                            .mul(point(n as f64).unwrap())
+                                            .unwrap(),
+                                    )
+                                    .unwrap();
+                            }
+                        }
+                        assert!(norm(real).unwrap().hi <= q);
+                        accepted += 1;
+                    }
+                }
+            }
+        }
+        assert!(accepted > 20);
     }
 }

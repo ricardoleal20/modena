@@ -1060,4 +1060,77 @@ mod tests {
         b.sort_unstable();
         assert_eq!(a, b, "parallel rebuild pair set must equal the brute force");
     }
+
+    #[test]
+    fn bounded_stencil_overflow_never_succeeds() {
+        let mut sys = sys_with(&[], 32.);
+        sys.box_size = SimBox::triclinic([
+            Vec3::new(32., 0., 0.),
+            Vec3::new(8., 32., 0.),
+            Vec3::new(0., 0., 32.),
+        ]);
+        sys.resize(8);
+        for (cluster, base) in [
+            [1., 1.5, 2.5],
+            [17., 1.5, 2.5],
+            [5., 17.5, 18.5],
+            [21., 17.5, 18.5],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for dx in 0..2 {
+                sys.set_pos(
+                    2 * cluster + dx,
+                    Vec3::new(base[0] + dx as f64, base[1], base[2]),
+                );
+            }
+        }
+        for skin in [0., 0.5] {
+            let mut nl = NeighborList::with_skin(2.5, skin);
+            // Exercise the actual bounded stencil even in the default build;
+            // public diagnostics remain feature gated, bounded API private.
+            let mut out = Vec::new();
+            let report = build_triclinic::<true>(
+                &sys,
+                (2.5 + skin) * (2.5 + skin),
+                &nl.exclusions,
+                4,
+                TriclinicBuildStrategy::FractionalStencil,
+                &mut out,
+            )
+            .unwrap();
+            #[cfg(feature = "neighbor-diagnostics")]
+            assert_eq!(report.selected, TriclinicBuildStrategy::FractionalStencil);
+            #[cfg(not(feature = "neighbor-diagnostics"))]
+            let _ = report;
+            assert_eq!(out, [(0, 1), (2, 3), (4, 5), (6, 7)]);
+            out.clear();
+            assert!(build_triclinic::<true>(
+                &sys,
+                (2.5 + skin) * (2.5 + skin),
+                &nl.exclusions,
+                3,
+                TriclinicBuildStrategy::FractionalStencil,
+                &mut out
+            )
+            .is_err());
+            assert!(out.len() <= 3 && out.capacity() <= 4);
+            #[cfg(feature = "neighbor-diagnostics")]
+            {
+                nl.triclinic_strategy = TriclinicBuildStrategy::FractionalStencil;
+            }
+            nl.rebuild_bounded(&sys, 4).unwrap();
+            let reference = nl.ref_positions.clone();
+            assert!(nl.rebuild_bounded(&sys, 3).is_err());
+            assert!(!nl.built);
+            assert!(nl.pairs().is_empty());
+            assert_eq!(nl.ref_positions, reference);
+            assert_eq!(nl.ref_box, Some(sys.box_size));
+            #[cfg(feature = "neighbor-diagnostics")]
+            assert!(nl.triclinic_build_diagnostics().is_none());
+            nl.build(&sys);
+            assert_eq!(nl.pairs(), &[(0, 1), (2, 3), (4, 5), (6, 7)]);
+        }
+    }
 }

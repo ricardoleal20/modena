@@ -13,8 +13,10 @@ from ase import Atoms, neighborlist
 raw_request = sys.stdin.buffer.read()
 request = json.loads(raw_request)
 f = request["fixture"]
-assert ase.__version__ == "3.29.0", ase.__version__
-assert np.__version__ == "2.5.4", np.__version__
+if ase.__version__ != "3.29.0":
+    raise RuntimeError(f"ASE version mismatch: {ase.__version__}")
+if np.__version__ != "2.5.4":
+    raise RuntimeError(f"NumPy version mismatch: {np.__version__}")
 a = Atoms(numbers=f["atomic_numbers"], positions=np.asarray(f["positions"]).reshape(-1, 3),
           cell=f["cell"], pbc=f["pbc"])
 i, j, shifts, vectors = neighborlist.neighbor_list(
@@ -25,7 +27,9 @@ records = sorted(((int(x), int(y), tuple(map(int, shift))), vector)
 reference = [edge for edge, vector in records]
 actual = sorted((e["source"], e["destination"], tuple(e["edge_cell_shift"]))
                 for e in request["edges"])
-assert actual == reference, {"fixture": f["id"], "actual": actual, "reference": reference}
+if actual != reference:
+    raise ValueError(f"integer-image tuple mismatch: fixture={f['id']!r} "
+                     f"actual={actual!r} reference={reference!r}")
 source = inspect.getsourcefile(neighborlist)
 with open(source, "rb") as stream:
     digest = hashlib.sha256(stream.read()).hexdigest()

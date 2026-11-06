@@ -108,3 +108,69 @@ fn official_ase_images() {
         println!("{}", serde_json::to_string(&manifest).unwrap());
     }
 }
+
+#[test]
+#[ignore = "requires explicitly selected pinned official ASE/NumPy interpreter"]
+fn official_ase_rejects_wrong_tuple_with_python_optimization() {
+    let python = std::env::var_os("MODENA_ASE_PYTHON")
+        .expect("set MODENA_ASE_PYTHON to the pinned ASE=3.29.0 NumPy=2.5.4 interpreter");
+    let mut f = fixtures().into_iter().find(|f| f.id == "multi4").unwrap();
+    f.id = "optimized_tuple_identity_control".into();
+    f.positions[1] = f.positions[0];
+    let edges = actual(&f);
+    assert_eq!(edges, [(0, 1, [0; 3]), (1, 0, [0; 3])]);
+    let helper = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/support/ase_graph_reference.py"
+    );
+    let run = |edges: &[Tuple]| {
+        let request =
+            serde_json::to_vec(&json!({"fixture": f, "edges": wire_edges(edges)})).unwrap();
+        let mut child = Command::new(&python)
+            .arg(helper)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .env("PYTHONOPTIMIZE", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn optimized official ASE control");
+        child.stdin.take().unwrap().write_all(&request).unwrap();
+        child
+            .wait_with_output()
+            .expect("wait for optimized official ASE control")
+    };
+    let positive = run(&edges);
+    assert!(
+        positive.status.success(),
+        "optimized positive control failed: {}",
+        String::from_utf8_lossy(&positive.stderr[..positive.stderr.len().min(8192)])
+    );
+    let response: Response = serde_json::from_slice(&positive.stdout).unwrap();
+    assert_eq!(response.edge_count, 2);
+    assert_eq!(response.max_vector_error, 0.0);
+    // Same count and exactly identical Cartesian vectors, but one tuple is
+    // duplicated and the reversed index tuple is missing. Vector allclose alone
+    // cannot detect this control, even at zero tolerance.
+    let wrong = [edges[0], edges[0]];
+    assert!(edges
+        .iter()
+        .chain(&wrong)
+        .all(|&e| displacement(&f, e) == [0.0; 3]));
+    let negative = run(&wrong);
+    assert!(
+        !negative.status.success(),
+        "PYTHONOPTIMIZE=1 accepted wrong integer tuples with the same count and zero vectors"
+    );
+    let stderr = String::from_utf8_lossy(&negative.stderr[..negative.stderr.len().min(8192)]);
+    assert!(stderr.contains("integer-image tuple mismatch"), "{stderr}");
+    assert!(
+        !stderr.contains("assert_allclose"),
+        "tuple guard must fail before vector comparison: {stderr}"
+    );
+    assert!(
+        negative.stdout.is_empty(),
+        "tuple mismatch must not publish a success response"
+    );
+    println!("optimized tuple control: valid graph accepted; same-count/same-vector wrong tuples rejected: {stderr}");
+}

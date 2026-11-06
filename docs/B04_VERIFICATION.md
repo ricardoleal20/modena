@@ -99,3 +99,43 @@ establish official MACE E/F parity, classical stencil correctness or complete-st
 performance. G2/G3/G4 remain pending; no performance measurements were run.
 Task 1's recorded scalar-fixture Minor and final reviewed B03-base synchronization
 remain with the controller and were not expanded into this task.
+
+### G1 review fix round 1 — mandatory tuple identity under optimization
+
+Independent Task 3 review found that Python optimization removed the helper's
+`assert actual == reference`, allowing count/vector agreement to stand in for
+mandatory integer tuples. The controller authorized unconditional mismatch
+exceptions in place of the plan snippet. The helper now raises a tuple-specific
+ValueError before vector comparison/publication, and enforces ASE/NumPy pins
+with unconditional RuntimeError checks. These guards survive PYTHONOPTIMIZE.
+
+The focused ignored test
+`official_ase_rejects_wrong_tuple_with_python_optimization` was explicitly run
+under PYTHONOPTIMIZE=1. It builds a real Rust graph for two coincident distinct
+indices: correct tuples (0,1,0) and (1,0,0), both vectors exactly zero. Replacing
+the second tuple with a duplicate first tuple preserves edge count and every
+Cartesian vector, so vector allclose cannot detect it. The original optimized
+helper accepted this request (behavioral RED, Rust exit 101). After the fix,
+the valid request succeeds and the wrong tuple fails specifically at the tuple
+guard before vector comparison, publishing no success response (GREEN). The
+focused control also passed when executed with Rust 1.90.0.
+
+The actual positive `official_ase_images` gate was explicitly rerun with
+PYTHONOPTIMIZE=1 against all 27 official snapshots and the fresh helper source;
+1 test passed, zero ignored, 1 intentionally filtered negative-control test.
+Minimum finite margin and maximum vector error remain respectively
+0.01922590896378784 and 1.1102230246251565e-15 Angstrom. Actual ASE/NumPy/Python,
+neighborlist.py hash, fixture bytes and production code remain unchanged.
+Focused official-target Clippy and Rust formatting checks passed, with the two
+previously disclosed production unused warnings. No broad suite or timing was run.
+
+Current helper SHA256:
+`6ea0dd6eb1072c95a5c14b0013009c798baa36ba564c82c0ec26dd9143ca6b53`.
+Current official Rust driver SHA256:
+`7c1cbaead1be5079591cd372df6f882e74e8e8581e6925be8bd3c8f19a108405`.
+The earlier helper hash/manifests above identify the original historical epoch.
+New RED/GREEN/MSRV/fmt/lint and all 27 official responses are retained separately
+in `target/b04-evidence/task3-fix1-20261106/manifest.json`, SHA256
+`7bfab955f16efd34e17e9f50b56d4070bcd1accb69d995d8138a27707a198dcd`.
+Its base is `4f0f6f8aa333b908f8b8dfe7b62b7ae8980cbe14`; independent scoped
+re-review remains required for this fix epoch. G2/G3/G4 remain pending.

@@ -37,6 +37,7 @@ pub mod lattice;
 pub mod mpi_comm;
 pub mod neighbor;
 pub mod nose_hoover;
+mod periodic_geometry;
 pub mod potential;
 pub mod replica_exchange;
 pub mod runner;

@@ -442,22 +442,22 @@ pub(super) fn build_triclinic<const BOUNDED: bool>(system: &System, list_cutoff2
 
 Keep actual module visibility compatible with PairScaleSet; if nested `neighbor::triclinic` sees private parent fields, avoid exposing unrelated fields. Graph errors map to fallback, not a new global physics error for ordinary classical requests.
 
-- [ ] Add feature `neighbor-diagnostics=[]` to core. Under it expose enum `NeighborBuildStrategy { Auto, Scalar, FractionalStencil }`, chainable `with_triclinic_strategy_for_diagnostics`, and getter returning diagnostics. Normal API remains unchanged. Default internal Auto chooses Scalar until Task 8.
-- [ ] Add red tests for exact pair ordering and bounded/zero-skin invariants. Use these names: `scalar_order_is_lexicographic`, `zero_skin_rebuilds_every_build`, `bounded_zero_skin_matches_scalar`, `bounded_pair_overflow_still_errors`, `same_bounding_box_changed_basis_rebuilds`, `periodic_crossing_skin_is_complete`, `pair_scale_zero_zero_only_exclusion`. Run:
+- [x] Add feature `neighbor-diagnostics=[]` to core. Under it expose enum `NeighborBuildStrategy { Auto, Scalar, FractionalStencil }`, chainable `with_triclinic_strategy_for_diagnostics`, and getter returning diagnostics. Normal API remains unchanged. Default internal Auto chooses Scalar until Task 8.
+- [x] Add red tests for exact pair ordering and bounded/zero-skin invariants. Use these names: `scalar_order_is_lexicographic`, `zero_skin_rebuilds_every_build`, `bounded_zero_skin_matches_scalar`, `bounded_pair_overflow_still_errors`, `same_bounding_box_changed_basis_rebuilds`, `periodic_crossing_skin_is_complete`, `pair_scale_zero_zero_only_exclusion`. Run:
 
 ```sh
 rtk cargo test --locked -p modena-core --features neighbor-diagnostics --test triclinic_neighbors
 ```
 
-- [ ] Move scalar i<j enumeration without changing membership/order/exclusions/cap semantics into the private module. Keep finalization/reference positions/full box/rebuild_count in one success path in NeighborList. A failed bounded build must retain its documented failure state and never publish a partial success. No O(N^2) staging vector is added.
-- [ ] Verify targeted regressions including existing force_hardening/snapshot/pair_scales and default no-feature build:
+- [x] Move scalar i<j enumeration without changing membership/order/exclusions/cap semantics into the private module. Keep finalization/reference positions/full box/rebuild_count in one success path in NeighborList. A failed bounded build must retain its documented failure state and never publish a partial success. No O(N^2) staging vector is added.
+- [x] Verify targeted regressions including existing force_hardening/snapshot/pair_scales and default no-feature build:
 
 ```sh
 rtk cargo test --locked -p modena-core --features neighbor-diagnostics --test triclinic_neighbors --test force_hardening --test snapshot --test pair_scales
 rtk cargo test --locked -p modena-core --test force_hardening --test snapshot
 ```
 
-- [ ] Commit the extraction only after exact scalar behavior passes:
+- [x] Commit the extraction only after exact scalar behavior passes:
 
 ```sh
 rtk git add crates/modena-core/src/neighbor.rs crates/modena-core/src/neighbor/triclinic.rs crates/modena-core/src/lib.rs crates/modena-core/Cargo.toml crates/modena-core/tests/triclinic_neighbors.rs
@@ -472,15 +472,15 @@ rtk git commit -m ':refactor: Extract: scalar triclinic neighbor reference'
 
 **Consumes:** certified cell/error bounds, scalar path, list radius and caps. **Produces:** safe FractionalStencil candidate strategy, fallbacks and G3 evidence.
 
-- [ ] Add tests `stencil_matches_scalar_on_all_fixed_cells`, `stencil_matches_fixed_cube_membership`, `wrapped_offsets_are_unique_for_dims_1_2_3`, `uncertain_fractional_face_falls_back`, `caps_fall_back_without_missing_pairs`, `stencil_preserves_classical_force_energy_virial`, `skin_half_threshold_and_box_change`, and `bounded_stencil_overflow_never_succeeds`. Force diagnostics to prove at least one non-boundary moderate fixture actually selects stencil; tests that all fall back do not prove stencil correctness. Construct interior atom fractions using dyadic offsets away from the chosen bin faces.
-- [ ] Run red feature tests:
+- [x] Add tests `stencil_matches_scalar_on_all_fixed_cells`, `stencil_matches_fixed_cube_membership`, `wrapped_offsets_are_unique_for_dims_1_2_3`, `uncertain_fractional_face_falls_back`, `caps_fall_back_without_missing_pairs`, `stencil_preserves_classical_force_energy_virial`, `skin_half_threshold_and_box_change`, and `bounded_stencil_overflow_never_succeeds`. Force diagnostics to prove at least one non-boundary moderate fixture actually selects stencil; tests that all fall back do not prove stencil correctness. Construct interior atom fractions using dyadic offsets away from the chosen bin faces.
+- [x] Run red feature tests:
 
 ```sh
 rtk cargo test --locked -p modena-core --features neighbor-diagnostics --test triclinic_neighbors
 ```
 
-- [ ] Implement scalar_min_image_search_radius exactly from Spec, with post-B03 operation-count reconciliation. Add numeric unit tests for t_error, |t|<2^52 wrapping, J<=4096, and containment of scalar-selected displacements versus real-image counterparts in all fixed cube fixtures. Any uncertainty or overflow selects scalar with reason, never an incomplete stencil.
-- [ ] Implement interval-certified single-bin wrapping, m=floor(1/w), modulo deduplicated offsets and conservative offset filter. Grid<=1_000_000, offsets<=4096, N*offsets<=50_000_000, workspace<=134_217_728, existing i32 bounds and candidate_estimate<.8*all_pairs are hard eligibility checks. Compute estimate from occupancies and deduplicated unordered bin pairs with checked arithmetic; do not use observed timing to alter it mid-campaign.
+- [x] Implement scalar_min_image_search_radius exactly from Spec, with post-B03 operation-count reconciliation. Add numeric unit tests for t_error, |t|<2^52 wrapping, J<=4096, and containment of scalar-selected displacements versus real-image counterparts in all fixed cube fixtures. Any uncertainty or overflow selects scalar with reason, never an incomplete stencil.
+- [x] Implement interval-certified single-bin wrapping, m=floor(1/w), modulo deduplicated offsets and conservative offset filter. Grid<=1_000_000, offsets<=4096, N*offsets<=50_000_000, workspace<=134_217_728, existing i32 bounds and candidate_estimate<.8*all_pairs are hard eligibility checks. Compute estimate from occupancies and deduplicated unordered bin pairs with checked arithmetic; do not use observed timing to alter it mid-campaign.
 
 ```rust
 fn fallback_for_cost(candidate_estimate: u128, n: usize) -> bool {
@@ -498,8 +498,8 @@ fn fallback_for_cost(candidate_estimate: u128, n: usize) -> bool {
 
 The saturating subtraction handles N=0 only; all products are checked and any overflow is fallback `candidate_cost`. Use a cap-preflighted sorted occupied-bin list or existing linked arrays; no atom enters multiple bins in this first version. Pair emission is i<j, exact min_image prune, exclusions, bounded push; sort pairs lexicographically before publication. Deduplicate bin targets, not accepted pairs after unbounded overscan.
 
-- [ ] Run feature and standard regressions green. Require all optimized fixture pair sets equal both retained scalar and independent cube. E/F/W atol=rtol=1e-10, existing tighter tests unchanged. Inspect diagnostics for every cap reason and requested workspace. Auto must still choose scalar.
-- [ ] Commit correctness implementation:
+- [x] Run feature and standard regressions green. Require all optimized fixture pair sets equal both retained scalar and independent cube. E/F/W atol=rtol=1e-10, existing tighter tests unchanged. Inspect diagnostics for every cap reason and requested workspace. Auto must still choose scalar.
+- [x] Commit correctness implementation:
 
 ```sh
 rtk cargo test --locked -p modena-core --features neighbor-diagnostics --test triclinic_neighbors --test force_hardening --test snapshot --test pair_scales

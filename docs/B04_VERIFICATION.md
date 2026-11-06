@@ -8,7 +8,8 @@ B03 timing/audits finished and its CPU lease was released before this work.
 After Tasks1–4 review, unpublished B04 was synchronized onto delivered B03
 `12e4ab13efd2aff2d3693b7fc7fb4f50af12668f`. Every B04 source byte and commit
 patch matched its pre-sync identity; the mapping and proof are recorded below.
-B04 remains unpublished, with G3/G4 and final review/delivery pending.
+B04 remains unpublished. G1–G3 have independent approval; G4 and final
+whole-branch review/delivery remain pending.
 
 Controller preflight confirmed native managed worktree creation, branch prefix
 `ricardo/`, source-tree equivalence and the actual Vec3 dot/wrap operation
@@ -18,7 +19,7 @@ orders used by the proof. Subsequent G1 implementation evidence is recorded belo
 | --- | --- | --- |
 | G1 | passed; Task 3 independently approved through ce04b4f | Fixed-cube/resource tests and explicitly executed official ASE exact tuples |
 | G2 | passed; Task 4 independently approved at f45be2d, mapped to2aa3960 | Actual initialized official MACE graph/E/F parity |
-| G3 | implementation checks passed; independent Task 6 review pending | Certified stencil, scalar/cube pairs, E/F/W, skin/bounded and cap checks |
+| G3 | passed; Task 6 independently approved at04343c1 | Certified stencil, scalar/cube pairs, E/F/W, skin/bounded and cap checks |
 | G4 | pending | Paired complete-step benefit and fallback overhead |
 
 Source epochs, commands, numerical tolerances, package/model hashes and measured
@@ -329,8 +330,8 @@ for carrying those reviews forward. Later delivery metadata changes only docs.
 
 Task 6 implements forced FractionalStencil execution after reviewed Task 5 base
 `76143e76d6d190f4f2bbd74810fa1651ebf5c824`. Auto still executes Scalar without
-running stencil preparation. G3 functional/numerical checks pass; independent
-Task 6 review remains required. G4 is pending, with no timing or default promotion.
+running stencil preparation. G3 functional/numerical checks and independent
+Task 6 review passed. G4 is pending, with no timing or default promotion.
 
 The existing Task 1 scalar radius proof is consumed, not replaced. Its
 subtraction/dot error and inner-index calculations were extracted into private
@@ -442,3 +443,16 @@ test was initially placed outside its module. Both failed logs are preserved.
 No graph/model/helper semantics, System/Vec3 arithmetic, exclusions, frozen
 ELFs or historical evidence changed. These results do not establish G4,
 trained chemical accuracy or B10 acceptance.
+
+### G3 independent review closure
+
+Task6 independently approved `04343c16f9f2149fa7f5472b5c932902f2568fde`,
+with no Critical, Important or Minor finding. The reviewer verified the finite-
+precision/search-only bounds, certified bins/offset coverage and uniqueness,
+actual selected-path fixtures, exact unordered occupancy accounting, allocation
+caps, bounded failure propagation, pair ordering and original final predicate.
+Ten source and21 log hashes match the retained manifest; actual stable/MSRV,
+feature/default, numeric/neighbor and warning-clean lint evidence was checked
+without rerunning it. Task1's Q-fixture mismatch and staged native warnings are
+closed. Historical G1/G2 approvals remain scoped to their actual execution
+epochs. No G4 timing/default promotion or chemical efficacy is established.

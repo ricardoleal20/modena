@@ -599,3 +599,13 @@ Review round 1 additionally requires integer schema/thread metadata, recursive
 type-consistent shared snapshot-row values and strictly positive elapsed time.
 Setup/pool times remain nonnegative. Invalid child rows remain in the raw log
 and make their summary case invalid, without division by zero.
+
+
+The existing build/test CI job now performs this prerequisite before Python
+benchmark discovery on both Ubuntu and macOS: it builds the real layout_step
+example, selects its executable from Cargo's compiler-artifact JSON, freezes it
+under RUNNER_TEMP/b03-layout-step-contract, and computes fresh compiler/source/
+binary provenance. The discovery step explicitly supplies both B03 environment
+variables pointing to those fresh files. It has no dependency on ignored
+historical campaign data. The mandatory native test and failure behavior are
+unchanged.

@@ -148,9 +148,49 @@ jobs:
         run: cargo build --locked --workspace --verbose --release
       - name: Test
         run: cargo test --locked --workspace --verbose
+      - name: Build and freeze layout-step contract example
+        run: |
+          cargo build --locked --release -p modena-bench --example layout_step --message-format=json > "$RUNNER_TEMP/b03-layout-step-build.jsonl"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+
+          root = Path.cwd()
+          messages = Path(os.environ["RUNNER_TEMP"], "b03-layout-step-build.jsonl")
+          executables = {
+              row["executable"]
+              for line in messages.read_text().splitlines()
+              if (row := json.loads(line)).get("reason") == "compiler-artifact"
+              and row["target"]["name"] == "layout_step"
+              and "example" in row["target"]["kind"]
+              and row.get("executable")
+          }
+          if len(executables) != 1:
+              raise SystemExit(f"Expected one layout_step example, found {len(executables)}")
+          out = Path(os.environ["RUNNER_TEMP"], "b03-layout-step-contract")
+          out.mkdir(parents=True, exist_ok=False)
+          binary = out / "layout_step"
+          shutil.copy2(executables.pop(), binary)
+          sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+          sources = subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0")
+          manifest = {
+              "binary_sha256": sha(binary),
+              "rustc": subprocess.check_output(["rustc", "-vV"], text=True),
+              "head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "source_sha256": {name: sha(root / name) for name in sources
+                               if name and (root / name).is_file()}
+          }
+          (out / "provenance.json").write_text(json.dumps(manifest, indent=2))
+          PY
       - name: Python and benchmark-tool regression tests
         env:
           MODENA_BINARY: ${{ github.workspace }}/target/release/modena
+          B03_LAYOUT_STEP_BINARY: ${{ runner.temp }}/b03-layout-step-contract/layout_step
+          B03_LAYOUT_STEP_PROVENANCE: ${{ runner.temp }}/b03-layout-step-contract/provenance.json
         run: |
           python -m unittest discover -s python/modena/tests -v
           python -m unittest discover -s bench/tests -v

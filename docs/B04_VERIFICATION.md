@@ -456,3 +456,130 @@ feature/default, numeric/neighbor and warning-clean lint evidence was checked
 without rerunning it. Task1's Q-fixture mismatch and staged native warnings are
 closed. Historical G1/G2 approvals remain scoped to their actual execution
 epochs. No G4 timing/default promotion or chemical efficacy is established.
+
+## G4 — Task 7 harness preparation, 2026-11-06
+
+Status: prepared and functionally checked; **G4 is pending**. No campaign,
+performance pilot, accepted throughput result or selector promotion was run.
+Task 8 requires the controller's exclusive team CPU/write reservation, with B05
+paused first. The runner requires `MODENA_B04_CPU_LEASE=exclusive`; that marker
+records the controller's reservation and does not acquire a machine lock.
+Auto remains Scalar. B03 campaign files and production core are unchanged.
+
+The opt-in bench feature `neighbor-diagnostics` forwards the core feature;
+the named `triclinic_neighbors` binary requires it. Runtime needs this source
+checkout, Git, Python 3 and `shasum`, with no RTK dependency. Public commands:
+
+```sh
+rtk proxy python3 -m unittest discover -s bench/tests -p test_triclinic_neighbors.py
+rtk cargo test --locked -p modena-bench --features neighbor-diagnostics --bin triclinic_neighbors
+rtk proxy cargo +1.90.0 test --locked -p modena-bench --features neighbor-diagnostics --bin triclinic_neighbors
+rtk cargo build --locked --release -p modena-bench --features neighbor-diagnostics --bin triclinic_neighbors
+rtk proxy python3 bench/triclinic_neighbors.py --binary PATH --output-dir PATH --generate-only
+rtk proxy python3 bench/triclinic_neighbors.py --binary PATH --output-dir PATH --run
+rtk proxy python3 bench/triclinic_neighbors.py --output-dir PATH --analyze-only
+```
+
+Compilation must additionally set `B04_BUILD_REV`, `B04_BUILD_SOURCE_SHA256`
+and `B04_RUSTC_VERSION` in the compiler environment, calculated from the actual
+checkout's `source_identity()` and actual `rustc --version` before building.
+The exact executed command/environment wrapper is retained with the evidence.
+Source SHA256 covers sorted tracked Rust files, Cargo manifests/lock and the
+new Rust/Python harness, with NUL-delimited paths and contents. Records bind
+embedded build revision/source/compiler, runtime revision/source, actual
+executable/input SHA256, feature and profile. Before kernels, a mismatched
+runtime source/revision rejects a stale executable. Task 7's precommit
+dirty-source build is a preparation epoch; Task 8 must rebuild at its clean,
+reachable frozen HEAD and retain a fresh immutable executable/manifest.
+Committing deliberately invalidates the precommit binary's runtime revision.
+
+The manifest fixes N=256/2048/8192, density .8, the four exact design matrices
+(including elongated's moderate off-diagonals), skins 0/.3, threads 1/4, both
+modes, LJ sigma=epsilon=mass=1, cutoff 2.5, no tail correction, and the actual
+`LennardJones::new` shifted-force treatment. Grid coordinates, u64-safe hash
+products/modulo 65536, seed 20261106, velocity coefficient .05 and atom-order
+mean removal follow the design. Resulting f64 positions/velocities are
+serialized once and loaded identically by both strategies. Separate controls
+use an eight-atom grid-cap cell, an origin-on-boundary input and a 256-atom
+b_x=.2L/.21L full-basis change. The grid-cap control records its actual density.
+There are 15 snapshots and 116 planned paired cases, with basis changes in
+rebuild mode only. Generation is not numerical acceptance: execution checks
+all initial pair distances finite/positive and force/list-cutoff margin >1e-8
+before timing; failed fixtures stay invalid without input changes. Both
+basis-change states receive preflight and scalar/candidate physical comparison.
+
+Each process owns independent scalar/candidate System, NeighborList,
+PairForceModel and VelocityVerlet instances. Actual sorted half pairs and all
+E/F/W, position and velocity components are compared before timing, after
+each paired block and finally. Checks use atol=rtol=1e-10; recorded maxima are
+normalized errors `abs(a-b)/(1+max(abs(a),abs(b)))`. Validation never mutates
+live trajectories/counters. Five warmup and 20 measured paired blocks each
+advance ten steps at dt=.0005; AB/BA alternates by phase-local sample index.
+Both replicas continue from their preceding block. Step mode times complete
+VV/neighbor/force work plus per-step diagnostic accounting. Rebuild mode times
+whole forced NeighborList rebuilds; VV advances outside those timers to keep
+continuous trajectories. Those force/advance costs are explicitly excluded
+from the rebuild metric. Basis-change cases alternate the two full cells
+before forced builds and refresh forces before outside-timer VV advance.
+
+Actual rebuild deltas gate diagnostic accounting: cached reports contribute
+no repeated candidate checks/workspace. Records retain the last timed build's
+selection/fallback/pair count, and counts of every actual selected/fallback
+path. Warmups and measured records remain in chronological order. Errors
+publish invalid JSON/nonzero exit. Child failures, missing/zero durations,
+bool-as-int metadata, mismatched identities, absent counterparts, wrong order,
+nonfinite physics and incomplete rosters cannot become valid analysis.
+The case cap is 600 seconds including preflight; the parent also enforces a
+timeout and 7200-second campaign cap. Aborts retain partial files/child receipts
+as incomplete evidence. Exclusive file creation prevents historical overwrite.
+
+Analysis uses matched candidate/scalar ratios, their median and 10,000
+bootstrap resamples seeded 20261106, with bounds at indices 249/9749. Fixed
+preparation-time screens mark uncertainty if even/odd order median ratios
+differ by >10%, first/last-half medians drift by >10%, or bootstrap width
+exceeds 10% of the median. These screens do not identify a thermal cause.
+Natural skin .3 step cases need >=2 measured rebuilds in each replica; the
+protocol is never extended after observing too few. Rebuild gain is reported
+separately and cannot satisfy full-step promotion. Moderate N>=2048 at every
+skin/thread regime needs median<=.95 and CI upper<1; small/fallback cases need
+actual scalar selection and <=5% median overhead. Noisy fallback overhead
+stays inconclusive. The offline report leaves G4 pending for gate review.
+
+Memory scope is explicit because core neighbor/model capacities are private.
+`requested_bytes` is maximum reported temporary neighbor workspace across
+actual timed new builds, excluding pairs/model/process storage. Scalar/cache
+zero means zero new neighbor temporary workspace, never zero process memory.
+`allocation_count` counts actual process-wide Rust alloc/alloc_zeroed/realloc
+calls during timers, including failed requests. `retained_bytes` is live
+Rust-requested heap immediately after a timed block or its final timed rebuild:
+it includes BOTH replicas, model scratch, pool, counters and prior output
+records. It is not per-strategy memory, allocator usable size or OS RSS.
+Live bytes change only on successful allocation. Result-vector storage and
+reason maps are reserved outside timers. Pool/model setup is untimed; deferred
+worker allocations count only if they occur during a timer, with no model
+attribution. Both controls use identical counting allocator/relaxed atomic
+instrumentation. Its overhead is unquantified; instrumented cost alone does
+not establish uninstrumented production throughput. Any default promotion
+requires final review of this limitation as well as the full-step criteria.
+
+Preparation checks: 16 Python parser/statistical tests; three actual Rust tests
+on stable and Rust 1.90; named release build; focused Clippy `-D warnings` and
+rustfmt. Missing-counterpart RED/GREEN and a fixed nonconstant seeded-bootstrap
+mutation control fail for the intended reasons. Synthetic durations test
+arithmetic only. Five eight-atom G3-derived correctness smokes cover actual
+forced-stencil step/rebuild, one/four threads, both skins, paired Auto and
+alternating-basis rebuilds.
+They use the fixed 5/20/10 protocol; every duration is excluded from G4.
+Pairs and E/F/W/state agree exactly. Auto selects Scalar. The natural-skin
+smoke sees zero measured rebuilds and is inconclusive. A bool-as-N snapshot
+publishes retained invalid JSON/nonzero exit. The large ladder is generated
+only and has not been numerically evaluated. Running without the CPU lease
+marker fails before launching a child. Analysis of the unrun ladder retains
+116 unavailable cases as invalid and exits nonzero.
+
+Exact raw commands, source/binary/input hashes, failed attempts and immutable
+smoke epochs are retained under `target/b04-evidence/task7-harness-20261106/`.
+The detailed handoff is
+`.superpowers/sdd/2026-11-06-b04-periodic-neighbors/task-7-report.md`.
+These checks establish preparation only, with no model/tool-engine parity,
+chemical efficacy, G4 pass or B10 claim.

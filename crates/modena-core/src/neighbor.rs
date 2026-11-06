@@ -18,6 +18,75 @@ use rayon::prelude::*;
 use crate::system::System;
 use crate::vec3::Vec3;
 
+mod triclinic;
+use triclinic::{build_triclinic, TriclinicBuildStrategy};
+
+/// Requested triclinic builder, available only for explicit diagnostic builds.
+#[cfg(feature = "neighbor-diagnostics")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NeighborBuildStrategy {
+    Auto,
+    Scalar,
+    FractionalStencil,
+}
+
+/// Safety/cost reason for falling back from a triclinic stencil.
+#[cfg(feature = "neighbor-diagnostics")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NeighborBuildFallbackReason {
+    UncertifiedGeometry,
+    FractionalBoundary,
+    ImageDomain,
+    GridCap,
+    StencilCap,
+    WorkCap,
+    MemoryCap,
+    AllBins,
+    CandidateCost,
+}
+
+/// Actual successful triclinic rebuild, retained when the skin reuses a list.
+#[cfg(feature = "neighbor-diagnostics")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NeighborBuildDiagnostics {
+    pub selected: NeighborBuildStrategy,
+    pub fallback: Option<NeighborBuildFallbackReason>,
+    /// Number of minimum-image predicates evaluated, after 0/0 exclusions.
+    pub candidate_checks: u64,
+    /// Requested temporary workspace, excluding the emitted pair buffer.
+    pub requested_workspace_bytes: usize,
+}
+
+#[cfg(feature = "neighbor-diagnostics")]
+impl From<triclinic::BuildReport> for NeighborBuildDiagnostics {
+    fn from(report: triclinic::BuildReport) -> Self {
+        use triclinic::FallbackReason as F;
+        use NeighborBuildFallbackReason as D;
+        Self {
+            selected: match report.selected {
+                TriclinicBuildStrategy::Auto => NeighborBuildStrategy::Auto,
+                TriclinicBuildStrategy::Scalar => NeighborBuildStrategy::Scalar,
+                TriclinicBuildStrategy::FractionalStencil => {
+                    NeighborBuildStrategy::FractionalStencil
+                }
+            },
+            fallback: report.fallback.map(|reason| match reason {
+                F::UncertifiedGeometry => D::UncertifiedGeometry,
+                F::FractionalBoundary => D::FractionalBoundary,
+                F::ImageDomain => D::ImageDomain,
+                F::GridCap => D::GridCap,
+                F::StencilCap => D::StencilCap,
+                F::WorkCap => D::WorkCap,
+                F::MemoryCap => D::MemoryCap,
+                F::AllBins => D::AllBins,
+                F::CandidateCost => D::CandidateCost,
+            }),
+            candidate_checks: report.candidate_checks,
+            requested_workspace_bytes: report.requested_workspace_bytes,
+        }
+    }
+}
+
 pub struct NeighborList {
     cutoff: f64,
     skin: f64,
@@ -38,6 +107,10 @@ pub struct NeighborList {
     rebuild_count: usize,
     /// Indexed independently weighted special pairs; 0/0 pairs are omitted.
     exclusions: PairScaleSet,
+    #[cfg(feature = "neighbor-diagnostics")]
+    triclinic_strategy: TriclinicBuildStrategy,
+    #[cfg(feature = "neighbor-diagnostics")]
+    triclinic_diagnostics: Option<NeighborBuildDiagnostics>,
     // Grid state (rebuilt as needed).
     dims: [usize; 3],
     cell_size: [f64; 3],
@@ -185,6 +258,10 @@ impl NeighborList {
             built: false,
             rebuild_count: 0,
             exclusions: excl,
+            #[cfg(feature = "neighbor-diagnostics")]
+            triclinic_strategy: TriclinicBuildStrategy::Auto,
+            #[cfg(feature = "neighbor-diagnostics")]
+            triclinic_diagnostics: None,
             dims: [1, 1, 1],
             cell_size: [cutoff; 3],
             head: Vec::new(),
@@ -195,6 +272,31 @@ impl NeighborList {
     /// Phase-1-compatible constructor: no skin (rebuild every call).
     pub fn new(cutoff: f64) -> Self {
         Self::with_skin(cutoff, 0.0)
+    }
+
+    /// Select a diagnostic request. Auto and forced FractionalStencil currently
+    /// execute Scalar; reports always name the actual builder. Changing the
+    /// request invalidates the cached list so the next build honors it.
+    #[cfg(feature = "neighbor-diagnostics")]
+    pub fn with_triclinic_strategy_for_diagnostics(
+        mut self,
+        strategy: NeighborBuildStrategy,
+    ) -> Self {
+        self.triclinic_strategy = match strategy {
+            NeighborBuildStrategy::Auto => TriclinicBuildStrategy::Auto,
+            NeighborBuildStrategy::Scalar => TriclinicBuildStrategy::Scalar,
+            NeighborBuildStrategy::FractionalStencil => TriclinicBuildStrategy::FractionalStencil,
+        };
+        self.built = false;
+        self.triclinic_diagnostics = None;
+        self
+    }
+
+    /// Last successful triclinic rebuild; None before a build, after an empty
+    /// build or failed bounded rebuild, or after an orthorhombic rebuild.
+    #[cfg(feature = "neighbor-diagnostics")]
+    pub fn triclinic_build_diagnostics(&self) -> Option<NeighborBuildDiagnostics> {
+        self.triclinic_diagnostics
     }
 
     pub fn pair_scale(&self, i: usize, j: usize) -> (f64, f64) {
@@ -241,6 +343,10 @@ impl NeighborList {
         if n == 0 {
             self.built = false;
             self.pairs.clear();
+            #[cfg(feature = "neighbor-diagnostics")]
+            {
+                self.triclinic_diagnostics = None;
+            }
             return;
         }
         if self.built
@@ -324,6 +430,10 @@ impl NeighborList {
         let n = system.n();
         let box_size = system.box_size;
         self.rebuild_count += 1;
+        #[cfg(feature = "neighbor-diagnostics")]
+        {
+            self.triclinic_diagnostics = None;
+        }
 
         // Grid dimensions: cell edge >= list_cutoff. Clamp to 1 cell per axis if
         // the box is smaller than the list cutoff (valid via minimum-image).
@@ -353,85 +463,87 @@ impl NeighborList {
         let mut pairs = std::mem::take(&mut self.pairs);
         pairs.clear();
         if box_size.is_triclinic() || dims.iter().all(|&d| d <= 3) {
-            let lc2 = self.list_cutoff2;
-            if !BOUNDED {
-                pairs.reserve(n * 27);
+            #[cfg(feature = "neighbor-diagnostics")]
+            let strategy = self.triclinic_strategy;
+            #[cfg(not(feature = "neighbor-diagnostics"))]
+            let strategy = TriclinicBuildStrategy::Auto;
+            let report = build_triclinic::<BOUNDED>(
+                system,
+                self.list_cutoff2,
+                &self.exclusions,
+                max_pairs,
+                strategy,
+                &mut pairs,
+            )?;
+            #[cfg(feature = "neighbor-diagnostics")]
+            if box_size.is_triclinic() {
+                self.triclinic_diagnostics = Some(report.into());
             }
-            for i in 0..n {
-                let ri = system.pos(i);
-                for j in (i + 1)..n {
-                    if self.exclusions.contains(i, j) {
-                        continue;
-                    }
-                    let d = box_size.min_image(ri - system.pos(j));
-                    if d.norm2() < lc2 {
-                        push_pair::<BOUNDED>(&mut pairs, (i, j), max_pairs)?;
-                    }
-                }
-            }
-            self.pairs = pairs;
-            self.ref_positions.clear();
-            self.ref_positions.extend_from_slice(system.positions_raw());
-            self.ref_box = Some(box_size);
-            self.built = true;
-            return Ok(());
-        }
-
-        let ncells = dims[0] * dims[1] * dims[2];
-        self.head.clear();
-        self.head.resize(ncells, -1);
-        self.next.clear();
-        self.next.resize(n, -1);
-
-        // Bin atoms into cells.
-        for i in 0..n {
-            let c = self.cell_of(system.pos(i));
-            self.next[i] = self.head[c];
-            self.head[c] = i as i32;
-        }
-
-        // Deduplicated per-axis stencil (see Phase-1 comment: with < 3 cells per
-        // axis the raw {-1,0,1} stencil wraps onto the same cell and overcounts).
-        let dxs = stencil_deltas(dims[0]);
-        let dys = stencil_deltas(dims[1]);
-        let dzs = stencil_deltas(dims[2]);
-
-        // The env knob forces serial MD scans for benchmarking. Snapshots
-        // always use one buffer to enforce the cap across the whole build.
-        let force_serial = std::env::var("MODENA_SERIAL_NEIGHBOR").is_ok();
-        if !BOUNDED && n >= NEIGHBOR_PAR_MIN && !force_serial {
-            // Parallel over `i`-ranges, concatenated in order: rayon's indexed
-            // `par_chunks().map().collect()` preserves per-chunk order and the
-            // chunk sequence, and the per-`i` scan is unchanged, so the pair
-            // list is byte-identical to the serial build — which keeps the
-            // force-accumulation order (and hence runnable determinism)
-            // unchanged. The division follows the serial threshold so small
-            // rebuilds (NVE at benchmark sizes) keep today's exact path.
-            let idx: Vec<usize> = (0..n).collect();
-            let chunk = n.div_ceil(rayon::current_num_threads().max(2));
-            let buffers: Vec<Vec<(usize, usize)>> = idx
-                .par_chunks(chunk)
-                .map(|is| {
-                    let mut buf: Vec<(usize, usize)> = Vec::new();
-                    for &i in is {
-                        self.scan_atom::<false>(
-                            system,
-                            i,
-                            [&dxs, &dys, &dzs],
-                            &mut buf,
-                            usize::MAX,
-                        )
-                        .expect("unbounded pair scan");
-                    }
-                    buf
-                })
-                .collect();
-            for buf in buffers {
-                pairs.extend(buf);
-            }
+            #[cfg(not(feature = "neighbor-diagnostics"))]
+            let _ = report;
         } else {
+            let ncells = dims[0] * dims[1] * dims[2];
+            self.head.clear();
+            self.head.resize(ncells, -1);
+            self.next.clear();
+            self.next.resize(n, -1);
+
+            // Bin atoms into cells.
             for i in 0..n {
-                self.scan_atom::<BOUNDED>(system, i, [&dxs, &dys, &dzs], &mut pairs, max_pairs)?;
+                let c = self.cell_of(system.pos(i));
+                self.next[i] = self.head[c];
+                self.head[c] = i as i32;
+            }
+
+            // Deduplicated per-axis stencil (see Phase-1 comment: with < 3 cells per
+            // axis the raw {-1,0,1} stencil wraps onto the same cell and overcounts).
+            let dxs = stencil_deltas(dims[0]);
+            let dys = stencil_deltas(dims[1]);
+            let dzs = stencil_deltas(dims[2]);
+
+            // The env knob forces serial MD scans for benchmarking. Snapshots
+            // always use one buffer to enforce the cap across the whole build.
+            let force_serial = std::env::var("MODENA_SERIAL_NEIGHBOR").is_ok();
+            if !BOUNDED && n >= NEIGHBOR_PAR_MIN && !force_serial {
+                // Parallel over `i`-ranges, concatenated in order: rayon's indexed
+                // `par_chunks().map().collect()` preserves per-chunk order and the
+                // chunk sequence, and the per-`i` scan is unchanged, so the pair
+                // list is byte-identical to the serial build — which keeps the
+                // force-accumulation order (and hence runnable determinism)
+                // unchanged. The division follows the serial threshold so small
+                // rebuilds (NVE at benchmark sizes) keep today's exact path.
+                let idx: Vec<usize> = (0..n).collect();
+                let chunk = n.div_ceil(rayon::current_num_threads().max(2));
+                let buffers: Vec<Vec<(usize, usize)>> = idx
+                    .par_chunks(chunk)
+                    .map(|is| {
+                        let mut buf: Vec<(usize, usize)> = Vec::new();
+                        for &i in is {
+                            self.scan_atom::<false>(
+                                system,
+                                i,
+                                [&dxs, &dys, &dzs],
+                                &mut buf,
+                                usize::MAX,
+                            )
+                            .expect("unbounded pair scan");
+                        }
+                        buf
+                    })
+                    .collect();
+                for buf in buffers {
+                    pairs.extend(buf);
+                }
+            } else {
+                for i in 0..n {
+                    self.scan_atom::<BOUNDED>(
+                        system,
+                        i,
+                        [&dxs, &dys, &dzs],
+                        &mut pairs,
+                        max_pairs,
+                    )?;
+                }
             }
         }
         self.pairs = pairs;
@@ -559,6 +671,64 @@ mod tests {
             sys.set_pos(i, p);
         }
         sys
+    }
+
+    #[test]
+    fn triclinic_bounded_zero_skin_matches_scalar() {
+        let mut sys = sys_with(
+            &[Vec3::zero(), Vec3::new(1., 0., 0.), Vec3::new(9.5, 0., 0.)],
+            10.,
+        );
+        sys.box_size = SimBox::triclinic([
+            Vec3::new(10., 0., 0.),
+            Vec3::new(3., 10., 0.),
+            Vec3::new(0., 0., 10.),
+        ]);
+        let mut bounded = NeighborList::new(2.);
+        let mut scalar = NeighborList::new(2.);
+        for x in [1., 4.] {
+            sys.set_pos(1, Vec3::new(x, 0., 0.));
+            bounded.rebuild_bounded(&sys, 3).unwrap();
+            scalar.build(&sys);
+            assert_eq!(bounded.pairs(), scalar.pairs());
+            assert!(bounded.pairs.capacity() <= 3);
+        }
+        assert_eq!(bounded.pairs(), &[(0, 2)]);
+        assert_eq!(bounded.rebuild_count(), 2);
+    }
+
+    #[test]
+    fn triclinic_bounded_overflow_invalidates_and_recovers() {
+        let mut sys = sys_with(
+            &[Vec3::zero(), Vec3::new(1., 0., 0.), Vec3::new(9.5, 0., 0.)],
+            10.,
+        );
+        sys.box_size = SimBox::triclinic([
+            Vec3::new(10., 0., 0.),
+            Vec3::new(3., 10., 0.),
+            Vec3::new(0., 0., 10.),
+        ]);
+        for skin in [0., 0.3] {
+            let mut nl = NeighborList::with_skin(2., skin);
+            nl.rebuild_bounded(&sys, 3).unwrap();
+            assert_eq!(nl.pairs(), &[(0, 1), (0, 2), (1, 2)]);
+            #[cfg(feature = "neighbor-diagnostics")]
+            assert!(nl.triclinic_build_diagnostics().is_some());
+            let reference_positions = nl.ref_positions.clone();
+            let error = nl.rebuild_bounded(&sys, 2).unwrap_err();
+            assert!(error.to_string().contains("2 neighbor pairs"));
+            assert!(!nl.built);
+            #[cfg(feature = "neighbor-diagnostics")]
+            assert!(nl.triclinic_build_diagnostics().is_none());
+            assert!(nl.pairs().is_empty());
+            assert!(nl.pairs.capacity() <= 2);
+            assert_eq!(nl.ref_positions, reference_positions);
+            assert_eq!(nl.ref_box, Some(sys.box_size));
+            assert_eq!(nl.rebuild_count(), 2);
+            nl.build(&sys);
+            assert_eq!(nl.rebuild_count(), 3);
+            assert_eq!(nl.pairs(), &[(0, 1), (0, 2), (1, 2)]);
+        }
     }
 
     #[test]

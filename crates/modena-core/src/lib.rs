@@ -80,6 +80,8 @@ pub use io::input::{
 pub use io::log::LogWriter;
 pub use io::xyz::{read_xyz, TrajectoryWriter};
 pub use lattice::{random_alloy, rocksalt, AlloySpecies};
+#[cfg(feature = "neighbor-diagnostics")]
+pub use neighbor::{NeighborBuildDiagnostics, NeighborBuildFallbackReason, NeighborBuildStrategy};
 pub use neighbor::{NeighborList, PairScale};
 pub use nose_hoover::NoseHooverChain;
 pub use periodic_graph::{

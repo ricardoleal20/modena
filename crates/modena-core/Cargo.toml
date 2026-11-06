@@ -33,6 +33,8 @@ pollster = { workspace = true, optional = true }
 
 [features]
 default = []
+# Explicit strategy controls and reports for neighbor correctness/cost studies.
+neighbor-diagnostics = []
 # Real distributed-memory parallelism via the `mpi` crate (requires a system
 # MPI — MPICH or OpenMPI). Adds `MpiCommunicator` and a ghost-exchange pair
 # driver; the decomposition algorithm itself lives in `decomp` (always on).

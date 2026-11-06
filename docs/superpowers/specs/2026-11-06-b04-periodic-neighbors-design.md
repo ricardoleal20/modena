@@ -235,7 +235,23 @@ ASE oracle uses installed interpreter `/Users/ricardoleal20/Documents/Code/Misc/
 
 ## Actual official model software parity, G2
 
-Preferred future environment is isolated `target/b04-mace-venv` using installed **Python 3.12.8**. Root inventory also found 3.14.5; neither known ASE venv contains MACE/Torch. Candidate pins: torch=2.6.0, mace-torch=0.3.13, e3nn=0.4.4, numpy=2.2.6, ase=3.26.0, matscipy=1.1.1. Resolve all transitive packages with hashes under 3.12.8 and record source release SHA. Compatibility is a gate, not a present assertion. Use CPU float64, one thread. If 3.12.8 resolution/import/actual forward fails due to supported-runtime incompatibility, stop G2; prepare a separate pinned Python 3.11 bootstrap manifest and revise the environment contract before installing it. Do not reuse/mutate B01 or silently change framework versions.
+Environment revision before any model evaluation (2026-11-06): the initial
+candidate NumPy2.2.6 conflicted with matscipy1.1.1's declared runtime
+`numpy>=1.16.0,<2.0.0`; original failed requirements/resolver logs are preserved.
+Revise only NumPy to1.26.4; retain Python3.12.8 and all other direct pins, model
+constructor/seed/fixtures/tolerances. Exact candidate resolution produced44
+packages; hash-required dry sync and binary availability checks succeeded for
+all six direct dependencies on this macOS arm64 host. python-hostlist2.3.0
+requires its published source distribution; retain its hash and actual build/
+installed-package provenance. Resolution is not import/model acceptance.
+Primary metadata: [matscipy1.1.1 contract](https://raw.githubusercontent.com/libAtoms/matscipy/v1.1.1/pyproject.toml),
+[MACE0.3.13 package metadata](https://pypi.org/pypi/mace-torch/0.3.13/json),
+[NumPy1.26.4 supported Python](https://numpy.org/doc/stable/release/1.26.4-notes.html).
+No numerical result exists under the superseded NumPy2 candidate; future G2
+claims bind only to the actual revised hashed environment.
+
+
+Preferred future environment is isolated `target/b04-mace-venv` using installed **Python 3.12.8**. Root inventory also found 3.14.5; neither known ASE venv contains MACE/Torch. Candidate pins: torch=2.6.0, mace-torch=0.3.13, e3nn=0.4.4, numpy=1.26.4, ase=3.26.0, matscipy=1.1.1. Resolve all transitive packages with hashes under 3.12.8 and record source release SHA. Compatibility is a gate, not a present assertion. Use CPU float64, one thread. If 3.12.8 resolution/import/actual forward fails due to supported-runtime incompatibility, stop G2; prepare a separate pinned Python 3.11 bootstrap manifest and revise the environment contract before installing it. Do not reuse/mutate B01 or silently change framework versions.
 
 Pin the official model constructor below before evaluation; initialized parameters are not trained chemical weights. Record sorted state_dict tensor names/dtypes/shapes/raw CPU bytes SHA256, parameter count, package lock and platform.
 

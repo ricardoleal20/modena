@@ -352,7 +352,7 @@ rtk git commit -m ':white_check_mark: Add: independent periodic image graph orac
 torch==2.6.0
 mace-torch==0.3.13
 e3nn==0.4.4
-numpy==2.2.6
+numpy==1.26.4
 ase==3.26.0
 matscipy==1.1.1
 ```

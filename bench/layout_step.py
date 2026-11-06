@@ -118,18 +118,33 @@ def validate_state_types(state):
         for x in vector: finite(x,'cell')
 
 
+def same_json_value(a, b):
+    """JSON equality without Python bool/int or int/float coercion."""
+    if type(a) is not type(b): return False
+    if isinstance(a, dict):
+        return set(a)==set(b) and all(same_json_value(a[key],b[key]) for key in a)
+    if isinstance(a, list):
+        return len(a)==len(b) and all(same_json_value(x,y) for x,y in zip(a,b))
+    return a==b
+
+
 def validate(row, snap, expected):
     for key, value in expected.items():
         if type(row.get(key)) is not type(value) or row.get(key) != value:
             raise ValueError(f"wrong {key}: {row.get(key)!r} != {value!r}")
-    if row["schema_version"] != 1 or snap["schema_version"] != 1:
-        raise ValueError("schema")
+    for value in (row["schema_version"],snap["schema_version"]):
+        if type(value) is not int or value != 1: raise ValueError("integer schema version 1 required")
+    for key in ("requested_threads","actual_threads"):
+        if type(row[key]) is not int: raise ValueError("integer thread field required: "+key)
+    if row["requested_threads"] < 0: raise ValueError("requested_threads must be nonnegative")
     if set(row)-set(snap["row"]) != {"pool_setup_seconds"} or set(snap["row"])-set(row):
         raise ValueError("snapshot.row must omit exactly pool_setup_seconds")
-    if any(row[k] != v for k,v in snap["row"].items()):
+    if any(not same_json_value(row[k],v) for k,v in snap["row"].items()):
         raise ValueError("snapshot/stdout mismatch")
     for key in ("setup_seconds", "elapsed_seconds", "pool_setup_seconds", "force_max_abs"):
-        if finite(row[key], key) < 0: raise ValueError(key)
+        value=finite(row[key], key)
+        if value < 0 or (key=="elapsed_seconds" and value==0):
+            raise ValueError("elapsed_seconds must be positive" if key=="elapsed_seconds" else key)
     for value in row["energies"].values(): finite(value, "energy")
     for key in ("potential", "kinetic", "total", "virial", "temperature", "pressure"):
         finite(row["energies"][key], key)

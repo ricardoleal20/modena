@@ -1,7 +1,9 @@
 """Real child processes exercise malformed output, rather than subprocess mocks."""
 import importlib.util
+from contextlib import contextmanager
 import json
 import math
+import os
 import struct
 import subprocess
 from pathlib import Path
@@ -87,6 +89,62 @@ def physical_fixture():
     row['final_checksum_fnv1a64']=snap['final']['checksum_fnv1a64']
     snap['row']={k:v for k,v in row.items() if k!='pool_setup_seconds'}
     return row,snap,expected
+
+
+@contextmanager
+def retained_test_directory(name):
+    """Keep new regression subprocess bytes when explicitly requested."""
+    evidence = os.environ.get("B03_TEST_EVIDENCE_DIR")
+    if evidence:
+        path = Path(evidence).expanduser().resolve() / name
+        path.mkdir(parents=True, exist_ok=False)
+        yield path
+    else:
+        with tempfile.TemporaryDirectory(prefix="b03-"+name+"-") as tmp:
+            yield Path(tmp)
+
+
+def contract_child(out, label, row, snapshot):
+    """Synthetic malformed-contract child; never used as the Rust gate."""
+    child = out / (label+".py")
+    child.write_text("#!"+sys.executable+"\nimport pathlib,sys\n"
+        "pathlib.Path(sys.argv[sys.argv.index('--snapshot')+1]).write_text("
+        +repr(json.dumps(snapshot))+")\nprint("+repr(json.dumps(row))+")\n")
+    child.chmod(0o755)
+    return child
+
+
+def resolved_rust_example(test):
+    override = os.environ.get("B03_LAYOUT_STEP_BINARY")
+    if override:
+        manifest = os.environ.get("B03_LAYOUT_STEP_PROVENANCE")
+        test.assertTrue(manifest,
+            "B03_LAYOUT_STEP_BINARY requires B03_LAYOUT_STEP_PROVENANCE; see docs/B03_PACKED_LAYOUT.md")
+        binary = Path(override).expanduser().resolve()
+        provenance_path = Path(manifest).expanduser().resolve()
+    else:
+        binary = (driver.ROOT/"target/b03-evidence/task2-campaign-20261106/layout_step").resolve()
+        provenance_path = binary.parent/"provenance.json"
+    prerequisite = ("Required real Rust layout_step contract gate has no frozen executable/provenance. "
+        "Build and freeze the example, set B03_LAYOUT_STEP_BINARY and "
+        "B03_LAYOUT_STEP_PROVENANCE as documented in docs/B03_PACKED_LAYOUT.md; this gate never skips.")
+    test.assertTrue(binary.is_file(),prerequisite)
+    test.assertTrue(provenance_path.is_file(),prerequisite)
+    provenance = driver.read_json(provenance_path)
+    test.assertEqual(driver.sha(binary),provenance["binary_sha256"],"Rust executable provenance SHA mismatch")
+    test.assertTrue(provenance.get("rustc","").startswith("rustc "),"compiler provenance is required")
+    source_files = ["Cargo.toml","Cargo.lock","crates/modena-core/Cargo.toml",
+        "crates/modena-bench/Cargo.toml","crates/modena-bench/examples/layout_step.rs"]
+    for crate in ("modena-core","modena-bench"):
+        source_files += [str(path.relative_to(driver.ROOT)) for path in
+            sorted((driver.ROOT/"crates"/crate/"src").rglob("*.rs"))]
+        build = driver.ROOT/"crates"/crate/"build.rs"
+        if build.exists(): source_files.append(str(build.relative_to(driver.ROOT)))
+    source_hashes = provenance.get("source_sha256",{})
+    for relative in source_files:
+        test.assertEqual(source_hashes.get(relative),driver.sha(driver.ROOT/relative),
+            "Rust source provenance missing/stale for "+relative+"; freeze a matching real build")
+    return binary,provenance_path,provenance
 
 
 class DriverTests(unittest.TestCase):
@@ -237,6 +295,102 @@ class SecondaryTests(unittest.TestCase):
                 '--out',str(root/'secondary'),'--binary',sys.executable],capture_output=True,text=True)
             self.assertNotEqual(result.returncode,0)
             self.assertIn('binary SHA',result.stdout+result.stderr)
+
+
+class ReviewRegressionTests(unittest.TestCase):
+    def test_strict_metadata_rejects_retained_malformed_children(self):
+        good, original, _ = fixture()
+        mutations = ("actual_threads_bool","actual_threads_float","requested_threads_bool",
+            "stdout_schema_bool","stdout_schema_float","snapshot_schema_bool","snapshot_schema_float",
+            "shared_requested_threads_bool","shared_actual_threads_bool","shared_schema_bool",
+            "shared_nested_energy_bool")
+        with retained_test_directory("strict-metadata") as out:
+            records=[]
+            for mutation in mutations:
+                row=json.loads(json.dumps(good)); snap=json.loads(json.dumps(original))
+                if mutation=="actual_threads_bool": row["actual_threads"]=True
+                elif mutation=="actual_threads_float": row["actual_threads"]=1.0
+                elif mutation=="requested_threads_bool": row["requested_threads"]=True
+                elif mutation=="stdout_schema_bool": row["schema_version"]=True
+                elif mutation=="stdout_schema_float": row["schema_version"]=1.0
+                elif mutation=="snapshot_schema_bool": snap["schema_version"]=True
+                elif mutation=="snapshot_schema_float": snap["schema_version"]=1.0
+                snap["row"]={k:v for k,v in row.items() if k!="pool_setup_seconds"}
+                if mutation=="shared_requested_threads_bool": snap["row"]["requested_threads"]=True
+                elif mutation=="shared_actual_threads_bool": snap["row"]["actual_threads"]=True
+                elif mutation=="shared_schema_bool": snap["row"]["schema_version"]=True
+                elif mutation=="shared_nested_energy_bool":
+                    snap["row"]["energies"]=dict(row["energies"],temperature=False)
+                child=contract_child(out,mutation,row,snap)
+                record=driver.run_one(child,out,mutation,"soa",256,1,1,"no-rebuild",.000001)
+                records.append(record)
+                with self.subTest(mutation=mutation):
+                    self.assertFalse(record["valid"],"malformed metadata child was accepted")
+                    self.assertEqual(driver.read_json(record["stdout_path"]),row)
+                    self.assertTrue(Path(record["snapshot_path"]).is_file())
+            self.assertEqual(len((out/"rows.jsonl").read_text().splitlines()),len(mutations))
+
+    def test_zero_elapsed_child_is_retained_and_cannot_crash_summary(self):
+        good, original, _ = fixture()
+        with retained_test_directory("zero-elapsed") as out:
+            records=[]
+            for pair in range(5):
+                for role in ("A","B"):
+                    row=json.loads(json.dumps(good)); snap=json.loads(json.dumps(original))
+                    mode="interleaved-serial" if role=="A" else "soa"
+                    row.update(mode=mode,evaluated_pairs=None if role=="A" else 0)
+                    if pair==0 and role=="A": row["elapsed_seconds"]=0.0
+                    snap["row"]={k:v for k,v in row.items() if k!="pool_setup_seconds"}
+                    label=f"pair{pair}-{role}"
+                    child=contract_child(out,label,row,snap)
+                    record=driver.run_one(child,out,label,mode,256,1,1,"no-rebuild",.000001)
+                    record.update(phase="measured",pair=pair,role=role,candidate="soa")
+                    records.append(record)
+            bad=records[0]
+            self.assertEqual(driver.read_json(bad["stdout_path"])["elapsed_seconds"],0.0)
+            self.assertEqual(driver.sha(bad["stdout_path"]),bad["stdout_sha256"])
+            self.assertTrue(Path(bad["snapshot_path"]).is_file())
+            self.assertEqual(len((out/"rows.jsonl").read_text().splitlines()),10)
+            try:
+                result=driver.summary(records)
+            except ZeroDivisionError as error:
+                self.fail("malformed child crashed summary instead of becoming an invalid row: "+str(error))
+            self.assertFalse(bad["valid"])
+            self.assertEqual(len(result),1)
+            self.assertFalse(result[0]["valid"])
+            self.assertFalse(result[0]["timing_pass"])
+            self.assertEqual(len(result[0]["improvements"]),4)
+
+    def test_actual_rust_example_stdout_snapshot_subset_contract(self):
+        binary,provenance_path,provenance=resolved_rust_example(self)
+        with retained_test_directory("actual-rust-contract") as out:
+            driver.write_json(out/"binary-resolution.json",dict(binary=str(binary),
+                provenance_path=str(provenance_path),binary_sha256=driver.sha(binary),
+                compiler=provenance["rustc"],source_sha256=provenance["source_sha256"]))
+            records=[]
+            for mode in ("interleaved-serial","cluster4"):
+                snapshot=out/(mode+".snapshot.json")
+                command=[str(binary),"--mode",mode,"--n","256","--threads","1","--steps","1",
+                    "--seed","17","--dt","0.000001","--rebuild-policy","no-rebuild",
+                    "--snapshot",str(snapshot)]
+                result=driver.capture(command,out/mode)
+                records.append(result)
+                self.assertEqual(result["returncode"],0,Path(result["stderr_path"]).read_text())
+                row=driver.read_json(result["stdout_path"]); snap=driver.read_json(snapshot)
+                self.assertEqual(set(row)-set(snap["row"]),{"pool_setup_seconds"})
+                self.assertEqual(set(snap["row"])-set(row),set())
+                shared={k:v for k,v in row.items() if k!="pool_setup_seconds"}
+                # Canonical JSON exposes bool/int/float differences that == hides.
+                self.assertEqual(json.dumps(shared,sort_keys=True,allow_nan=False),
+                    json.dumps(snap["row"],sort_keys=True,allow_nan=False))
+                self.assertIn(type(row["pool_setup_seconds"]),(int,float))
+                self.assertTrue(math.isfinite(row["pool_setup_seconds"]))
+                self.assertGreaterEqual(row["pool_setup_seconds"],0)
+                self.assertGreater(row["elapsed_seconds"],0)
+                driver.validate(row,snap,dict(mode=mode,n=256,requested_threads=1,
+                    steps_requested=1,steps_completed=1,seed=17,dt=.000001,
+                    rebuild_policy="no-rebuild"))
+            driver.write_json(out/"actual-rust-invocations.json",records)
 
 
 if __name__ == "__main__":

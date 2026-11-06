@@ -10,6 +10,8 @@ No SIMD or parallel packed implementation is evaluated.
 ## Reproduce
 
 The driver uses Python 3 standard-library subprocess argv directly, without RTK.
+The required real Rust contract test needs the frozen executable/provenance
+prerequisite described below before running the test command on a fresh clone.
 RTK prefixes below are the repository agent-shell convention only.
 
 ```sh
@@ -534,3 +536,66 @@ subprocess fixtures first demonstrated eight failing subcases, then passed with
 strict saved-state types. This only strengthens tooling validation after both
 measurement epochs; neither source epoch, binary, tolerance, timer nor outcome
 is relabeled or rerun.
+
+
+## Required actual Rust executable test
+
+The committed executable-contract test invokes the real Rust example for
+interleaved-serial and Cluster4 at N256, one step, one thread. It independently
+asserts that snapshot.row omits exactly pool_setup_seconds, all shared values
+and JSON types match, and stdout pool time is finite/nonnegative. This is a
+short contract smoke, not a rerun of either performance matrix. Synthetic Python
+children remain explicitly separate malformed-output fixtures.
+
+By default the test uses the immutable retained
+target/b03-evidence/task2-campaign-20261106/layout_step with its sibling
+provenance.json. It verifies the executable SHA256, compiler provenance and
+current Cargo/core/benchmark Rust source hashes. It never uses a potentially
+overwritten shared target/release executable as a fallback, never auto-builds,
+and never silently skips the required gate.
+
+A clone or CI job without that retained artifact must build and freeze a real
+matching example, then explicitly set both B03_LAYOUT_STEP_BINARY and
+B03_LAYOUT_STEP_PROVENANCE. Coordinate any shared target before building.
+For example, from the repository root (omit --offline if dependencies must be
+fetched first):
+
+```sh
+rtk cargo build --locked --offline --release -p modena-bench --example layout_step
+rtk proxy python3 - <<'PY'
+import hashlib, json, shutil, subprocess
+from pathlib import Path
+root = Path.cwd()
+out = root / "target/b03-contract-example"
+out.mkdir(parents=True, exist_ok=False)  # choose a fresh directory
+binary = out / "layout_step"
+shutil.copy2(root / "target/release/examples/layout_step", binary)
+sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+sources = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
+manifest = {
+    "binary_sha256": sha(binary),
+    "rustc": subprocess.check_output(["rustc", "-vV"], text=True),
+    "source_sha256": {name: sha(root / name) for name in sources
+                      if (root / name).is_file()}
+}
+(out / "provenance.json").write_text(json.dumps(manifest, indent=2))
+PY
+rtk proxy env B03_LAYOUT_STEP_BINARY="$PWD/target/b03-contract-example/layout_step" B03_LAYOUT_STEP_PROVENANCE="$PWD/target/b03-contract-example/provenance.json" python3 -m unittest discover -s bench/tests -p test_layout_step.py
+```
+
+Use the actual Cargo output path if your target directory is configured
+elsewhere. Missing/stale provenance, changed Rust sources or a binary hash
+mismatch fails this required test with setup instructions; it does not skip or
+substitute a fixture. The Python tooling tests require this executable setup,
+including CI's Python 3.12 invocation.
+
+For durable new regression outputs, optionally set B03_TEST_EVIDENCE_DIR to a
+fresh directory. The strict-schema/thread/shared-type cases and zero-time
+summary case preserve their child stdout, stderr and compressed snapshots;
+the real Rust test preserves raw snapshots, invocation records and binary/source
+resolution. Reusing a test evidence directory fails instead of overwriting it.
+
+Review round 1 additionally requires integer schema/thread metadata, recursive
+type-consistent shared snapshot-row values and strictly positive elapsed time.
+Setup/pool times remain nonnegative. Invalid child rows remain in the raw log
+and make their summary case invalid, without division by zero.

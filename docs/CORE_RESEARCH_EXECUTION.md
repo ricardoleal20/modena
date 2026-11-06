@@ -13,7 +13,7 @@ experimental outcomes, with measurements and reasons retained.
 | Case | State | Dependencies / acceptance focus |
 | --- | --- | --- |
 | B03 | Delivered in open [PR #57](https://github.com/ricardoleal20/modena/pull/57), assigned/labeled, task and whole-branch reviews approved; all 96 cases reject in each protocol | [Verification and source epochs](B03_VERIFICATION.md), [all-case timing/resource evidence](B03_PACKED_LAYOUT.md). Production unchanged; no SIMD/parallel packed rejection. |
-| B04 | Independently active in separate modena-b04 worktree; G1 reviewed, actual initialized MACE G2 executed with review pending; G3/G4 pending | Periodic directed graph images, independent enumeration; keep classical half list distinct. Preserve the active plan and source isolation. |
+| B04 | Independently active in separate modena-b04 worktree; G1 and actual initialized MACE G2 independently approved; private base synchronized with B03; G3/G4 pending | Periodic directed graph images, independent enumeration; keep classical half list distinct. Preserve the active plan and source isolation. |
 | B05 | pending | SPME convergence/cost against converged Ewald; declared calibration domain. |
 | B07 | pending | Tensor strain derivatives, constraint impulses, periodic and timestep oracles. |
 | B08 | pending | Molecular MC volume measure, periodic molecules, full rejection restoration and analytic volume distribution. |

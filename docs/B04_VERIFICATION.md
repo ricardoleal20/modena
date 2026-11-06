@@ -1,13 +1,14 @@
 # B04 implementation and verification record
 
-B04 numerical work is starting in the isolated `ricardo/b04-periodic-neighbors`
-branch based on reviewed B03 source `0c54db355b830c49e687e97e2e9aa8502bbaa5d1`.
-The core tree is `39b46c7496c6820219056fe38a821378a32633e8`, identical to reviewed
-B03 prototype66af0e4. No core/CLI files changed between those revisions.
-B03 primary/secondary timing and direct audit finished before this work; its
-CPU lease was explicitly released. B03 reports/review remain separate closure
-work. Before B04 publication, synchronize its unpublished base with final
-reviewed B03 without force-push or an unauthorized merge.
+B04 numerical work started in isolated `ricardo/b04-periodic-neighbors`,
+initially based on reviewed B03 source `0c54db355b830c49e687e97e2e9aa8502bbaa5d1`.
+Its initial core tree was `39b46c7496c6820219056fe38a821378a32633e8`, identical
+to reviewed B03 prototype66af0e4. No core/CLI files changed between those bases.
+B03 timing/audits finished and its CPU lease was released before this work.
+After Tasks1–4 review, unpublished B04 was synchronized onto delivered B03
+`12e4ab13efd2aff2d3693b7fc7fb4f50af12668f`. Every B04 source byte and commit
+patch matched its pre-sync identity; the mapping and proof are recorded below.
+B04 remains unpublished, with G3/G4 and final review/delivery pending.
 
 Controller preflight confirmed native managed worktree creation, branch prefix
 `ricardo/`, source-tree equivalence and the actual Vec3 dot/wrap operation
@@ -16,7 +17,7 @@ orders used by the proof. Subsequent G1 implementation evidence is recorded belo
 | Gate | Status | Required evidence |
 | --- | --- | --- |
 | G1 | passed; Task 3 independently approved through ce04b4f | Fixed-cube/resource tests and explicitly executed official ASE exact tuples |
-| G2 | executable checks passed; independent Task 4 review pending | Actual initialized official MACE graph/E/F parity |
+| G2 | passed; Task 4 independently approved at f45be2d, mapped to2aa3960 | Actual initialized official MACE graph/E/F parity |
 | G3 | pending | Scalar/stencil pairs, E/F/W, skin/bounded regressions |
 | G4 | pending | Paired complete-step benefit and fallback overhead |
 
@@ -167,7 +168,8 @@ oracle, ASE helper and production geometry bytes unchanged.
 
 The named external gate actually passed on stable Rust 1.97.1 and the Rust
 1.90.0 floor: each final run executed one test, zero ignored, with the two ASE
-tests intentionally filtered. Independent Task 4 review remains pending.
+tests intentionally filtered. Independent Task 4 review approved the complete
+source/environment/gate record; see the closure below.
 The helper uses official MACE code, official Configuration/AtomicData/Batch,
 the same initialized model object, and actual serialized native PeriodicGraph
 edges. Fresh position and node tensors enter every gradient-enabled forward.
@@ -279,3 +281,45 @@ Fixture bytes remain `c3f1bf1ec691fb7131b70bbd67605d1eb9e9f8c6b5d6ea6b1421093f41
 This is software parity for this initialized MACE instance, snapshots, locked
 packages and arithmetic only. It establishes no trained chemical accuracy,
 FAIR-Chem task/checkpoint equivalence or B10 acceptance. G3/G4 remain pending.
+
+## Task 4 independent review closure
+
+Task 4 approved at original source `f45be2d363e1050173962b9ba8c21bf4e0082453`,
+with no Critical or Important finding. The reviewer verified all121 artifact
+hashes,44 lock entries and selected package artifacts, official MACE source
+identity, official autograd implementation and identical stable/MSRV numerical
+results. No model evaluation or suite was rerun during review.
+
+The pinned dependencies also emit upstream TorchScript annotation warnings
+during constructor compatibility/first-gate runs. These are retained diagnostic
+noise, in addition to the two existing unused Rust helpers. Their disposition
+is explicit disclosure without dependency changes or broad warning suppression;
+final-review triage remains. G2 software parity does not close G3/G4 or B10.
+
+## Unpublished base synchronization, 2026-11-06
+
+Before synchronization, remote B04 was verified absent and the worktree clean.
+Backup `ricardo/b04-pre-b03-sync-20261106` retains the complete old history.
+Rebase onto B03 `12e4ab1` completed without conflicts, force-push or a merge.
+At mapped head `2aa39602de5d8fb10cac20cbcadca7fbb746574d`, all15 B04 changed
+files and every one of eight individual commit patches are byte-identical.
+The complete B04 delta SHA256 before/after is
+`06a15ec8cbc956dd0f4a31389d8add6981a93894c21d5ba152a5b986258ab076`;
+core tree remains `743ce83c62ef42e4021fa6670beadc394aa5468e`.
+
+| Historical commit | Mapped commit |
+| --- | --- |
+| `72be6d56571d2877d54e3fbf927cc8eeeb9d1e94` | `c679437b344e4eb71ac2f3406552339553d07a34` |
+| `bac0a55a91c5ca5a161a89c91adb3747e19db392` | `97454a34efbe325f41f5fee1bb953f3044a13b4e` |
+| `bd95cd2796de16a3ccb4844c26924bd4c3c967d3` | `ab3df0bcb03270363a49a37d09690da08b96e26e` |
+| `4f0f6f8aa333b908f8b8dfe7b62b7ae8980cbe14` | `d31296a5989c987a3c1708975d027be526767174` |
+| `b84c36bedbc39c8b177a845305c629c8eaf5874a` | `3cc4e2a560d707823a642d0fcb3f6d6cd82f7460` |
+| `ce04b4f659af9654adef0f77ccd56d92d0d053e9` | `a91c20d6d86307d5eacb123ed905d8bb0dc01930` |
+| `0a01e55ea9f65ad609600d5a29df955d4c36a866` | `d7148f42721136eafba03f6f096b54eb755378bd` |
+| `f45be2d363e1050173962b9ba8c21bf4e0082453` | `2aa39602de5d8fb10cac20cbcadca7fbb746574d` |
+
+The full receipt and before/after patches are retained under
+`target/b04-evidence/base-sync-20261106/`. Earlier commands, failures, numerical
+results and source hashes retain their actual historical epochs; they are not
+relabeled as new evaluations after rebase. Source identity is the evidence
+for carrying those reviews forward. Later delivery metadata changes only docs.

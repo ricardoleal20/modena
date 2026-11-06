@@ -116,7 +116,7 @@ pub(crate) struct GeometryOptions {
 
 Geometry functions return standard `Result<T, GeometryError>` internally, as defined in Spec. Task 2 maps the private errors at the public graph boundary. `CertifiedCell` fields and functions are crate-private; no source dependency on `periodic_graph` is introduced.
 
-- [ ] Write unit cases `interval_contains_exact_dyadics`, `identity_inverse_certificate_encloses_zero`, `skew_inverse_certificate_encloses_triangular_inverse`, `uncertifiable_inverse_fails`, `normal_cutoff_required`, `integer_endpoints_checked_before_cast`, `global_bound_is_independent_of_configured_B`, `global_contraction_rejects_uncertifiable_cancellation`, `huge_coordinates_reject_before_enumeration`, `all_nonperiodic_global_shift_bound_is_zero`, `i64_conversion_error_is_in_global_proof`, and `cartesian_operation_order_boundary`. Hand-computable checks include identity, a=(2,0,0),b=(1,2,0),c=(0,0,4), whose U rows are (.5,-.25,0),(0,.5,0),(0,0,.25).
+- [x] Write unit cases `interval_contains_exact_dyadics`, `identity_inverse_certificate_encloses_zero`, `skew_inverse_certificate_encloses_triangular_inverse`, `uncertifiable_inverse_fails`, `normal_cutoff_required`, `integer_endpoints_checked_before_cast`, `global_bound_is_independent_of_configured_B`, `global_contraction_rejects_uncertifiable_cancellation`, `huge_coordinates_reject_before_enumeration`, `all_nonperiodic_global_shift_bound_is_zero`, `i64_conversion_error_is_in_global_proof`, and `cartesian_operation_order_boundary`. Hand-computable checks include identity, a=(2,0,0),b=(1,2,0),c=(0,0,4), whose U rows are (.5,-.25,0),(0,.5,0),(0,0,.25).
 
 ```rust
 #[test]
@@ -133,7 +133,7 @@ fn interval_contains_exact_dyadics() {
 }
 ```
 
-- [ ] Run red:
+- [x] Run red:
 
 ```sh
 rtk cargo test --locked -p modena-core --lib periodic_geometry
@@ -141,7 +141,7 @@ rtk cargo test --locked -p modena-core --lib periodic_geometry
 
 Expected failure: missing private module/types/functions. Do not treat a dependency-resolution failure as the intended red test.
 
-- [ ] Implement point/add/sub/mul/div/sqrt/hull/abs_upper with outward operations and finite/zero-domain checks; square handles intervals spanning zero. Implement residual rho<.5/eta/inverse-row norm certificate and the Spec B-independent global range proof first: U_P/H_P, gamma_10 conversion-aware error, upper alpha<.5, K_global, and G<=B<=2^52 before casting. Evaluate all rational expressions with lower denominator enclosures, including 1-alpha and 1-gamma_m; test that an upper-rounded denominator cannot be substituted. Then implement the exact scalar expression and local Q_enum. image_bounds must invoke the global certificate internally, so no caller can apply a B-dependent envelope without proving global exclusion. All comparisons deciding to omit an image must use conservative interval endpoints. Implement checked integer conversions before any `as i64`. Include proof comments with the Neumann-series inequality, global ten-rounding cast-aware inequality, contraction rearrangement and local seven/five operation counts. Explain why hypothetical accepted i64 shifts outside the exactly representable domain are covered by the global bound, and why physically required integer images outside i64 are excluded for accepted requests. Use no vectors in the numeric core.
+- [x] Implement point/add/sub/mul/div/sqrt/hull/abs_upper with outward operations and finite/zero-domain checks; square handles intervals spanning zero. Implement residual rho<.5/eta/inverse-row norm certificate and the Spec B-independent global range proof first: U_P/H_P, gamma_10 conversion-aware error, upper alpha<.5, K_global, and G<=B<=2^52 before casting. Evaluate all rational expressions with lower denominator enclosures, including 1-alpha and 1-gamma_m; test that an upper-rounded denominator cannot be substituted. Then implement the exact scalar expression and local Q_enum. image_bounds must invoke the global certificate internally, so no caller can apply a B-dependent envelope without proving global exclusion. All comparisons deciding to omit an image must use conservative interval endpoints. Implement checked integer conversions before any `as i64`. Include proof comments with the Neumann-series inequality, global ten-rounding cast-aware inequality, contraction rearrangement and local seven/five operation counts. Explain why hypothetical accepted i64 shifts outside the exactly representable domain are covered by the global bound, and why physically required integer images outside i64 are excluded for accepted requests. Use no vectors in the numeric core.
 
 ```rust
 pub(crate) fn checked_shift_endpoint(x: f64, max_abs: i64)
@@ -159,8 +159,8 @@ pub(crate) fn checked_shift_endpoint(x: f64, max_abs: i64)
 
 Keep this helper separate from ceil/floor so conversion cannot silently saturate. For nonperiodic axes return `(0,0)` after input/cell certification regardless of the periodic bound.
 
-- [ ] Run the targeted command green. Manually reconcile operation counts against actual compiler-safe Rust expression order; test perturbations of the dyadic cell and exact next-up/down cutoff. R2=R*R must be finite positive normal; tests explicitly reject overflow to infinity, zero underflow and nonzero subnormal squares on empty and nonempty inputs. For global-bound regression use identical geometry with two large B values and assert the returned G is identical, then B=G-1 fails ShiftRange. Prove by an inequality assertion that every fixed-cube passing tuple has shift norm<=G. Exercise i64 cast endpoints analytically with values i64::MIN, i64::MAX and neighbors of 2^52/2^53; no exhaustive huge-shift loop or large allocation is needed. Test huge common translation that loses certification returns a numerical/range error rather than an empty/partial graph. Stop if residual/error enclosures cannot be established.
-- [ ] Commit numeric module and source declaration:
+- [x] Run the targeted command green. Manually reconcile operation counts against actual compiler-safe Rust expression order; test perturbations of the dyadic cell and exact next-up/down cutoff. R2=R*R must be finite positive normal; tests explicitly reject overflow to infinity, zero underflow and nonzero subnormal squares on empty and nonempty inputs. For global-bound regression use identical geometry with two large B values and assert the returned G is identical, then B=G-1 fails ShiftRange. Prove by an inequality assertion that every fixed-cube passing tuple has shift norm<=G. Exercise i64 cast endpoints analytically with values i64::MIN, i64::MAX and neighbors of 2^52/2^53; no exhaustive huge-shift loop or large allocation is needed. Test huge common translation that loses certification returns a numerical/range error rather than an empty/partial graph. Stop if residual/error enclosures cannot be established.
+- [x] Commit numeric module and source declaration:
 
 ```sh
 rtk git add crates/modena-core/src/periodic_geometry.rs crates/modena-core/src/lib.rs docs/superpowers/specs/2026-11-06-b04-periodic-neighbors-design.md
@@ -175,7 +175,7 @@ rtk git commit -m ':sparkles: Add: certified periodic geometry bounds'
 
 **Consumes:** certified numeric core. **Produces:** public borrowed-snapshot graph, stats and explicit failure classes; no classical neighbor changes.
 
-- [ ] Add test helpers and red contract tests. These helpers are complete small Rust scaffolding:
+- [x] Add test helpers and red contract tests. These helpers are complete small Rust scaffolding:
 
 ```rust
 use modena_core::{GraphBudget, PeriodicGraph, PeriodicGraphOptions, SimBox, System, Vec3};
@@ -209,13 +209,13 @@ fn multi_image_graph_has_exactly_four_directed_tuples() {
 
 Also name tests `periodic_self_policy_and_zero_self`, `all_pbc_masks`, `strict_cutoff_next_float`, `malformed_geometry_fails_empty_and_nonempty`, `budget_failure_preserves_source_and_prior_graph`, `shift_budget_is_not_top_k`, `global_range_failure_is_atomic`, `configured_B_never_defines_completeness`, `graph_borrow_prevents_mutation` (compile-fail doc test), and `fresh_borrow_after_identity_and_box_mutations`.
 
-- [ ] Run red:
+- [x] Run red:
 
 ```sh
 rtk cargo test --locked -p modena-core --test periodic_graph
 ```
 
-- [ ] Implement validation and two passes with `2*N*N` pair charging. For each pair first compute the B-independent global shift certificate and reject any unsupported whole request, then calculate certified local integer spans, check `2*running_candidates` before enumeration, then membership/self policy. Count accepted edges before allocation. Enforce max_edges, requested storage and `try_reserve_exact`. Repeat against borrowed immutable input, emit, sort_unstable, verify stats and publish. No fallible mutation to caller state is performed. No pair-scale lookup or minimum-image half list is consulted.
+- [x] Implement validation and two passes with `2*N*N` pair charging. For each pair first compute the B-independent global shift certificate and reject any unsupported whole request, then calculate certified local integer spans, check `2*running_candidates` before enumeration, then membership/self policy. Count accepted edges before allocation. Enforce max_edges, requested storage and `try_reserve_exact`. Repeat against borrowed immutable input, emit, sort_unstable, verify stats and publish. No fallible mutation to caller state is performed. No pair-scale lookup or minimum-image half list is consulted.
 
 ```rust
 let pairs_one_pass = (n as u128).checked_mul(n as u128)
@@ -229,8 +229,8 @@ if pair_visits > u128::from(budget.max_atom_pairs) {
 
 Use n conversion checked on targets whose usize could exceed u64. Per-axis span arithmetic is i128/u128; an empty span never wraps to huge unsigned length. The byte cap is logical requested storage as defined in spec, not a guarantee about allocator RSS.
 
-- [ ] Add cfg(test)-only `allocate_edges_with` seam accepting a closure returning `Result<Vec<PeriodicEdge>,()>`; unit test injects failure without reserving huge real memory. Test each error resource exactly, input positions/forces/atomic_numbers unchanged, and a separate prior graph's edge bytes unchanged. Valid empty graph has zero pair/candidate/edge counters and fixed requested header/workspace bytes.
-- [ ] Run targeted green and compile-fail doc tests; commit:
+- [x] Add cfg(test)-only `allocate_edges_with` seam accepting a closure returning `Result<Vec<PeriodicEdge>,()>`; unit test injects failure without reserving huge real memory. Test each error resource exactly, input positions/forces/atomic_numbers unchanged, and a separate prior graph's edge bytes unchanged. Valid empty graph has zero pair/candidate/edge counters and fixed requested header/workspace bytes.
+- [x] Run targeted green and compile-fail doc tests; commit:
 
 ```sh
 rtk cargo test --locked -p modena-core --test periodic_graph
@@ -258,7 +258,7 @@ Fixture wire shape is exact:
 
 Other fixtures follow the spec table exactly. Boundary fixtures set official=false. Wire edges are objects `{source,destination,edge_cell_shift}`. A subprocess request is `{fixture:<fixture object>,edges:[<edge objects>]}`. For MACE finite differences the Rust driver adds `finite_difference`, a list of `{atom,axis,h:1e-5,plus:{fixture,edges},minus:{fixture,edges}}` for every atom/Cartesian axis of displaced; each plus/minus edge list is built by the actual Rust API before the helper runs. The helper must use those lists, not substitute official graph construction for the alternate route. Response is `{fixture_id,edge_count,versions,source_sha256,max_vector_error}` for ASE and additionally `{model_digest,parameter_count,energy_error,max_force_error,mutation_deltas,finite_difference_error}` for MACE. Missing properties or nonzero exit fail the Rust test; capture bounded stderr in failures.
 
-- [ ] Write oracle code that independently loops all integer x/y/z from -16 through 16, skips disabled axes and zero-self/self policy, computes direct Cartesian displacement in declared scalar order, and compares sorted tuples. It must not import production geometry or call min_image. Add README numeric certificates:
+- [x] Write oracle code that independently loops all integer x/y/z from -16 through 16, skips disabled axes and zero-self/self policy, computes direct Cartesian displacement in declared scalar order, and compares sorted tuples. It must not import production geometry or call min_image. Add README numeric certificates:
 
 ```text
 unreduced: |Sz|<4.8/40<1 => Sz=0;
@@ -274,7 +274,7 @@ gauge adds <=3,2,0, so every required component remains <16.
 
 Use a +1e-8 search-only cushion for these numeric certificates to dominate finite evaluation error without changing physical membership. Add direct certificates for cubic/self/boundary and deformed/displaced values. Do not use the dynamic reciprocal production bound to derive the cube.
 
-- [ ] Run oracle tests red with at least one deliberately incomplete initial graph path or newly asserted certificate/boundary property:
+- [x] Run oracle tests red with at least one deliberately incomplete initial graph path or newly asserted certificate/boundary property:
 
 ```sh
 rtk cargo test --locked -p modena-core --test periodic_graph
@@ -282,7 +282,7 @@ rtk cargo test --locked -p modena-core --test periodic_graph
 
 If production graph already passes every new test, document genuine test addition with no manufactured product defect; do not intentionally commit an incorrect graph just to obtain red.
 
-- [ ] Implement ASE helper and ignored named integration test `official_ase_images`. Exact primary path:
+- [x] Implement ASE helper and ignored named integration test `official_ase_images`. Exact primary path:
 
 ```python
 import hashlib, inspect, json, sys
@@ -323,7 +323,7 @@ json.dump({'fixture_id':f['id'], 'edge_count':len(reference),
 
 The snippet compares ASE's independent vector path in matching tuple order against the declared reconstruction. Rust tests generate actual graph edges and send exact fixture bytes; helper exit errors on missing env/packages and tuple mismatches. First verify >=1e-8 cutoff margin using the fixed cube before invoking any official helper.
 
-- [ ] Run explicit official gate after the CPU lease release:
+- [x] Run explicit official gate after the CPU lease release:
 
 ```sh
 rtk proxy env MODENA_ASE_PYTHON=/Users/ricardoleal20/Documents/Code/Misc/modena/target/b01-ase-venv/bin/python cargo test --locked -p modena-core --test periodic_graph_official official_ase_images -- --ignored --nocapture
@@ -331,7 +331,7 @@ rtk proxy env MODENA_ASE_PYTHON=/Users/ricardoleal20/Documents/Code/Misc/modena/
 
 Minimal Rust suite may leave this ignored, but G1 remains pending unless this command succeeds and its manifest is retained.
 
-- [ ] Commit fixtures/helpers/tests and G1 outcome:
+- [x] Commit fixtures/helpers/tests and G1 outcome:
 
 ```sh
 rtk git add crates/modena-core/tests/fixtures/periodic_graph crates/modena-core/tests/support/periodic_oracle.rs crates/modena-core/tests/support/ase_graph_reference.py crates/modena-core/tests/periodic_graph.rs crates/modena-core/tests/periodic_graph_official.rs docs/B04_VERIFICATION.md
@@ -346,7 +346,7 @@ rtk git commit -m ':white_check_mark: Add: independent periodic image graph orac
 
 **Consumes:** frozen fixtures/Rust graph/official subprocess schema. **Produces:** a pinned CPU environment and actual official-model graph/E/F evidence; no trained chemical claim.
 
-- [ ] Write the exact direct requirements before resolution:
+- [x] Write the exact direct requirements before resolution:
 
 ```text
 torch==2.6.0
@@ -367,7 +367,7 @@ rtk proxy uv pip sync --python target/b04-mace-venv/bin/python --require-hashes 
 
 Record Python exact version/platform, wheel hashes and MACE release source identity. Failed Python 3.12 compatibility leaves G2 blocked for environment input. Prepare a separate exact Python 3.11 bootstrap manifest and revise the environment contract before downloading/installing it; no implicit runtime/framework substitution. Do not mutate B01's venv or install into global Python.
 
-- [ ] Add ignored test `official_mace_initialized_graph_energy_forces` that errors if MODENA_MACE_PYTHON is absent. Run red before the helper exists:
+- [x] Add ignored test `official_mace_initialized_graph_energy_forces` that errors if MODENA_MACE_PYTHON is absent. Run red before the helper exists:
 
 ```sh
 rtk proxy env MODENA_MACE_PYTHON=target/b04-mace-venv/bin/python cargo test --locked -p modena-core --test periodic_graph_official official_mace_initialized_graph_energy_forces -- --ignored --nocapture
@@ -375,7 +375,7 @@ rtk proxy env MODENA_MACE_PYTHON=target/b04-mace-venv/bin/python cargo test --lo
 
 The Rust driver should canonicalize an absolute helper/interpreter path from the worktree root so cargo's crate working directory cannot break it. Expected red is missing parity implementation, not environment or import failure; establish imports/constructor compatibility separately before treating the test cycle as meaningful.
 
-- [ ] Implement the exact model constructor from Spec (seed=20261106, r_max=3.1, two elements [6,8], two interactions, hidden 8x0e+8x1o, correlation=2, CPU float64, one thread). Use official Configuration/AtomicData/Batch and same initialized model object on fresh cloned input tensors. Alternate batch changes exactly graph fields, never atom/node data:
+- [x] Implement the exact model constructor from Spec (seed=20261106, r_max=3.1, two elements [6,8], two interactions, hidden 8x0e+8x1o, correlation=2, CPU float64, one thread). Use official Configuration/AtomicData/Batch and same initialized model object on fresh cloned input tensors. Alternate batch changes exactly graph fields, never atom/node data:
 
 ```python
 from mace.data import AtomicData, Configuration
@@ -400,8 +400,8 @@ torch.testing.assert_close(alt_out['forces'],ref_out['forces'],rtol=1e-10,atol=1
 
 Before forward, assert exact tuple equality and identical non-graph fields. Require exact integral unit_shift values before converting their tensor dtype. Model recipe has nonempty edges; preserve explicit empty 2x0/0x3 shapes if helper becomes general. Do not use pretrained calculators or torch.no_grad.
 
-- [ ] Implement state_digest using sorted state_dict keys, encoded name/dtype/shape and contiguous CPU tensor bytes. Emit actual energy/max-component force errors; compare official original edge order and canonical order. For each fixed mutation (drop one nonzero image, drop all self images, change one shift), evaluate through actual MACE and require suite sensitivity >1e-10. Reject an ignored-graph or zero-output path. Central differences at h=1e-5 rebuild actual graphs for displaced positions and require force atol=rtol=1e-6, with unchanged neighbor sets/clear margin. Repeat calls to verify stable output.
-- [ ] Run the named gate green, preserve exact manifest/model digest, and commit only small source/lock/evidence:
+- [x] Implement state_digest using sorted state_dict keys, encoded name/dtype/shape and contiguous CPU tensor bytes. Emit actual energy/max-component force errors; compare official original edge order and canonical order. For each fixed mutation (drop one nonzero image, drop all self images, change one shift), evaluate through actual MACE and require suite sensitivity >1e-10. Reject an ignored-graph or zero-output path. Central differences at h=1e-5 rebuild actual graphs for displaced positions and require force atol=rtol=1e-6, with unchanged neighbor sets/clear margin. Repeat calls to verify stable output.
+- [x] Run the named gate green, preserve exact manifest/model digest, and commit only small source/lock/evidence:
 
 ```sh
 rtk proxy env MODENA_MACE_PYTHON=target/b04-mace-venv/bin/python cargo test --locked -p modena-core --test periodic_graph_official official_mace_initialized_graph_energy_forces -- --ignored --nocapture

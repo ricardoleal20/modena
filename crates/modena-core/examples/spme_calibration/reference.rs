@@ -574,6 +574,10 @@ pub struct ReferenceOutcome {
     )]
     pub crosscheck_scores: Vec<f64>,
     pub failure: Option<CalibrationFailure>,
+    /// A failed final observer never replaces the original reference failure.
+    /// Default supports historical raw decoding, not current-source certification.
+    #[serde(default)]
+    pub finalization_failure: Option<CalibrationFailure>,
     pub failed_attempt: Option<FailedReferenceAttempt>,
     pub usage: ReferenceUsage,
 }
@@ -622,6 +626,9 @@ impl ReferenceOutcome {
         }
         if let Some(f) = &self.failed_attempt {
             bytes = add(bytes, failure_heap(&f.failure) as u64)?;
+        }
+        if let Some(f) = &self.finalization_failure {
+            bytes = add(bytes, failure_heap(f) as u64)?;
         }
         Ok(bytes)
     }
@@ -950,6 +957,7 @@ where
         refinement_scores: Vec::new(),
         crosscheck_scores: Vec::new(),
         failure: None,
+        finalization_failure: None,
         failed_attempt: None,
         usage: ReferenceUsage::capture(b),
     };
@@ -1135,7 +1143,15 @@ where
             origin,
             outcome: &out,
         }) {
-            out.fail(f, None, b);
+            if out.failure.is_none() {
+                out.fail(f.clone(), None, b);
+            } else {
+                // Retain the first cause, status and failed attempt. A later
+                // journal failure cannot authorize absolute convergence.
+                out.record.chosen_level = None;
+            }
+            out.finalization_failure = Some(f);
+            out.usage = ReferenceUsage::capture(b);
         }
     }
     Ok(out)

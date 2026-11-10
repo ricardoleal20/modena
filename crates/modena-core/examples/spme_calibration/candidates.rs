@@ -714,7 +714,10 @@ where
                 return Err(invalid("reference hash/ID roster mismatch"));
             }
             let r = matching[0];
-            if r.failure.is_some() || !reference_passes(&r.record) {
+            if r.failure.is_some()
+                || r.finalization_failure.is_some()
+                || !reference_passes(&r.record)
+            {
                 return Err(CalibrationFailure::ReferenceUnconverged(format!(
                     "{}: reference has no strict converged level",
                     s.id

@@ -23,7 +23,9 @@ impl PreparedReferences {
         &self.records
     }
     pub fn failure(&self) -> Option<&CalibrationFailure> {
-        self.records.iter().find_map(|r| r.failure.as_ref())
+        self.records
+            .iter()
+            .find_map(|r| r.failure.as_ref().or(r.finalization_failure.as_ref()))
     }
     pub fn write_new(&self, path: &Path) -> Result<String, CalibrationFailure> {
         super::write_new(path, &json_bytes(self)?)?;
@@ -181,7 +183,7 @@ where
                 &mut b.reference,
                 &mut observer,
             )?;
-            let failure = r.failure.clone();
+            let failure = r.failure.clone().or_else(|| r.finalization_failure.clone());
             records.push(r);
             if failure.is_some() {
                 break;

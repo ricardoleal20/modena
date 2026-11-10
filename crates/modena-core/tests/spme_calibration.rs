@@ -2842,9 +2842,11 @@ fn physical_registered_runtime_smoke() {
                 .unwrap();
                 println!(
                     "CRYSTAL replicas={replicas} failure={:?} calls={} status={:?}",
-                    out.failure, b.reference.calls, out.reference.record.status
+                    out.failure(),
+                    b.reference.calls,
+                    out.reference().record.status
                 );
-                assert!(out.failure.is_none());
+                assert!(out.passed());
                 crystals.push((dir, out));
             }
             Err(e) => {
@@ -2869,4 +2871,140 @@ fn physical_registered_runtime_smoke() {
         serde_json::to_writer_pretty(new_file(&root.join("replication.json")), &check).unwrap();
         assert!(check.passed);
     }
+}
+
+#[test]
+fn physical_special_retains_primary_and_finalization_failures() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("prepared");
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    let primary = CalibrationFailure::BudgetExceeded("special primary admission".into());
+    let secondary = CalibrationFailure::Io("special completion journal".into());
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    let out = physical::verify_special_with_observer(&dir, &mut b, |event| match event {
+        physical::PhysicalEvent::Admitted { .. } => Err(primary.clone()),
+        physical::PhysicalEvent::Complete { .. } => Err(secondary.clone()),
+        _ => Ok(()),
+    })
+    .unwrap();
+    assert_eq!(b.reference.calls, 0);
+    assert_eq!(b.accuracy_calls, 0);
+    assert_eq!(out.failure(), Some(&primary));
+    assert!(!out.passed());
+    assert_eq!(out.finalization_failure(), Some(&secondary));
+    let wire = serde_json::to_value(&out).unwrap();
+    assert_eq!(
+        wire["finalization_failure"],
+        serde_json::to_value(&secondary).unwrap()
+    );
+}
+#[test]
+fn physical_madelung_retains_primary_and_finalization_failures() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("prepared");
+    let p = frozen_protocol("cubic", 2, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    let primary = CalibrationFailure::BudgetExceeded("crystal primary admission".into());
+    let secondary = CalibrationFailure::Io("crystal completion journal".into());
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    let out = physical::verify_madelung_with_observer(&dir, &mut b, |event| match event {
+        physical::MadelungEvent::Reference(ReferenceEvent::Admitted { .. }) => Err(primary.clone()),
+        physical::MadelungEvent::Complete { .. } => Err(secondary.clone()),
+        _ => Ok(()),
+    })
+    .unwrap();
+    assert_eq!(b.reference.calls, 0);
+    assert_eq!(b.accuracy_calls, 0);
+    assert_eq!(out.failure(), Some(&primary));
+    assert!(!out.passed());
+    assert_eq!(out.finalization_failure(), Some(&secondary));
+    let wire = serde_json::to_value(&out).unwrap();
+    assert_eq!(
+        wire["finalization_failure"],
+        serde_json::to_value(&secondary).unwrap()
+    );
+}
+
+#[test]
+fn physical_ladder_retains_primary_and_nested_finalization_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("special");
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    let id = materialize(&p)
+        .unwrap()
+        .into_iter()
+        .find(|s| s.role == FixtureRole::Selection)
+        .unwrap()
+        .id;
+    let primary =
+        CalibrationFailure::ReferencePrecisionLimited("synthetic ladder admission failure".into());
+    let secondary = CalibrationFailure::Io("reference completion journal".into());
+    let mut b = ReferenceBudget::new(&p.limits);
+    let mut out =
+        converged_prepared_reference_with_observer(&dir, &id, &mut b, |event| match event {
+            ReferenceEvent::Admitted { .. } => Err(primary.clone()),
+            ReferenceEvent::Complete { .. } => Err(secondary.clone()),
+            _ => Ok(()),
+        })
+        .unwrap();
+    assert_eq!(b.calls, 0);
+    assert_eq!(out.failure.as_ref(), Some(&primary));
+    assert_eq!(out.record.status, Status::ReferencePrecisionLimited);
+    assert_eq!(out.record.chosen_level, None);
+    let wire = serde_json::to_value(&out).unwrap();
+    assert_eq!(
+        wire["finalization_failure"],
+        serde_json::to_value(&secondary).unwrap()
+    );
+    assert_eq!(out.finalization_failure.as_ref(), Some(&secondary));
+    let before = out.owned_heap_bytes().unwrap();
+    let Some(CalibrationFailure::Io(message)) = &mut out.finalization_failure else {
+        panic!("missing journal failure")
+    };
+    let old = message.capacity();
+    message.reserve_exact(8192);
+    let extra = (message.capacity() - old) as u64;
+    assert_eq!(out.owned_heap_bytes().unwrap() - before, extra);
+    // Historical supplemental records decode a missing optional diagnostic;
+    // they still require the authoritative source chain before actual reuse.
+    let mut old_wire = wire;
+    old_wire
+        .as_object_mut()
+        .unwrap()
+        .remove("finalization_failure");
+    let decoded: ReferenceOutcome = serde_json::from_value(old_wire).unwrap();
+    assert!(decoded.finalization_failure.is_none());
+}
+#[test]
+fn physical_madelung_retains_nested_and_outer_finalization_failures() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("cubic");
+    let p = frozen_protocol("cubic", 2, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    let primary =
+        CalibrationFailure::ReferenceUnconverged("synthetic crystal ladder failure".into());
+    let nested = CalibrationFailure::Io("nested reference completion journal".into());
+    let outer = CalibrationFailure::Io("outer crystal completion journal".into());
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    let out = physical::verify_madelung_with_observer(&dir, &mut b, |event| match event {
+        physical::MadelungEvent::Reference(ReferenceEvent::Admitted { .. }) => Err(primary.clone()),
+        physical::MadelungEvent::Reference(ReferenceEvent::Complete { .. }) => Err(nested.clone()),
+        physical::MadelungEvent::Complete { .. } => Err(outer.clone()),
+        _ => Ok(()),
+    })
+    .unwrap();
+    assert_eq!(b.reference.calls, 0);
+    assert_eq!(out.failure(), Some(&primary));
+    assert_eq!(out.reference().failure.as_ref(), Some(&primary));
+    assert_eq!(out.reference().record.status, Status::ReferenceUnconverged);
+    assert_eq!(out.finalization_failure(), Some(&outer));
+    assert!(!out.passed());
+    let wire = serde_json::to_value(&out).unwrap();
+    assert_eq!(
+        wire["reference"]["finalization_failure"],
+        serde_json::to_value(&nested).unwrap()
+    );
+    assert_eq!(out.reference().finalization_failure.as_ref(), Some(&nested));
 }

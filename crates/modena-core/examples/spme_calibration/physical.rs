@@ -56,6 +56,7 @@ pub struct PhysicalOutcome {
     records: Vec<PhysicalRecord>,
     checks: Vec<PhysicalCheck>,
     failure: Option<CalibrationFailure>,
+    finalization_failure: Option<CalibrationFailure>,
     usage: CandidateUsage,
     auxiliary_calls: u64,
     completed: bool,
@@ -70,11 +71,17 @@ impl PhysicalOutcome {
     pub fn failure(&self) -> Option<&CalibrationFailure> {
         self.failure.as_ref()
     }
+    pub fn finalization_failure(&self) -> Option<&CalibrationFailure> {
+        self.finalization_failure.as_ref()
+    }
     pub fn usage(&self) -> &CandidateUsage {
         &self.usage
     }
     pub fn passed(&self) -> bool {
-        self.completed && self.failure.is_none() && self.checks.iter().all(|c| c.passed)
+        self.completed
+            && self.failure.is_none()
+            && self.finalization_failure.is_none()
+            && self.checks.iter().all(|c| c.passed)
     }
     /// Cross-family oracle proof checks sources and thread identity; it does not
     /// transfer/reset the special family's continuing usage into an ionic family.
@@ -132,8 +139,34 @@ impl PhysicalOutcome {
         for c in &self.checks {
             n = add(n, c.label.capacity() as u64)?;
         }
-        Ok(n)
+        n = add(n, failure_heap(self.failure.as_ref()))?;
+        add(n, failure_heap(self.finalization_failure.as_ref()))
     }
+}
+fn failure_heap(failure: Option<&CalibrationFailure>) -> u64 {
+    match failure {
+        Some(
+            CalibrationFailure::InvalidInput(s)
+            | CalibrationFailure::UnsupportedDomain(s)
+            | CalibrationFailure::BudgetExceeded(s)
+            | CalibrationFailure::ReferenceUnconverged(s)
+            | CalibrationFailure::ReferenceStagnated(s)
+            | CalibrationFailure::ReferencePrecisionLimited(s)
+            | CalibrationFailure::RelativeUndefined(s)
+            | CalibrationFailure::Io(s),
+        ) => s.capacity() as u64,
+        _ => 0,
+    }
+}
+fn retain_finalization_failure(
+    primary: &mut Option<CalibrationFailure>,
+    finalization: &mut Option<CalibrationFailure>,
+    error: CalibrationFailure,
+) {
+    if primary.is_none() {
+        *primary = Some(error.clone());
+    }
+    *finalization = Some(error);
 }
 fn origin_heap(o: &ReferenceOrigin) -> u64 {
     (o.manifest_sha256.capacity()
@@ -649,6 +682,7 @@ where
         records: vec![],
         checks: vec![],
         failure: None,
+        finalization_failure: None,
         usage: b.usage(),
         auxiliary_calls: 0,
         completed: false,
@@ -676,7 +710,7 @@ where
     r.out.usage = r.budget.usage();
     r.budget.reference.owned_heap_baseline = original;
     if let Err(e) = (r.observer)(PhysicalEvent::Complete { outcome: &r.out }) {
-        r.out.failure = Some(e);
+        retain_finalization_failure(&mut r.out.failure, &mut r.out.finalization_failure, e);
         r.out.completed = false;
     }
     Ok(r.out)
@@ -691,12 +725,86 @@ pub struct MadelungOutcome {
     specification_sha256: String,
     threads: usize,
     replicas: u32,
-    pub reference: ReferenceOutcome,
-    pub sanity: Option<PhysicalCheck>,
-    pub failure: Option<CalibrationFailure>,
-    pub usage: CandidateUsage,
+    reference: ReferenceOutcome,
+    sanity: Option<PhysicalCheck>,
+    failure: Option<CalibrationFailure>,
+    finalization_failure: Option<CalibrationFailure>,
+    usage: CandidateUsage,
 }
 impl MadelungOutcome {
+    pub fn reference(&self) -> &ReferenceOutcome {
+        &self.reference
+    }
+    pub fn sanity(&self) -> Option<&PhysicalCheck> {
+        self.sanity.as_ref()
+    }
+    pub fn failure(&self) -> Option<&CalibrationFailure> {
+        self.failure.as_ref()
+    }
+    pub fn finalization_failure(&self) -> Option<&CalibrationFailure> {
+        self.finalization_failure.as_ref()
+    }
+    pub fn usage(&self) -> &CandidateUsage {
+        &self.usage
+    }
+    pub fn passed(&self) -> bool {
+        self.validate_success().is_ok()
+    }
+    /// Shared proof invariant; future checked persistence must validate this AND
+    /// the authoritative source/phase chain. A successful scalar sanity alone is
+    /// never a substitute for the strict absolute reference ladder.
+    pub fn validate_success(&self) -> Result<(), CalibrationFailure> {
+        let r = &self.reference;
+        let levels = &r.record.levels;
+        let sanity = self
+            .sanity
+            .as_ref()
+            .ok_or_else(|| invalid("missing Madelung sanity"))?;
+        let n = match self.replicas {
+            2 => 64,
+            3 => 216,
+            _ => return Err(invalid("Madelung replicas")),
+        };
+        if self.failure.is_some()
+            || self.finalization_failure.is_some()
+            || r.failure.is_some()
+            || r.finalization_failure.is_some()
+            || r.failed_attempt.is_some()
+            || !matches!(r.record.status, Status::Passed | Status::RelativeUndefined)
+            || !matches!(levels.len(), 4 | 6)
+            || r.record.chosen_level != levels.len().checked_sub(1)
+            || r.record.crosschecks.len() != 2
+            || r.audits.len() != levels.len() + 2
+            || r.refinement_scores.len() + 1 != levels.len()
+            || r.crosscheck_scores.len() != 2
+            || r.refinement_scores
+                .iter()
+                .chain(&r.crosscheck_scores)
+                .any(|x| !x.is_finite() || *x < 0.)
+            || r.refinement_scores.iter().rev().take(2).any(|x| *x > 1.)
+            || r.crosscheck_scores.iter().any(|x| *x > 1.)
+            || !sanity.passed
+            || !sanity.actual.is_finite()
+            || sanity.expected != -1.747558775 / (A / 2.)
+            || sanity.tolerance != 2e-5 / A
+            || (sanity.actual - sanity.expected).abs() > sanity.tolerance
+        {
+            return Err(invalid(
+                "Madelung receipt lacks successful absolute physics proof",
+            ));
+        }
+        let e = &levels
+            .last()
+            .ok_or_else(|| invalid("Madelung final level"))?
+            .evaluation;
+        if e.forces.len() != n
+            || !e.energy.is_finite()
+            || sanity.actual != e.energy / (n as f64 / 2.)
+        {
+            return Err(invalid("Madelung sanity differs from strict reference"));
+        }
+        Ok(())
+    }
     /// Dynamic capacities retained by this receipt. Charge the outer container
     /// and path separately; retaining a comparison receipt transfers no work/calls.
     pub fn owned_heap_bytes(&self) -> Result<u64, CalibrationFailure> {
@@ -712,20 +820,8 @@ impl MadelungOutcome {
         if let Some(check) = &self.sanity {
             n = add(n, check.label.capacity() as u64)?;
         }
-        if let Some(failure) = &self.failure {
-            let message = match failure {
-                CalibrationFailure::InvalidInput(s)
-                | CalibrationFailure::UnsupportedDomain(s)
-                | CalibrationFailure::BudgetExceeded(s)
-                | CalibrationFailure::ReferenceUnconverged(s)
-                | CalibrationFailure::ReferenceStagnated(s)
-                | CalibrationFailure::ReferencePrecisionLimited(s)
-                | CalibrationFailure::RelativeUndefined(s)
-                | CalibrationFailure::Io(s) => s.capacity(),
-                _ => 0,
-            };
-            n = add(n, message as u64)?;
-        }
+        n = add(n, failure_heap(self.failure.as_ref()))?;
+        n = add(n, failure_heap(self.finalization_failure.as_ref()))?;
         Ok(n)
     }
 }
@@ -823,7 +919,11 @@ where
         specification_sha256: m.specification_sha256,
         threads: p.threads,
         replicas: p.replicas,
-        failure: reference.failure.clone(),
+        failure: reference
+            .failure
+            .clone()
+            .or_else(|| reference.finalization_failure.clone()),
+        finalization_failure: None,
         reference,
         sanity: None,
         usage: b.usage(),
@@ -875,7 +975,7 @@ where
     }
     out.usage = b.usage();
     if let Err(e) = observer(MadelungEvent::Complete { outcome: &out }) {
-        out.failure = Some(e);
+        retain_finalization_failure(&mut out.failure, &mut out.finalization_failure, e);
     }
     Ok(out)
 }
@@ -885,6 +985,8 @@ pub fn compare_madelung_replication(
     right: &MadelungOutcome,
     right_prepared: &Path,
 ) -> Result<PhysicalCheck, CalibrationFailure> {
+    left.validate_success()?;
+    right.validate_success()?;
     validate_prepared(left_prepared)?;
     validate_prepared(right_prepared)?;
     if left.manifest_sha256 != sha256(&left_prepared.join("manifest.json"))?
@@ -923,6 +1025,87 @@ pub fn compare_madelung_replication(
 mod ownership_tests {
     use super::*;
     #[test]
+    fn physical_madelung_failed_receipt_cannot_authorize_replication() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut receipts = Vec::new();
+        for replicas in [2, 3] {
+            let dir = temp.path().join(format!("cubic-{replicas}"));
+            let p = frozen_protocol("cubic", replicas, 1, true).unwrap();
+            prepare(&dir, p.clone()).unwrap();
+            let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+            let mut out = verify_madelung_with_observer(&dir, &mut b, |event| {
+                if matches!(
+                    event,
+                    MadelungEvent::Reference(ReferenceEvent::Admitted { .. })
+                ) {
+                    Err(CalibrationFailure::Io("no oracle work authorized".into()))
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap();
+            assert_eq!(b.reference.calls, 0);
+            assert!(out.reference.record.levels.is_empty());
+            assert!(out.validate_success().is_err());
+            assert!(!out.passed());
+            // Internal corruption simulates the former public-field exploit and
+            // an invalid future import. External callers must have no setters.
+            out.failure = None;
+            out.reference.failure = None;
+            out.reference.failed_attempt = None;
+            out.reference.record.status = Status::RelativeUndefined;
+            out.reference.record.chosen_level = Some(5);
+            let expected = -1.747558775 / (A / 2.);
+            out.sanity = Some(PhysicalCheck {
+                label: "invented without any reference evaluations".into(),
+                actual: expected,
+                expected,
+                tolerance: 2e-5 / A,
+                passed: true,
+            });
+            receipts.push((dir, out));
+        }
+        assert!(compare_madelung_replication(
+            &receipts[0].1,
+            &receipts[0].0,
+            &receipts[1].1,
+            &receipts[1].0
+        )
+        .is_err());
+    }
+    #[test]
+    fn physical_special_failure_capacities_include_both_causes() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("special");
+        let p = frozen_protocol("special", 2, 1, true).unwrap();
+        prepare(&dir, p.clone()).unwrap();
+        let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+        let mut out = verify_special_with_observer(&dir, &mut b, |event| match event {
+            PhysicalEvent::Admitted { .. } => Err(CalibrationFailure::Io("primary".into())),
+            PhysicalEvent::Complete { .. } => Err(CalibrationFailure::Io("finalization".into())),
+            _ => Ok(()),
+        })
+        .unwrap();
+        assert_eq!(b.reference.calls, 0);
+        let before = out.owned_heap_bytes().unwrap();
+        let old =
+            failure_heap(out.failure.as_ref()) + failure_heap(out.finalization_failure.as_ref());
+        if let Some(CalibrationFailure::Io(s)) = &mut out.failure {
+            s.reserve_exact(4096);
+        } else {
+            panic!("missing primary");
+        }
+        if let Some(CalibrationFailure::Io(s)) = &mut out.finalization_failure {
+            s.reserve_exact(8192);
+        } else {
+            panic!("missing finalization");
+        }
+        let new =
+            failure_heap(out.failure.as_ref()) + failure_heap(out.finalization_failure.as_ref());
+        assert_eq!(out.owned_heap_bytes().unwrap() - before, new - old);
+        assert!(!out.passed());
+    }
+    #[test]
     fn physical_madelung_owned_capacity_tracks_retained_growth() {
         let limits = frozen_protocol("cubic", 2, 1, true).unwrap().limits;
         let budget = CandidateBudget::new(&limits, ReferenceBudget::new(&limits));
@@ -945,6 +1128,7 @@ mod ownership_tests {
                 refinement_scores: vec![],
                 crosscheck_scores: vec![],
                 failure: None,
+                finalization_failure: None,
                 failed_attempt: None,
                 usage: ReferenceUsage {
                     work: WorkCounts {
@@ -957,6 +1141,7 @@ mod ownership_tests {
             },
             sanity: None,
             failure: None,
+            finalization_failure: None,
             usage: budget.usage(),
         };
         let before = out.owned_heap_bytes().unwrap();
@@ -972,6 +1157,15 @@ mod ownership_tests {
         let expected = (key.capacity() + value.capacity()) as u64 + 256;
         out.source_sha256.insert(key, value);
         assert_eq!(out.owned_heap_bytes().unwrap() - before, expected);
+        let before = out.owned_heap_bytes().unwrap();
+        let mut primary = String::from("primary");
+        primary.reserve_exact(4096);
+        let mut finalization = String::from("finalization");
+        finalization.reserve_exact(8192);
+        let extra = (primary.capacity() + finalization.capacity()) as u64;
+        out.failure = Some(CalibrationFailure::Io(primary));
+        out.finalization_failure = Some(CalibrationFailure::Io(finalization));
+        assert_eq!(out.owned_heap_bytes().unwrap() - before, extra);
         assert_eq!(budget.reference.calls, 0);
     }
 }

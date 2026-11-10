@@ -151,3 +151,136 @@ fn finite_scalar<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::E
         ))
     }
 }
+
+/// Scientific domain status. Reading a claimed record never authenticates it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum ValidationStatus {
+    #[default]
+    Diagnostic,
+    Validated {
+        pub_record: String,
+    },
+}
+
+/// Mechanical endpoint observation. Kinetic, model and constraint tensors are
+/// energy numerators; total and scalar are in reduced pressure units.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PressureObservation {
+    pub kinetic: SymTensor6,
+    pub model: TensorAvailability,
+    pub constraint: SymTensor6,
+    pub total: TensorAvailability,
+    pub scalar: Option<f64>,
+    pub volume: f64,
+    pub validation: ValidationStatus,
+}
+
+impl<'de> Deserialize<'de> for PressureObservation {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Record {
+            kinetic: SymTensor6,
+            model: TensorAvailability,
+            constraint: SymTensor6,
+            total: TensorAvailability,
+            scalar: Option<f64>,
+            volume: f64,
+            #[serde(rename = "validation")]
+            _claimed_status: ValidationStatus,
+        }
+        let record = Record::deserialize(d)?;
+        if !record.volume.is_finite()
+            || record.volume <= 0.
+            || record.scalar.is_some_and(|p| !p.is_finite())
+        {
+            return Err(serde::de::Error::custom(
+                "invalid endpoint volume or scalar pressure",
+            ));
+        }
+        match (&record.model, &record.total, record.scalar) {
+            (TensorAvailability::Missing(model), TensorAvailability::Missing(total), None)
+                if model == total => {}
+            (TensorAvailability::Complete(_), TensorAvailability::Complete(_), Some(_)) => (),
+            _ => {
+                return Err(serde::de::Error::custom(
+                    "inconsistent endpoint tensor availability or scalar",
+                ))
+            }
+        }
+        Ok(Self {
+            kinetic: record.kinetic,
+            model: record.model,
+            constraint: record.constraint,
+            total: record.total,
+            scalar: record.scalar,
+            volume: record.volume,
+            validation: ValidationStatus::Diagnostic,
+        })
+    }
+}
+
+/// Mechanical kinetic numerator Σ mᵢ vᵢ⊗vᵢ (twice kinetic energy in trace).
+pub fn kinetic_tensor(system: &crate::System) -> SymTensor6 {
+    (0..system.n()).fold(SymTensor6::ZERO, |sum, i| {
+        let v = system.vel(i);
+        sum.plus(SymTensor6::dyad(v, v).scaled(system.masses[i]))
+    })
+}
+
+/// Assemble pressure at one snapshot, using its cached conservative forces.
+pub fn endpoint_pressure(
+    system: &crate::System,
+    model: &ModelEvaluation,
+    constraints: Option<&crate::Constraints>,
+) -> crate::Result<PressureObservation> {
+    use crate::error::ModenaError;
+    let volume = system.box_size.volume();
+    if !volume.is_finite() || volume <= 0. {
+        return Err(ModenaError::Physics(format!(
+            "invalid endpoint volume {volume:e}"
+        )));
+    }
+    if !model.energy.is_finite() || !model.scalar_virial.is_finite() {
+        return Err(ModenaError::Physics(
+            "nonfinite endpoint model evaluation".into(),
+        ));
+    }
+    let empty = crate::Constraints::new();
+    let constraint =
+        crate::constraint_stress::reaction_from_constraints(system, constraints.unwrap_or(&empty))?
+            .tensor;
+    let kinetic = kinetic_tensor(system);
+    if !kinetic.finite() {
+        return Err(ModenaError::Physics(
+            "nonfinite endpoint kinetic tensor".into(),
+        ));
+    }
+    let (total, scalar) = match &model.tensor {
+        TensorAvailability::Missing(why) => (TensorAvailability::Missing(why.clone()), None),
+        TensorAvailability::Complete(tensor) => {
+            let numerator = kinetic.plus(*tensor).plus(constraint);
+            let pressure = SymTensor6(numerator.0.map(|x| x / volume));
+            let scalar = pressure.trace() / 3.;
+            if !pressure.finite() || !scalar.is_finite() {
+                return Err(ModenaError::Physics("nonfinite endpoint pressure".into()));
+            }
+            (TensorAvailability::Complete(pressure), Some(scalar))
+        }
+    };
+    Ok(PressureObservation {
+        kinetic,
+        model: model.tensor.clone(),
+        constraint,
+        total,
+        scalar,
+        volume,
+        validation: ValidationStatus::Diagnostic,
+    })
+}

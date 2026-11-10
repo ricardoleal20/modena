@@ -79,6 +79,14 @@ pub fn rotor(m1: f64, m2: f64) -> (System, modena_core::constraints::Constraints
     )
 }
 
+/// Fixed Rodrigues rotation used by the B07 water fixtures.
+pub fn water_rotation(v: Vec3) -> Vec3 {
+    let axis = Vec3::new(1., 2., 3.) * (1. / 14_f64.sqrt());
+    v * 0.41_f64.cos()
+        + axis.cross(v) * 0.41_f64.sin()
+        + axis * (axis.dot(v) * (1. - 0.41_f64.cos()))
+}
+
 /// Oblique rigid triangle with the specification's principal-axis rotation.
 pub fn water(masses: [f64; 3]) -> (System, modena_core::constraints::Constraints) {
     use modena_core::constraints::{Constraints, RigidWater};
@@ -90,16 +98,10 @@ pub fn water(masses: [f64; 3]) -> (System, modena_core::constraints::Constraints
     ];
     let center = (p[0] * masses[0] + p[1] * masses[1] + p[2] * masses[2])
         * (1. / masses.iter().sum::<f64>());
-    let axis = Vec3::new(1., 2., 3.) * (1. / 14_f64.sqrt());
-    let rotate = |v: Vec3| {
-        v * 0.41_f64.cos()
-            + axis.cross(v) * 0.41_f64.sin()
-            + axis * (axis.dot(v) * (1. - 0.41_f64.cos()))
-    };
-    let omega = rotate(Vec3::new(0., 0., 0.7));
+    let omega = water_rotation(Vec3::new(0., 0., 0.7));
     let mut s = atoms(&[[0.; 3]; 3], &masses);
     for (i, x) in p.into_iter().enumerate() {
-        let rho = rotate(x - center);
+        let rho = water_rotation(x - center);
         s.set_pos(i, Vec3::new(5., 6., 7.) + rho);
         s.set_vel(i, Vec3::new(0.2, -0.1, 0.3) + omega.cross(rho));
     }

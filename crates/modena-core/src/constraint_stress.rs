@@ -1,4 +1,4 @@
-//! Contractible periodic constraint geometry and actual projection impulses.
+//! Periodic constraint geometry, projection impulses, and endpoint mechanical reactions.
 //! Geometry is runtime-only: a stage freezes its cell and bonded image shifts.
 use crate::constraints::Constraints;
 use crate::error::{ModenaError, Result};
@@ -329,6 +329,15 @@ pub(crate) fn geometry_from_positions(
     constraints: &Constraints,
     positions: &[f64],
 ) -> Result<ConstraintGeometry> {
+    let geometry = select_geometry(system, constraints, positions)?;
+    check_graph_rank(&geometry, system)?;
+    Ok(geometry)
+}
+fn select_geometry(
+    system: &System,
+    constraints: &Constraints,
+    positions: &[f64],
+) -> Result<ConstraintGeometry> {
     constraints.validate(system)?;
     if positions.len() != system.positions.len() || positions.iter().any(|x| !x.is_finite()) {
         return Err(geometry_error("invalid reference positions"));
@@ -356,7 +365,7 @@ pub(crate) fn geometry_from_positions(
         edges,
         cell: system.box_size,
     };
-    validate_graph(&geometry, system)?;
+    validate_connectivity(&geometry, system)?;
     Ok(geometry)
 }
 /// Connected blocks keep disjoint-water rank storage to 3x3 per block.
@@ -390,7 +399,7 @@ pub(crate) fn connected_blocks(edges: &[ConstraintEdge], n: usize) -> Vec<Vec<us
     }
     blocks
 }
-fn validate_graph(geometry: &ConstraintGeometry, s: &System) -> Result<()> {
+fn validate_connectivity(geometry: &ConstraintGeometry, s: &System) -> Result<()> {
     let mut pairs = BTreeSet::new();
     let mut adjacent = vec![Vec::new(); s.n()];
     for (k, e) in geometry.edges.iter().enumerate() {
@@ -449,12 +458,16 @@ fn validate_graph(geometry: &ConstraintGeometry, s: &System) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+fn check_graph_rank(geometry: &ConstraintGeometry, s: &System) -> Result<()> {
     for block in connected_blocks(&geometry.edges, s.n()) {
-        validate_rank(&geometry.edges, &s.masses, &block)?;
+        let mut matrix = gram_matrix(&geometry.edges, &s.masses, &block)?;
+        factor_gram(&mut matrix, &block)?;
     }
     Ok(())
 }
-fn validate_rank(edges: &[ConstraintEdge], masses: &[f64], block: &[usize]) -> Result<()> {
+fn gram_matrix(edges: &[ConstraintEdge], masses: &[f64], block: &[usize]) -> Result<Vec<f64>> {
     let n = block.len();
     let size = n
         .checked_mul(n)
@@ -476,6 +489,14 @@ fn validate_rank(edges: &[ConstraintEdge], masses: &[f64], block: &[usize]) -> R
             }
         }
     }
+    Ok(a)
+}
+
+/// Form P D⁻¹ A D⁻¹ Pᵀ = L Lᵀ in place. The lower triangle contains L.
+/// Scales stay in original order; permutation[k] is the original row at pivot k.
+fn factor_gram(a: &mut [f64], block: &[usize]) -> Result<(Vec<f64>, Vec<usize>)> {
+    let n = block.len();
+    let mut permutation: Vec<_> = (0..n).collect();
     let scale: Vec<_> = (0..n).map(|i| a[i * n + i].sqrt()).collect();
     for i in 0..n {
         for j in 0..n {
@@ -485,14 +506,15 @@ fn validate_rank(edges: &[ConstraintEdge], masses: &[f64], block: &[usize]) -> R
     if a.iter().any(|x| !x.is_finite()) {
         return Err(geometry_error(format!("nonfinite rank block {block:?}")));
     }
-    // Symmetric diagonal-pivoted Cholesky on row/column-scaled Gram matrix.
+    let max_diagonal = (0..n).map(|i| a[i * n + i]).fold(0., f64::max);
     for k in 0..n {
         let p = (k..n)
             .max_by(|&i, &j| a[i * n + i].total_cmp(&a[j * n + j]))
             .unwrap();
-        if a[p * n + p] <= 1e-12 {
+        let pivot = a[p * n + p];
+        if pivot <= 1e-12 * max_diagonal {
             return Err(geometry_error(format!(
-                "singular constraint block {block:?}"
+                "singular constraint block {block:?}, scaled pivot {pivot:e}, max diagonal {max_diagonal:e}"
             )));
         }
         for j in 0..n {
@@ -501,19 +523,25 @@ fn validate_rank(edges: &[ConstraintEdge], masses: &[f64], block: &[usize]) -> R
         for i in 0..n {
             a.swap(i * n + k, i * n + p);
         }
-        let pivot = a[k * n + k];
+        permutation.swap(k, p);
+        a[k * n + k] = pivot.sqrt();
+        for i in k + 1..n {
+            a[i * n + k] /= a[k * n + k];
+        }
         for i in k + 1..n {
             for j in i..n {
-                let value = a[i * n + j] - a[i * n + k] * a[j * n + k] / pivot;
+                let value = a[i * n + j] - a[i * n + k] * a[j * n + k];
                 if !value.is_finite() {
-                    return Err(geometry_error("nonfinite rank factorization"));
+                    return Err(geometry_error(format!(
+                        "nonfinite factorization of block {block:?}"
+                    )));
                 }
                 a[i * n + j] = value;
                 a[j * n + i] = value;
             }
         }
     }
-    Ok(())
+    Ok((scale, permutation))
 }
 impl ConstraintGeometry {
     pub(crate) fn validate_stage(
@@ -533,7 +561,8 @@ impl ConstraintGeometry {
                     return Err(geometry_error("stage topology mismatch"));
                 }
             }
-            validate_graph(self, s)?;
+            validate_connectivity(self, s)?;
+            check_graph_rank(self, s)?;
             // Public geometry can be constructed or edited by callers. Its frozen
             // reference must itself be a unique nearest image, even for SHAKE
             // when only the predictor (not the starting coordinates) is available.
@@ -612,5 +641,200 @@ impl ConstraintGeometry {
             velocity = velocity.max(v);
         }
         Ok((position, velocity))
+    }
+}
+
+/// Instantaneous deterministic constraint forces and their unnormalized virial.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EndpointReaction {
+    #[serde(deserialize_with = "finite_multipliers")]
+    pub multipliers: Vec<f64>,
+    pub forces: Vec<Vec3>,
+    pub tensor: SymTensor6,
+    #[serde(deserialize_with = "finite_scalar")]
+    pub relative_linear_residual: f64,
+}
+fn finite_multipliers<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Vec<f64>, D::Error> {
+    let values = Vec::<f64>::deserialize(d)?;
+    if values.iter().all(|x| x.is_finite()) {
+        Ok(values)
+    } else {
+        Err(serde::de::Error::custom(
+            "expected finite constraint multipliers",
+        ))
+    }
+}
+
+/// Solve the acceleration constraints at the supplied final positions. Geometry
+/// is public, so certify its image choices against this snapshot before use.
+pub fn endpoint_reaction(
+    system: &System,
+    geometry: &ConstraintGeometry,
+) -> Result<EndpointReaction> {
+    if geometry.cell.basis() != system.box_size.basis() {
+        return Err(geometry_error("endpoint cell mismatch"));
+    }
+    let topology = Constraints {
+        bonds: geometry
+            .edges
+            .iter()
+            .map(|e| crate::constraints::Constraint {
+                i: e.i,
+                j: e.j,
+                d: e.distance,
+            })
+            .collect(),
+        waters: vec![],
+    };
+    let current = select_geometry(system, &topology, &system.positions)?;
+    for (id, (e, now)) in geometry.edges.iter().zip(&current.edges).enumerate() {
+        let difference = (e.reference - now.reference).norm();
+        if e.image_shift != now.image_shift
+            || !difference.is_finite()
+            || difference > 64. * f64::EPSILON * now.reference.norm().max(1.)
+        {
+            return Err(geometry_error(format!(
+                "stale endpoint geometry at edge {id}, reference difference {difference:e}"
+            )));
+        }
+    }
+    solve_endpoint(system, &current)
+}
+
+pub(crate) fn reaction_from_constraints(
+    system: &System,
+    constraints: &Constraints,
+) -> Result<EndpointReaction> {
+    let geometry = select_geometry(system, constraints, &system.positions)?;
+    solve_endpoint(system, &geometry)
+}
+
+fn solve_endpoint(system: &System, g: &ConstraintGeometry) -> Result<EndpointReaction> {
+    if system.forces.iter().any(|f| !f.is_finite()) {
+        return Err(geometry_error("nonfinite conservative endpoint force"));
+    }
+    let mut reaction = EndpointReaction {
+        multipliers: vec![0.; g.edges.len()],
+        forces: vec![Vec3::zero(); system.n()],
+        tensor: SymTensor6::ZERO,
+        relative_linear_residual: 0.,
+    };
+    if g.edges.is_empty() {
+        return Ok(reaction);
+    }
+    for block in connected_blocks(&g.edges, system.n()) {
+        let mut rhs = Vec::with_capacity(block.len());
+        for &id in &block {
+            let e = &g.edges[id];
+            let r = e.reference;
+            let relative_v = system.vel(e.j) - system.vel(e.i);
+            let position = (r.norm2() - e.distance * e.distance).abs();
+            let tangent = r.dot(relative_v).abs();
+            if !position.is_finite() || !tangent.is_finite() || position > 1e-10 || tangent > 1e-10
+            {
+                return Err(geometry_error(format!("endpoint block {block:?} edge {id} position residual {position:e}, tangent residual {tangent:e}")));
+            }
+            let acceleration = |i: usize| Vec3(system.force(i).0.map(|f| f / system.masses[i]));
+            let b = relative_v.norm2() + r.dot(acceleration(e.j) - acceleration(e.i));
+            if !b.is_finite() {
+                return Err(geometry_error(format!(
+                    "nonfinite acceleration in endpoint block {block:?} edge {id}"
+                )));
+            }
+            rhs.push(b);
+        }
+        let a = gram_matrix(&g.edges, &system.masses, &block)?;
+        let (lambda, residual) = solve_block(&a, &rhs, &block)?;
+        reaction.relative_linear_residual = reaction.relative_linear_residual.max(residual);
+        for (&id, multiplier) in block.iter().zip(lambda) {
+            let e = &g.edges[id];
+            reaction.multipliers[id] = multiplier;
+            let on_j = e.reference * -multiplier;
+            reaction.forces[e.i] -= on_j;
+            reaction.forces[e.j] += on_j;
+            reaction.tensor = reaction.tensor.plus(SymTensor6::dyad(e.reference, on_j));
+            if !reaction.tensor.finite()
+                || [e.i, e.j]
+                    .iter()
+                    .any(|&i| reaction.forces[i].0.iter().any(|f| !f.is_finite()))
+            {
+                return Err(geometry_error(format!(
+                    "nonfinite reaction in block {block:?} at edge {id}"
+                )));
+            }
+        }
+    }
+    Ok(reaction)
+}
+
+fn solve_block(a: &[f64], rhs: &[f64], block: &[usize]) -> Result<(Vec<f64>, f64)> {
+    let n = block.len();
+    // Keep the unscaled A and b for an independent residual after undoing
+    // both the permutation and the scaling.
+    let mut l = Vec::new();
+    l.try_reserve_exact(a.len())
+        .map_err(|_| geometry_error("constraint factor allocation failed"))?;
+    l.extend_from_slice(a);
+    let (scale, perm) = factor_gram(&mut l, block)?;
+    let mut x = vec![0.; n];
+    for i in 0..n {
+        let inner: f64 = (0..i).map(|j| l[i * n + j] * x[j]).sum();
+        x[i] = (rhs[perm[i]] / scale[perm[i]] - inner) / l[i * n + i];
+    }
+    for i in (0..n).rev() {
+        let inner: f64 = (i + 1..n).map(|j| l[j * n + i] * x[j]).sum();
+        x[i] = (x[i] - inner) / l[i * n + i];
+    }
+    let mut lambda = vec![0.; n];
+    for (i, &row) in perm.iter().enumerate() {
+        lambda[row] = x[i] / scale[row];
+    }
+    let residual = linear_residual(a, rhs, &lambda, block)?;
+    Ok((lambda, residual))
+}
+
+/// Normwise backward error ||Aλ-b||∞ / (||A||∞ ||λ||∞ + ||b||∞).
+fn linear_residual(a: &[f64], rhs: &[f64], lambda: &[f64], block: &[usize]) -> Result<f64> {
+    let mut numerator = 0_f64;
+    let mut matrix_norm = 0_f64;
+    for (row, b) in a.chunks_exact(block.len()).zip(rhs) {
+        let error = (row.iter().zip(lambda).map(|(a, x)| a * x).sum::<f64>() - b).abs();
+        let row_sum = row.iter().map(|a| a.abs()).sum::<f64>();
+        if !error.is_finite() || !row_sum.is_finite() {
+            return Err(geometry_error(format!(
+                "nonfinite linear residual in endpoint block {block:?}"
+            )));
+        }
+        numerator = numerator.max(error);
+        matrix_norm = matrix_norm.max(row_sum);
+    }
+    let norm = |x: &[f64]| x.iter().map(|v| v.abs()).fold(0., f64::max);
+    let denominator = matrix_norm * norm(lambda) + norm(rhs);
+    let relative = if denominator == 0. && numerator == 0. {
+        0.
+    } else {
+        numerator / denominator
+    };
+    if !denominator.is_finite() || !relative.is_finite() || relative > 1e-11 {
+        return Err(geometry_error(format!("endpoint block {block:?} linear residual {relative:e} (numerator {numerator:e}, denominator {denominator:e})")));
+    }
+    Ok(relative)
+}
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::linear_residual;
+
+    #[test]
+    fn backward_error_guard_rejects_wrong_or_nonfinite_solution() {
+        let a = [2., 0., 0., 1.];
+        let rhs = [4., 1.];
+        let block = [7, 9];
+        assert_eq!(linear_residual(&a, &rhs, &[2., 1.], &block).unwrap(), 0.);
+        let err = linear_residual(&a, &rhs, &[2., 1.001], &block).unwrap_err();
+        assert!(err.to_string().contains("[7, 9] linear residual"));
+        assert!(linear_residual(&a, &rhs, &[f64::NAN, 1.], &block).is_err());
+        assert!(linear_residual(&[f64::MAX], &[f64::MAX], &[1.], &[1]).is_err());
     }
 }

@@ -20,12 +20,30 @@ type Matrix = [Vector; DIM];
 
 fn water() -> (System, Constraints) {
     let (mut system, cons) = fixtures::water(M);
-    let omega = fixtures::water_rotation(Vec3::new(0.31, -0.27, 0.43));
+    let omega = Vec3::new(0.2, 0.3, 0.4);
     for i in 0..3 {
         let rho = system.pos(i) - Vec3::new(5., 6., 7.);
         system.set_vel(i, Vec3::new(0.2, -0.1, 0.3) + omega.cross(rho));
     }
     (system, cons)
+}
+
+#[test]
+fn fixture_uses_global_nonprincipal_angular_velocity() {
+    let (system, _) = water();
+    // The coordinates already carry the frozen Rodrigues rotation. The angular
+    // velocity in the specification is expressed in the laboratory frame.
+    for i in 0..system.n() {
+        let [x, y, z] = (system.pos(i) - Vec3::new(5., 6., 7.)).0;
+        let expected = [
+            0.2 + 0.3 * z - 0.4 * y,
+            -0.1 + 0.4 * x - 0.2 * z,
+            0.3 + 0.2 * y - 0.3 * x,
+        ];
+        for (actual, target) in system.vel(i).0.into_iter().zip(expected) {
+            fixtures::near(actual, target, 1e-14);
+        }
+    }
 }
 
 /// Form the full orthogonal projector on the kernel of G M^{-1/2}.

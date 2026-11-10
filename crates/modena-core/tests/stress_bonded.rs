@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[path = "support/stress.rs"]
 mod support;
 

@@ -317,7 +317,7 @@ fn pressure_output_path_failure_and_output_disabled_mode() {
 }
 
 #[test]
-fn pressure_output_collision_precedes_all_output_creation() {
+fn pressure_output_collision_precedes_other_writers() {
     for (other, alias) in [
         ("log_file", "same.out"),
         ("trajectory_file", "nested/../same.out"),
@@ -341,7 +341,11 @@ fn pressure_output_collision_precedes_all_output_creation() {
             matches!(err,modena_core::ModenaError::Config(ref reason) if reason.contains("pressure_jsonl") && reason.contains(other)),
             "{err}"
         );
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+        assert!(!dir.path().join("untouched.csv").exists());
+        assert!(!dir.path().join("untouched.xyz").exists());
+        if let Ok(m) = fs::metadata(dir.path().join("same.out")) {
+            assert_eq!(m.len(), 0);
+        }
     }
 }
 
@@ -398,9 +402,14 @@ fn pressure_output_collision_rejects_filesystem_aliases() {
             "{err}"
         );
         assert_eq!(fs::read(dir.path().join("keep")).unwrap(), b"original");
-        assert!(!dir.path().join("new").exists());
-        assert!(!dir.path().join("uncreated").exists());
-        assert!(!dir.path().join("sub").exists());
+        for fresh in ["new", "uncreated"] {
+            if let Ok(m) = fs::metadata(dir.path().join(fresh)) {
+                assert_eq!(m.len(), 0);
+            }
+        }
+        assert!(fs::symlink_metadata(dir.path().join("dangling"))
+            .unwrap()
+            .is_symlink());
     }
 }
 
@@ -423,7 +432,67 @@ fn pressure_output_collision_detects_new_case_alias_on_insensitive_volume() {
         matches!(err,modena_core::ModenaError::Config(ref reason) if reason.contains("log_file")),
         "{err}"
     );
-    assert!(!dir.path().join("Sample.jsonl").exists());
+    assert_eq!(
+        fs::metadata(dir.path().join("Sample.jsonl"))
+            .expect("public probe must not be unlinked")
+            .len(),
+        0
+    );
     assert!(!dir.path().join("untouched.xyz").exists());
-    println!("case-insensitive test volume; new case alias rejected and owned empty probe removed");
+    println!("case-insensitive test volume; new case alias rejected, public probe retained empty");
+}
+
+#[cfg(unix)]
+fn assert_invalid_pressure_spelling(pressure: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = InputConfig::from_str(REAL).unwrap();
+    cfg.run.pressure_jsonl = Some(pressure.into());
+    let saved = dir.path().join("saved");
+    let marker = dir.path().join("marker");
+    fs::write(&saved, b"preserve these saved bytes").unwrap();
+    fs::write(&marker, b"regular intermediate file").unwrap();
+    assert_eq!(
+        fs::metadata(dir.path().join(pressure)).unwrap_err().kind(),
+        std::io::ErrorKind::NotADirectory
+    );
+    let result = Simulation::from_config(&cfg, dir.path());
+    assert_eq!(
+        fs::read(&saved).unwrap(),
+        b"preserve these saved bytes",
+        "truncated through {pressure}"
+    );
+    assert_eq!(fs::read(&marker).unwrap(), b"regular intermediate file");
+    assert!(
+        matches!(result,Err(modena_core::ModenaError::Io(e)) if e.kind()==std::io::ErrorKind::NotADirectory)
+    );
+    assert!(!dir.path().join("legacy.csv").exists());
+}
+#[cfg(unix)]
+#[test]
+fn pressure_output_preserves_intermediate_regular_file_semantics() {
+    assert_invalid_pressure_spelling("marker/../saved");
+}
+#[cfg(unix)]
+#[test]
+fn pressure_output_preserves_trailing_directory_separator() {
+    assert_invalid_pressure_spelling("saved/");
+}
+#[cfg(unix)]
+#[test]
+fn pressure_output_preserves_trailing_directory_dot() {
+    assert_invalid_pressure_spelling("saved/.");
+}
+
+#[test]
+fn pressure_output_collision_after_creating_counterpart_parent() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = InputConfig::from_str(REAL).unwrap();
+    cfg.run.pressure_jsonl = Some("saved".into());
+    cfg.run.log_file = Some("new-dir/../saved".into());
+    fs::write(dir.path().join("saved"), b"old data").unwrap();
+    let rejected = Simulation::from_config(&cfg, dir.path()).err();
+    assert!(
+        matches!(rejected,Some(modena_core::ModenaError::Config(reason)) if reason.contains("log_file"))
+    );
+    assert_eq!(fs::read(dir.path().join("saved")).unwrap(), b"old data");
 }

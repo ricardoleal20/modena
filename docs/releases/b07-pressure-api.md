@@ -8,6 +8,8 @@ Velocity Verlet and Langevin BAOAB report two diagnostic observations. The endpo
 
 Set `pressure_jsonl = "results/pressure.jsonl"` under `[run]` to write the initial snapshot and each `log_every` sample. Each JSON line carries the global `step`, display `time`, `endpoint` and optional `interval`. The matching `RunEvent::Pressure` carries the same values. Order is xx, yy, zz, xy, xz, yz. In real units, kinetic, model and constraint components (including the interval averages) are in kcal/mol, total and scalar pressure are in atm, volume is in Å³, and time and interval duration are in ps. A missing scalar or absent interval serializes as JSON null. A missing tensor serializes its reason list. Reading a serialized observation confers diagnostic status.
 
+Use a distinct pressure output path from the log, trajectory, restore and restart files. The runner checks file identities before truncation. A failed check can leave an empty file at a previously absent pressure path and any newly created output directories.
+
 The six-field `Energies` record and existing CSV columns retain their established meanings. Legacy `pressure` is `(2 KE + model virial) / (3 V)` and excludes constraint reaction and impulse stress.
 
 ## Updating Rust callers

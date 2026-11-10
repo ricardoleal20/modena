@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rand::rngs::StdRng;
@@ -1788,63 +1788,44 @@ fn build_thermostat(
     }
 }
 
-/// Check file identities before any writer truncates its destination. Opening a
-/// new pressure file exclusively also lets the filesystem resolve aliases for
-/// names that did not exist at preflight (including case-only differences).
+/// Compare the actual files before truncating the retained pressure handle.
+/// Failed checks can leave a newly created empty file at the configured path.
 fn open_pressure_output(run: &RunSpec, base: &Path) -> Result<Option<BufWriter<File>>> {
     let Some(name) = &run.pressure_jsonl else {
         return Ok(None);
     };
-    let pressure = configured_destination(&base.join(name))?;
-    let collision = |field| {
-        ModenaError::Config(format!(
-            "run.pressure_jsonl and run.{field} resolve to the same file"
-        ))
-    };
-    let mut others = Vec::new();
-    for (field, name) in [
+    let outputs = [
         ("log_file", &run.log_file),
         ("trajectory_file", &run.trajectory_file),
         ("restart_file", &run.restart_file),
-        ("restore_file", &run.restore_file),
-    ] {
-        let Some(name) = name else { continue };
-        let other = configured_destination(&base.join(name))?;
-        if pressure == other {
-            return Err(collision(field));
+    ];
+    // Each writer normally creates its parent. Do this before identity checks
+    // so e.g. new-dir/../log has the same resolution as at write time.
+    for output in std::iter::once(name).chain(outputs.iter().filter_map(|(_, name)| name.as_ref()))
+    {
+        if let Some(parent) = base.join(output).parent() {
+            std::fs::create_dir_all(parent)?;
         }
-        others.push((field, other));
     }
-    if let Some(parent) = pressure.parent() {
-        std::fs::create_dir_all(parent)?;
+    // Pass the original spelling to the OS: "..", trailing "/" and "/." may
+    // only traverse directories. Never unlink an externally replaceable name.
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(base.join(name))?;
+    for (field, name) in outputs
+        .into_iter()
+        .chain([("restore_file", &run.restore_file)])
+    {
+        let Some(other) = name else { continue };
+        if path_matches_file(&base.join(other), &file)? {
+            return Err(ModenaError::Config(format!(
+                "run.pressure_jsonl and run.{field} resolve to the same file"
+            )));
+        }
     }
-    let (file, created) = match File::create_new(&pressure) {
-        Ok(file) => (file, true),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            (OpenOptions::new().write(true).open(&pressure)?, false)
-        }
-        Err(error) => return Err(error.into()),
-    };
-    let verified = (|| -> Result<()> {
-        for (field, other) in others {
-            if path_matches_file(&other, &file)? {
-                return Err(collision(field));
-            }
-        }
-        file.set_len(0)?;
-        Ok(())
-    })();
-    if let Err(error) = verified {
-        // Unlink only the new, still-owned regular directory entry. In
-        // particular never unlink a caller's preexisting symlink.
-        if created
-            && std::fs::symlink_metadata(&pressure).is_ok_and(|m| m.is_file())
-            && path_matches_file(&pressure, &file)?
-        {
-            std::fs::remove_file(&pressure)?;
-        }
-        return Err(error);
-    }
+    file.set_len(0)?;
     Ok(Some(BufWriter::new(file)))
 }
 
@@ -1918,49 +1899,6 @@ fn path_matches_file(path: &Path, _file: &File) -> std::io::Result<bool> {
         ));
     }
     Ok(false)
-}
-
-// Keep unresolved components of new output paths, resolving existing directory
-// symlinks before interpreting "..". A dangling file symlink may name another
-// configured stream whose writer will create the target later.
-fn configured_destination(path: &Path) -> std::io::Result<PathBuf> {
-    use std::io::{Error, ErrorKind};
-    use std::path::Component;
-    let mut path = std::path::absolute(path)?;
-    for _ in 0..=40 {
-        let mut resolved = PathBuf::new();
-        let mut components = path.components();
-        let mut redirect = None;
-        while let Some(part) = components.next() {
-            if part == Component::ParentDir {
-                resolved.pop();
-                continue;
-            }
-            resolved.push(part);
-            if !matches!(part, Component::Normal(_)) {
-                continue;
-            }
-            match resolved.canonicalize() {
-                Ok(existing) => resolved = existing,
-                Err(error) if error.kind() == ErrorKind::NotFound => {
-                    if let Ok(target) = std::fs::read_link(&resolved) {
-                        resolved.pop();
-                        redirect = Some(resolved.join(target).join(components.as_path()));
-                        break;
-                    }
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        match redirect {
-            Some(target) => path = target,
-            None => return Ok(resolved),
-        }
-    }
-    Err(Error::new(
-        ErrorKind::InvalidInput,
-        "too many symlinks in configured output path",
-    ))
 }
 
 fn open_trajectory(run: &RunSpec, base_dir: &Path) -> Result<Option<TrajectoryWriter>> {

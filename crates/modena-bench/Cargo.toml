@@ -16,6 +16,13 @@ clap = { workspace = true }
 rayon = { workspace = true }
 serde_json = { workspace = true }
 
+[features]
+neighbor-diagnostics = ["modena-core/neighbor-diagnostics"]
+
+[[bin]]
+name = "triclinic_neighbors"
+required-features = ["neighbor-diagnostics"]
+
 [[bench]]
 name = "force_kernel"
 harness = false

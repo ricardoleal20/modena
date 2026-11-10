@@ -303,8 +303,11 @@ fn runner_rejects_changed_solver_and_controller_parameters() {
     let config = rotor_config(dir.path(), 1, Some("changed.chk"));
     let mut solver = cp.clone();
     let stress = solver.stress.as_mut().unwrap();
-    stress.solver.tolerance = 1e-12;
-    stress.physical_signature["pressure_estimator"]["solver"]["tolerance"] = json!(1e-12);
+    // Preserve the completed ledger's actual convergence tolerance while
+    // testing the runner's separate solver-identity check.
+    stress.solver.max_iterations += 1;
+    stress.physical_signature["pressure_estimator"]["solver"]["max_iterations"] =
+        json!(stress.solver.max_iterations);
     save_with_stress(&path, &solver).unwrap();
     assert!(Simulation::from_config_without_outputs(&config, dir.path())
         .err()
@@ -360,4 +363,77 @@ fn post_controller_endpoint_and_pre_move_interval_survive_restore() {
         saved(&restored, &dir.path().join("restored.chk")),
         saved(&direct, &dir.path().join("moved.chk"))
     );
+}
+
+fn assert_history_rejected(good: &StressCheckpoint, bad: &StressCheckpoint) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("original.chk");
+    save_with_stress(&path, good).unwrap();
+    assert_eq!(load_with_stress(&path).unwrap().stress, good.stress);
+    let original = std::fs::read_to_string(&path).unwrap();
+    let mut wire: serde_json::Value =
+        serde_json::from_str(original.split_once('\n').unwrap().1).unwrap();
+    wire["stress"] = serde_json::to_value(&bad.stress).unwrap();
+    let corrupt = dir.path().join("corrupt.chk");
+    std::fs::write(&corrupt, format!("MODENA_RESTART 3\n{wire}\n")).unwrap();
+
+    let load_rejected = load_with_stress(corrupt).is_err();
+    let save_rejected = save_with_stress(&path, bad).is_err();
+    let preserved = std::fs::read_to_string(path).unwrap() == original;
+    assert!(load_rejected && save_rejected && preserved,
+        "load rejected={load_rejected}, save rejected={save_rejected}, original preserved={preserved}");
+}
+
+#[test]
+fn stage_history_rejects_unconverged_velocity_projection() {
+    use modena_core::constraint_stress::ProjectionStage;
+    let good = make_stress_checkpoint_after_rotor_step();
+    let mut bad = good.clone();
+    let b0 = &mut bad.stress.as_mut().unwrap().last_stages[0];
+    assert_eq!(b0.stage, ProjectionStage::BaoabB0);
+    b0.max_velocity_residual = 1.;
+    assert_history_rejected(&good, &bad);
+}
+
+#[test]
+fn stage_history_checks_position_residual_only_for_position_projection() {
+    use modena_core::constraint_stress::ProjectionStage;
+    let mut good = make_stress_checkpoint_after_rotor_step();
+    let stress = good.stress.as_mut().unwrap();
+    let a1 = &mut stress.last_stages[1];
+    assert_eq!(a1.stage, ProjectionStage::BaoabA1Pre);
+    // SHAKE converges positions; its reported velocities may still be non-tangent.
+    a1.max_position_residual = stress.solver.tolerance;
+    a1.max_velocity_residual = 1.;
+    let mut bad = good.clone();
+    bad.stress.as_mut().unwrap().last_stages[1].max_position_residual = 1.;
+    assert_history_rejected(&good, &bad);
+}
+
+#[test]
+fn stage_history_rejects_unconstrained_bath_reaction() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = rotor_config(dir.path(), 1, None);
+    config.constraints = None;
+    let mut sim = Simulation::from_config_without_outputs(&config, dir.path()).unwrap();
+    sim.run().unwrap();
+    let path = dir.path().join("unconstrained.chk");
+    sim.write_checkpoint(&path).unwrap();
+    let mut good = load_with_stress(path).unwrap();
+    let bath = good.stress.as_mut().unwrap().last_bath.as_mut().unwrap();
+    assert!(bath
+        .unprojected
+        .iter()
+        .any(|j| j.0.iter().any(|x| *x != 0.)));
+    bath.reaction[0].0[0] = -0.;
+    let mut bad = good.clone();
+    bad.stress
+        .as_mut()
+        .unwrap()
+        .last_bath
+        .as_mut()
+        .unwrap()
+        .reaction[0]
+        .0[0] = 1.;
+    assert_history_rejected(&good, &bad);
 }

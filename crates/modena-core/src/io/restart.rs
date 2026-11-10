@@ -433,7 +433,14 @@ fn validate_history(
             }
             tensor = tensor.plus(SymTensor6::dyad(impulse.lever, impulse.impulse_on_j));
         }
+        let target_residual = match report.stage {
+            VvPosition | BaoabA1Pre | BaoabA2Pre => report.max_position_residual,
+            VvFinal | BaoabB0 | BaoabA1Post | BaoabO | BaoabA2Post | BaoabB1 => {
+                report.max_velocity_residual
+            }
+        };
         if !tensor.finite()
+            || target_residual > s.solver.tolerance
             || tensor != report.tensor_impulse
             || [report.max_position_residual, report.max_velocity_residual]
                 .iter()
@@ -457,6 +464,8 @@ fn validate_history(
         (Some(b), Some(o))
             if b.unprojected.len() == state.masses.len()
                 && b.reaction.len() == state.masses.len()
+                && (state.constraint_count != 0
+                    || b.reaction.iter().all(|j| *j == Vec3::zero()))
                 && b.unprojected
                     .iter()
                     .chain(&b.reaction)

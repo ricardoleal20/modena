@@ -15,7 +15,9 @@ use chacha20::ChaCha12Rng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, StandardNormal};
 
-use crate::constraint_stress::{constraint_geometry, ProjectionReport, ProjectionStage};
+use crate::constraint_stress::{
+    constraint_geometry, BathImpulse, ProjectionReport, ProjectionStage,
+};
 use crate::constraints::Constraints;
 use crate::error::Result;
 use crate::force_model::{ForceModel, Virial};
@@ -26,12 +28,6 @@ use crate::stress::{
 };
 use crate::system::System;
 use crate::thermo::Energies;
-
-/// SHAKE/RATTLE convergence: residual tolerance (length² for SHAKE, velocity·
-/// length for RATTLE) and the iteration cap. Tight defaults — the constrained
-/// molecule test verifies energy conservation on the constraint manifold.
-const SHAKE_TOL: f64 = ConstraintSolverOptions::DEFAULT.tolerance;
-const SHAKE_MAX_ITER: usize = ConstraintSolverOptions::DEFAULT.max_iterations;
 
 /// Time-stepping scheme. `step` advances the system by `dt` and returns the
 /// post-step thermodynamic observables.
@@ -53,6 +49,9 @@ pub trait Integrator: Send {
 
     /// Advance while reporting mechanical stress when the scheme supports it.
     /// The caller supplies an evaluation for the cached input forces, positions and cell.
+    /// Once built-in VV or BAOAB starts advancing, an error is terminal for that step.
+    /// The system, force cache or integrator may have advanced partway. Restore a known
+    /// state before retrying. Only a successful step returns a completed record.
     fn step_with_stress(
         &mut self,
         system: &mut System,
@@ -68,6 +67,8 @@ pub trait Integrator: Send {
     }
 
     /// External integrators can retain the default solver and legacy trajectory.
+    /// The matching input cache and partial-state error contract of
+    /// [`Self::step_with_stress`] also apply when selecting solver options.
     fn step_with_stress_options(
         &mut self,
         system: &mut System,
@@ -211,24 +212,14 @@ impl VelocityVerlet {
         )?;
         let stress = if let Some((initial, kinetic_average, final_model)) = measured {
             let stages: Vec<_> = position.into_iter().chain(final_projection).collect();
-            let impulse = stages
-                .iter()
-                .fold(SymTensor6::ZERO, |sum, r| sum.plus(r.tensor_impulse));
-            let constraint_average = SymTensor6(impulse.0.map(|x| x / dt));
-            let model_average = average_model_tensors(&initial.tensor, &final_model.tensor);
-            let volume = system.box_size.volume();
-            let (total, scalar) =
-                pressure_total(kinetic_average, &model_average, constraint_average, volume)?;
-            let interval = IntervalPressure {
-                kinetic_average,
-                model_average,
-                constraint_average,
-                total,
-                scalar,
-                volume,
+            let interval = interval_pressure(
+                system,
                 dt,
-                validation: ValidationStatus::Diagnostic,
-            };
+                kinetic_average,
+                initial,
+                &final_model,
+                stages.iter(),
+            )?;
             let endpoint = endpoint_pressure(system, &final_model, constraints)?;
             Some(StepStress {
                 solver,
@@ -277,6 +268,32 @@ fn validate_step_inputs(
         }
     }
     Ok(())
+}
+
+fn interval_pressure<'a>(
+    system: &System,
+    dt: f64,
+    kinetic_average: SymTensor6,
+    initial: &ModelEvaluation,
+    final_model: &ModelEvaluation,
+    mechanical: impl Iterator<Item = &'a ProjectionReport>,
+) -> Result<IntervalPressure> {
+    let impulse = mechanical.fold(SymTensor6::ZERO, |sum, r| sum.plus(r.tensor_impulse));
+    let constraint_average = SymTensor6(impulse.0.map(|x| x / dt));
+    let model_average = average_model_tensors(&initial.tensor, &final_model.tensor);
+    let volume = system.box_size.volume();
+    let (total, scalar) =
+        pressure_total(kinetic_average, &model_average, constraint_average, volume)?;
+    Ok(IntervalPressure {
+        kinetic_average,
+        model_average,
+        constraint_average,
+        total,
+        scalar,
+        volume,
+        dt,
+        validation: ValidationStatus::Diagnostic,
+    })
 }
 
 fn average_model_tensors(
@@ -371,58 +388,221 @@ impl Integrator for LangevinBAOAB {
         neighbors: &mut NeighborList,
         dt: f64,
     ) -> Result<Energies> {
+        Ok(self
+            .advance(
+                system,
+                model,
+                neighbors,
+                dt,
+                None,
+                ConstraintSolverOptions::DEFAULT,
+            )?
+            .energies)
+    }
+
+    fn step_with_stress(
+        &mut self,
+        system: &mut System,
+        model: &dyn ForceModel,
+        neighbors: &mut NeighborList,
+        dt: f64,
+        initial: &ModelEvaluation,
+    ) -> Result<StepEvaluation> {
+        self.step_with_stress_options(
+            system,
+            model,
+            neighbors,
+            dt,
+            initial,
+            ConstraintSolverOptions::DEFAULT,
+        )
+    }
+
+    fn step_with_stress_options(
+        &mut self,
+        system: &mut System,
+        model: &dyn ForceModel,
+        neighbors: &mut NeighborList,
+        dt: f64,
+        initial: &ModelEvaluation,
+        solver: ConstraintSolverOptions,
+    ) -> Result<StepEvaluation> {
+        self.advance(system, model, neighbors, dt, Some(initial), solver)
+    }
+}
+
+impl LangevinBAOAB {
+    fn advance(
+        &mut self,
+        system: &mut System,
+        model: &dyn ForceModel,
+        neighbors: &mut NeighborList,
+        dt: f64,
+        initial: Option<&ModelEvaluation>,
+        solver: ConstraintSolverOptions,
+    ) -> Result<StepEvaluation> {
+        use ProjectionStage::*;
+        validate_step_inputs(system, dt, initial, solver)?;
         system.set_conserved_com_dof(0)?;
-        prepare_constraints(system, self.constraints.as_ref())?;
-        let n = system.n();
+        let cons = self.constraints.as_ref();
+        prepare_constraints(system, cons)?;
         let half = 0.5 * dt;
-        let c1 = (-self.gamma * dt).exp();
-        let kt = self.target_temperature;
-        let c1sq = c1 * c1;
-
-        // B½: v += (dt/2) F/m   (using cached F(t))
+        let n = system.n();
+        let mut stages = Vec::new();
+        let measured = initial.is_some();
         kick(system, n, half);
-
-        if let Some(cons) = &self.constraints {
-            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER)?;
+        let b0 = project_tangent(system, cons, solver, initial.map(|_| BaoabB0))?;
+        if measured {
+            stages.push(b0.unwrap_or_else(|| ProjectionReport::new(BaoabB0)));
         }
-        // A half-step on the constraint manifold, with only its projection
-        // displacement applied as a velocity correction.
-        project_drift(system, self.constraints.as_ref(), half, true)?;
-        // O: exact OU velocity update.
-        {
-            let v = &mut system.velocities;
-            let m = &system.masses;
-            for (i, &mi) in m.iter().enumerate() {
-                let s = ((1.0 - c1sq) * kt / mi).sqrt();
-                for k in 0..3 {
-                    let gauss: f64 = StandardNormal.sample(&mut self.rng);
-                    let idx = 3 * i + k;
-                    v[idx] = c1 * v[idx] + s * gauss;
-                }
+        let k1 = baoab_drift(
+            system,
+            cons,
+            half,
+            solver,
+            initial.map(|_| (BaoabA1Pre, BaoabA1Post)),
+            &mut stages,
+        )?;
+        let bath = projected_ou(
+            system,
+            cons,
+            &mut self.rng,
+            (-self.gamma * dt).exp(),
+            self.target_temperature,
+            solver,
+            measured,
+        )?;
+        let bath = bath.map(|(bath, projection)| {
+            stages.push(projection);
+            bath
+        });
+        let k2 = baoab_drift(
+            system,
+            cons,
+            half,
+            solver,
+            initial.map(|_| (BaoabA2Pre, BaoabA2Post)),
+            &mut stages,
+        )?;
+
+        system.forces.fill(0.);
+        let mut virial = Virial::default();
+        let (pe, models) = if let Some(initial) = initial {
+            let final_model = model.evaluate(system, neighbors)?;
+            virial.w = final_model.scalar_virial;
+            (final_model.energy, Some((initial, final_model)))
+        } else {
+            (model.compute(system, &mut virial, neighbors)?, None)
+        };
+        kick(system, n, half);
+        let b1 = project_tangent(system, cons, solver, initial.map(|_| BaoabB1))?;
+        let stress = if let Some((initial, final_model)) = models {
+            stages.push(b1.unwrap_or_else(|| ProjectionReport::new(BaoabB1)));
+            let kinetic = k1.scaled(0.5).plus(k2.scaled(0.5));
+            let mechanical = stages.iter().filter(|r| r.stage != BaoabO);
+            let interval =
+                interval_pressure(system, dt, kinetic, initial, &final_model, mechanical)?;
+            let endpoint = endpoint_pressure(system, &final_model, cons)?;
+            Some(StepStress {
+                solver,
+                final_model,
+                interval,
+                endpoint,
+                stages,
+                bath,
+            })
+        } else {
+            None
+        };
+        Ok(StepEvaluation {
+            energies: Energies::from(system, pe, &virial),
+            stress,
+        })
+    }
+}
+
+/// Sample straight drift momentum after SHAKE but before the tangent impulse.
+fn baoab_drift(
+    system: &mut System,
+    cons: Option<&Constraints>,
+    half: f64,
+    solver: ConstraintSolverOptions,
+    tags: Option<(ProjectionStage, ProjectionStage)>,
+    stages: &mut Vec<ProjectionReport>,
+) -> Result<SymTensor6> {
+    let pre = position_drift(system, cons, half, solver, tags.map(|(pre, _)| pre))?;
+    let kinetic = tags.map_or(SymTensor6::ZERO, |_| kinetic_tensor(system));
+    let post = project_tangent(system, cons, solver, tags.map(|(_, post)| post))?;
+    if let Some((a, b)) = tags {
+        stages.push(pre.unwrap_or_else(|| ProjectionReport::new(a)));
+        stages.push(post.unwrap_or_else(|| ProjectionReport::new(b)));
+    }
+    system.wrap_positions();
+    Ok(kinetic)
+}
+
+/// Exact scalar OU transition followed by the mass-weighted tangent projection at fixed q.
+fn projected_ou(
+    system: &mut System,
+    cons: Option<&Constraints>,
+    rng: &mut ChaCha12Rng,
+    c: f64,
+    kt: f64,
+    solver: ConstraintSolverOptions,
+    measured: bool,
+) -> Result<Option<(BathImpulse, ProjectionReport)>> {
+    use crate::Vec3;
+    let csq = c * c;
+    let mut unprojected = Vec::new();
+    let mut unprojected_moment = SymTensor6::ZERO;
+    for i in 0..system.n() {
+        let mass = system.masses[i];
+        let sigma = ((1.0 - csq) * kt / mass).sqrt();
+        let v = &mut system.velocities[3 * i..3 * i + 3];
+        let mut impulse = Vec3::zero();
+        for (k, value) in v.iter_mut().enumerate() {
+            // Consume every normal even at zero amplitude for RNG continuation.
+            let normal: f64 = StandardNormal.sample(rng);
+            let before = *value;
+            *value = c * before + sigma * normal;
+            if measured {
+                impulse.0[k] = mass * (*value - before);
             }
         }
-        // OU noise must be tangent, preserving the mass-weighted Gaussian
-        // law of every unconstrained mode (including molecular COM).
-        if let Some(cons) = &self.constraints {
-            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER)?;
+        if measured {
+            unprojected.push(impulse);
+            unprojected_moment = unprojected_moment.plus(SymTensor6::dyad(system.pos(i), impulse));
         }
-        project_drift(system, self.constraints.as_ref(), half, true)?;
-
-        // Recompute F(t+dt). Zero forces first (M3 accumulate contract).
-        system.forces.fill(0.0);
-        let mut virial = Virial::default();
-        let pe = model.compute(system, &mut virial, neighbors)?;
-
-        // B½: v += (dt/2) F/m
-        kick(system, n, half);
-
-        // RATTLE: project velocities onto the constraint tangent.
-        if let Some(cons) = &self.constraints {
-            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER)?;
-        }
-
-        Ok(Energies::from(system, pe, &virial))
     }
+    let before_projection = measured.then(|| system.velocities.clone());
+    let stage = ProjectionStage::BaoabO;
+    let projection = project_tangent(system, cons, solver, measured.then_some(stage))?;
+    let Some(before) = before_projection else {
+        return Ok(None);
+    };
+    let projection = projection.unwrap_or_else(|| ProjectionReport::new(stage));
+    let reaction: Vec<_> = before
+        .chunks_exact(3)
+        .enumerate()
+        .map(|(i, v)| (system.vel(i) - Vec3::new(v[0], v[1], v[2])) * system.masses[i])
+        .collect();
+    if !unprojected_moment.finite()
+        || reaction
+            .iter()
+            .chain(&unprojected)
+            .any(|j| j.0.iter().any(|v| !v.is_finite()))
+    {
+        return Err(crate::ModenaError::Physics(
+            "nonfinite OU bath impulse".into(),
+        ));
+    }
+    let bath = BathImpulse {
+        unprojected,
+        reaction,
+        unprojected_moment,
+        reaction_moment: projection.tensor_impulse,
+    };
+    Ok(Some((bath, projection)))
 }
 
 /// Record the constraint manifold before kinetic observables are used.
@@ -542,3 +722,7 @@ fn drift(system: &mut System, n: usize, factor: f64) {
         x[k] += v[k] * factor;
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/conditional_ou.rs"]
+mod conditional_ou;

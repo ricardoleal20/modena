@@ -429,6 +429,10 @@ Verify production H0 U/F/W first (coordinate FD for F), six independent affine d
 oracle itself. Full particle meshes also cover net charge, fractional pair scales, cold/warm cache, integer wraps, non-grid translations,
 and fixed-grid convergence toward independently converged Ewald. No exact continuous-translation invariance claim for SPME.
 
+Strict independent H0 scalar verification supplements the fixed-epsilon derivative tests: evaluate the independent reciprocal energy under uniform complex cell scale lambda=1+i*1e-20 and obtain W=-Im(U)/1e-20. Real lambda=.97/1.03 probes must match the independent real-cell energy at1e-11. Full-model nonmesh contributions use first-order dual differentiation of their independent scalar energies, including elementary erfc differentiation, and match real energies at lambda=.97,1,1.03. Neither path calls production virial/tensor factors. Independent full and reciprocal U/W1e-11, coordinate FD2e-7, all6 fixed-epsilon strain derivatives2e-6, and legacy scalar/tensor-trace5e-12 are distinct gates; finite differences are not falsely required to achieve the stricter algebraic identity tolerance.
+
+The auxiliary small automatic-grid full-model derivative fixture uses kspace_cutoff1.2 (mesh[4,4,4]), fixed by geometry-only knot checks before energy outcomes. The initial1.5/[4,5,5] preparation is retained as rejected because outside y=.4 lies on a spline knot. This auxiliary low-resolution identity control changes neither the four mandatory explicit grids nor the8³/16³/32³ accuracy ladder, and it grants no precision acceptance.
+
 B05 compatibility: preserve `SpmeForceModel::compute_profiled(&self,&mut System,&mut Virial,&mut NeighborList)->Result<(f64,SpmeProfile)>`.
 Twelve Duration fields remain exactly `neighbor,real_space,pair_correction,workspace_setup,influence_setup,spread,fft_forward,influence,
 fft_inverse,gather,self_background,total`. Add `evaluate_profiled(&self,&mut System,&mut NeighborList)->Result<(ModelEvaluation,SpmeProfile)>`

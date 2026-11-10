@@ -44,6 +44,7 @@ pub mod replica_exchange;
 pub mod runner;
 pub mod snapshot;
 pub mod spme;
+pub mod stress;
 pub mod system;
 pub mod thermo;
 pub mod thermostat;

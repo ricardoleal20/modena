@@ -21,6 +21,7 @@ FAMILIES = [("cubic", 2), ("ortho", 2), ("special", 2), ("cubic", 3), ("ortho", 
 THREADS = [1, 4]
 ACTIVE_PHASES = {"verify", "sweep", "confirm", "profile"}
 WALL_NS = 1_800_000_000_000
+REPORT_NS = 120_000_000_000  # Bounded noncompute rendering; never charged to family work.
 RSS_CAP = 536_870_912
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -47,6 +48,21 @@ def source_inventory():
 
 def artifact(path):
     return {"path": str(Path(path).resolve()), "sha256": digest(path)}
+
+
+def checked_artifact(reference):
+    """Compare imported bytes against the saved producer identity, never refresh it."""
+    path = Path(reference["path"])
+    if not path.is_file() or digest(path) != reference["sha256"]:
+        raise ValueError("artifact changed since production: " + str(path))
+    return path
+
+
+def retain_output(path, directory, name="receipt"):
+    """Called once at owned-child completion (or our own new-file creation)."""
+    reference = artifact(path)
+    write_new(Path(directory) / ("accepted-" + name + ".json"), reference)
+    return reference
 
 
 def write_new(path, value):
@@ -168,11 +184,11 @@ def recover_usage(path, initial, epoch):
             visit({"usage": value["record"].get("usage")})
 
     if Path(path).exists():
-        with Path(path).open() as stream:
+        with Path(path).open("rb") as stream:
             for sequence, line in enumerate(stream):
                 try:
                     event = json.loads(line)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     break
                 if event.get("sequence") != sequence or event.get("manifest_sha256") != epoch:
                     raise ValueError("journal source/sequence mismatch")
@@ -180,58 +196,98 @@ def recover_usage(path, initial, epoch):
     return state
 
 
-def failed_receipt(prepared, out, phase, previous, row, active_ns):
-    """Parent-authorized process failure envelope; it can never mint a proof."""
-    prepared = Path(prepared)
-    out = Path(out)
+def failed_receipt(prepared, out, phase, previous, row, active_ns, finalized=None):
+    """One recovered view of the failed phase; originals remain raw artifacts.
+
+    `previous` is the saved earlier phase, never the failed phase's own summary.
+    `finalized` is the producer-pinned optional summary from this failed child.
+    """
+    prepared, out = Path(prepared), Path(out)
     out.mkdir(exist_ok=True)
     epoch = digest(prepared / "manifest.json")
-    prior = json.loads(Path(previous).read_text()) if previous else None
+    prior = json.loads(checked_artifact(previous).read_text()) if previous else None
+    original = None
+    summary_error = None
+    if finalized:
+        path = checked_artifact(finalized)
+        try:
+            original = json.loads(path.read_text())
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            summary_error = {"Io": "incomplete finalized summary: " + str(error)}
+        if original:
+            if original.get("prior") != previous:
+                raise ValueError("finalized phase differs from saved predecessor")
+            for reference in original.get("artifacts", {}).values():
+                checked_artifact(reference)
+            for reference in original.get("inputs", {}).values():
+                checked_artifact(reference)
     usage = recover_usage(out / "events.jsonl", prior["usage"] if prior else empty_usage(), epoch)
+    # A finalized outcome is the producer's last actual continuing usage; an
+    # interrupted child without one retains the last durable reservation/event.
+    if original:
+        usage = copy.deepcopy(original["usage"])
     usage["candidate"]["reference"]["elapsed_ns"] = max(active_ns, usage["candidate"]["reference"]["elapsed_ns"])
     code = row["actual_child_exit"]
     category = {86: "requested Rust heap cap", 87: "primary allocator callback", 88: "System allocator returned null"}.get(code, "process/monitor/resource failure")
-    # Raw partial files stay retained. Only a complete JSONL prefix can be read
-    # as report events; a torn tail remains separately inspectable.
-    artifacts = {}
+    process_failure = {"BudgetExceeded": f"{category}; actual child exit {code}; timed_out={row['timed_out']}"}
+    artifacts = copy.deepcopy(original.get("artifacts", {})) if original else {}
+    if finalized:
+        artifacts["raw-summary"] = copy.deepcopy(finalized)
     events = out / "events.jsonl"
+    raw_events = original.get("artifacts", {}).get("events") if original else None
+    if raw_events and checked_artifact(raw_events).resolve() != events.resolve():
+        raise ValueError("finalized journal differs from owned phase path")
     if events.exists():
         prefix = out / "completed-events.jsonl"
         with events.open("rb") as source, prefix.open("xb") as dest:
             for line in source:
-                try: json.loads(line)
-                except json.JSONDecodeError: break
+                try:
+                    json.loads(line)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    break
                 dest.write(line)
-            dest.flush(); os.fsync(dest.fileno())
+            dest.flush()
+            os.fsync(dest.fileno())
         artifacts["events"] = artifact(prefix)
-        artifacts["raw-events"] = artifact(events)
+        # The torn original is hash-checked evidence, never a traversed stream.
+        artifacts["raw-events"] = copy.deepcopy(raw_events) if raw_events else artifact(events)
+    process_path = out / "process-error.json"
+    write_new(process_path, {"observation": row, "failure": process_failure,
+                             "summary_parse_failure": summary_error})
+    artifacts["process-error"] = artifact(process_path)
     target = out / "process-failure.json"
     write_new(target, {"schema": "modena-spme-phase-v1", "phase": phase,
                        "prepared": str(prepared.resolve()), "manifest_sha256": epoch,
-                       "prior": artifact(previous) if previous else None, "inputs": {},
+                       "prior": copy.deepcopy(previous),
+                       "inputs": copy.deepcopy(original.get("inputs", {})) if original else {},
                        "artifacts": artifacts, "usage": usage,
-                       "failure": {"BudgetExceeded": f"{category}; actual child exit {code}; timed_out={row['timed_out']}"},
-                       "finalization_failure": None})
+                       "failure": (original.get("failure") if original else None) or process_failure,
+                       "finalization_failure": (original.get("finalization_failure") if original else None) or summary_error})
     return target
 
 
 class Campaign:
-    def __init__(self, out, binary, executor=execute):
+    def __init__(self, out, registered_binary, executor=execute, registered_sources=None):
         self.out = Path(out)
-        self.binary = str(Path(binary).resolve())
+        self.binary_artifact = copy.deepcopy(registered_binary)
+        self.binary = str(checked_artifact(self.binary_artifact))
         self.executor = executor
-        self.source_hashes = source_inventory()
+        self.source_hashes = copy.deepcopy(registered_sources) if registered_sources is not None else source_inventory()
+        self.prepared_artifacts = {}
         self.rows = {}
         self.active = {}
 
     def call(self, key, phase, argv):
         if source_inventory() != self.source_hashes:
             raise ValueError("registered source changed during campaign")
+        checked_artifact(self.binary_artifact)
+        if key in self.prepared_artifacts:
+            checked_artifact(self.prepared_artifacts[key])
         family, replicas, threads = key
         folder = self.out / f"{family}-{replicas}-threads-{threads}"
         folder.mkdir(exist_ok=True)
         env = dict(os.environ, RAYON_NUM_THREADS=str(threads))
-        remaining = WALL_NS - self.active.get(key, 0)
+        remaining = REPORT_NS if phase == "report" else WALL_NS - self.active.get(key, 0)
         if remaining <= 0:
             raise ValueError("family active deadline exhausted before child admission")
         row = self.executor([self.binary, phase, *map(str, argv)], env, folder / f"process-{phase}", phase, remaining)
@@ -244,29 +300,46 @@ class Campaign:
     def usable(row):
         return row["actual_child_exit"] in (0, 4) and row["monitor_exit"] == 0 and row["wrapper_exit"] == 0 and not row["timed_out"] and rss_accepted(row["peak_rss_bytes"])
 
+    def recover(self, key, prepared, out, phase, previous, row, finalized=None):
+        checked_artifact(self.prepared_artifacts[key])
+        path = failed_receipt(prepared, out, phase, previous, row, self.active.get(key, 0), finalized)
+        return retain_output(path, out, "recovery")
+
     def prepare(self, key):
         family, replicas, threads = key
         prepared = self.out / f"{family}-{replicas}-threads-{threads}" / "prepared"
         row = self.call(key, "prepare", ["--out", prepared, "--family", family, "--replicas", replicas, "--threads", threads, "--reference-extended"])
+        if (prepared / "manifest.json").exists():
+            self.prepared_artifacts[key] = retain_output(prepared / "manifest.json", prepared.parent / "process-prepare", "manifest")
         return prepared, row
 
     def verify(self, key, prepared, special=None, madelung=None):
         argv = ["--protocol", prepared / "protocol.json", "--snapshots", prepared / "snapshots.json", "--elapsed-ns", self.active.get(key, 0)]
         for name, receipt in (("special", special), ("madelung", madelung)):
-            if receipt: argv += [f"--{name}", receipt, f"--{name}-sha256", digest(receipt)]
+            if receipt:
+                argv += [f"--{name}", checked_artifact(receipt), f"--{name}-sha256", receipt["sha256"]]
         row = self.call(key, "verify", argv)
-        receipt = prepared / "verification.json"
-        if not receipt.exists() or not self.usable(row):
-            receipt = failed_receipt(prepared, prepared / "verification", "verify", receipt if receipt.exists() else None, row, self.active.get(key, 0))
+        path = prepared / "verification.json"
+        receipt = retain_output(path, prepared.parent / "process-verify") if path.exists() else None
+        if receipt is None or not self.usable(row):
+            receipt = self.recover(key, prepared, prepared / "verification", "verify", None, row, receipt)
         return receipt, row
 
     def render(self, key, prepared, receipt, profiles=None):
         folder = prepared.parent
+        checked_artifact(self.prepared_artifacts[key])
+        campaign_path = checked_artifact(receipt)
         memory = folder / "memory.json"
-        write_new(memory, {"schema": "modena-spme-memory-v1", "manifest_sha256": digest(prepared / "manifest.json"), "children": self.rows[key]})
-        argv = ["--campaign", receipt, "--expected-sha256", digest(receipt), "--memory", memory, "--memory-sha256", digest(memory), "--out", folder / "report"]
+        write_new(memory, {"schema": "modena-spme-memory-v1", "manifest_sha256": self.prepared_artifacts[key]["sha256"], "children": self.rows[key]})
+        memory_ref = retain_output(memory, folder, "memory")
+        inputs = {"campaign": receipt, "memory": memory_ref}
+        argv = ["--campaign", campaign_path, "--expected-sha256", receipt["sha256"], "--memory", memory, "--memory-sha256", memory_ref["sha256"], "--out", folder / "report"]
         if profiles:
-            argv += ["--profiles", profiles / "phase-times.jsonl", "--profiles-sha256", digest(profiles / "phase-times.jsonl"), "--profile-receipt-sha256", digest(profiles / "summary.json")]
+            data, summary = profiles
+            argv += ["--profiles", checked_artifact(data), "--profiles-sha256", data["sha256"], "--profile-receipt-sha256", summary["sha256"]]
+            checked_artifact(summary)
+            inputs.update(profiles=data, profile_receipt=summary)
+        write_new(folder / "report-inputs.json", inputs)
         return self.call(key, "report", argv)
 
     def run(self):
@@ -289,7 +362,7 @@ class Campaign:
                         continue
                     if special is None or not self.usable(special_row) or (family == "cubic" and replicas == 3 and cubic64 is None):
                         row = dict(row, actual_child_exit=None)
-                        receipt = failed_receipt(prepared, prepared / "verification", "verify", None, row, 0)
+                        receipt = self.recover(key, prepared, prepared / "verification", "verify", None, row)
                     else:
                         receipt, row = self.verify(key, prepared, special, cubic64 if family == "cubic" and replicas == 3 else None)
                 if receipt is None:
@@ -302,18 +375,29 @@ class Campaign:
                 profiles = None
                 for phase in ("sweep", "confirm", "profile"):
                     out = prepared.parent / phase
+                    checked_artifact(receipt)
+                    if self.active.get(key, 0) >= WALL_NS:
+                        # No process was admitted: do not invent an exit code or
+                        # add a nonexistent child to memory.json.
+                        not_started = {"actual_child_exit": None, "timed_out": False,
+                                       "reason": "family active deadline exhausted before admission"}
+                        receipt = self.recover(key, prepared, out, phase, receipt, not_started)
+                        break
                     if phase == "sweep":
-                        argv = ["--protocol", prepared / "protocol.json", "--snapshots", prepared / "snapshots.json", "--verification-sha256", digest(receipt)]
+                        argv = ["--protocol", prepared / "protocol.json", "--snapshots", prepared / "snapshots.json", "--verification-sha256", receipt["sha256"]]
                     else:
-                        argv = ["--campaign", receipt, "--expected-sha256", digest(receipt)]
+                        argv = ["--campaign", receipt["path"], "--expected-sha256", receipt["sha256"]]
                     row = self.call(key, phase, [*argv, "--out", out, "--elapsed-ns", self.active.get(key, 0)])
-                    summary = out / "summary.json"
-                    if not self.usable(row) or not summary.exists():
-                        failure = failed_receipt(prepared, out, phase, summary if summary.exists() else receipt, row, self.active.get(key, 0))
-                        receipt = failure
+                    summary_path = out / "summary.json"
+                    summary = retain_output(summary_path, prepared.parent / f"process-{phase}") if summary_path.exists() else None
+                    profile_data = None
+                    if phase == "profile" and (out / "phase-times.jsonl").exists():
+                        profile_data = retain_output(out / "phase-times.jsonl", prepared.parent / "process-profile", "profile-data")
+                    if not self.usable(row) or summary is None or (phase == "profile" and profile_data is None):
+                        receipt = self.recover(key, prepared, out, phase, receipt, row, summary)
                         break
                     if phase == "profile":
-                        profiles = out
+                        profiles = (profile_data, summary)
                     else:
                         receipt = summary
                 self.render(key, prepared, receipt, profiles)
@@ -343,15 +427,16 @@ def main(argv=None):
     if frozen_sources != source_inventory():
         raise ValueError("source changed during release build")
     binary = target / "release/examples/spme_convergence"
+    registered_binary = artifact(binary)
     write_new(args.out / "registration.json", {"utc": datetime.datetime.now(datetime.timezone.utc).isoformat(), "build": build,
-              "binary": artifact(binary), "launcher": artifact(__file__), "protocol": artifact(ROOT / "docs/scientific-hardening/B05-SPME-PROTOCOL.md"),
+              "binary": registered_binary, "launcher": artifact(__file__), "protocol": artifact(ROOT / "docs/scientific-hardening/B05-SPME-PROTOCOL.md"),
               "source_sha256": frozen_sources, "families": FAMILIES, "threads": THREADS, "extended": True, "requested_heap_bytes": 268435456, "rss_cap_bytes": RSS_CAP, "family_active_ns": WALL_NS})
     # Exclusive campaign lease lives outside measured family time.
     lease = target / "spme-calibration.lease"
     fd = os.open(lease, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
         os.write(fd, str(os.getpid()).encode()); os.fsync(fd)
-        Campaign(args.out, binary).run()
+        Campaign(args.out, registered_binary, registered_sources=frozen_sources).run()
     finally:
         os.close(fd)
         lease.unlink()

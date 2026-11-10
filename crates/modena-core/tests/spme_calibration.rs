@@ -2238,3 +2238,336 @@ fn candidate_two_pass_whole_sweep_projection_rejects_insufficient_budget() {
         Err(CalibrationFailure::BudgetExceeded(_))
     ));
 }
+
+// Task5 pure controls: removing any physical gate, ordinary timing validation,
+// deterministic tie field, or frozen-ID constraint must break these tests.
+fn cost_candidate(id: usize, ns: u64) -> CandidateReport {
+    let p = protocol();
+    let s = fixture();
+    let mut c = candidate_grid(&p, s.cell).unwrap().remove(0);
+    c.id = id;
+    c.status = Status::Passed;
+    let good = metrics(
+        &eval(vec![[1., 0., 0.]]),
+        &eval(vec![[1., 0., 0.]]),
+        1,
+        1e-8,
+    )
+    .unwrap();
+    c.rows = (0..7)
+        .map(|shift_index| MetricRow {
+            snapshot_id: s.id.clone(),
+            shift_index,
+            metrics: good.clone(),
+            passing_targets: p.targets.clone(),
+            status: Status::Passed,
+        })
+        .collect();
+    c.timing = Some(TimingRecord {
+        reset_included: true,
+        cold_ns: 1,
+        rebuild_ns: 1,
+        batch_total_ns: vec![ns * 20; 5],
+        calls_per_batch: 20,
+        median_ns_per_call: ns as f64,
+        q1_ns_per_call: ns as f64,
+        q3_ns_per_call: ns as f64,
+    });
+    c
+}
+#[test]
+fn selector_requires_all_gates_and_finite_timing() {
+    let p = protocol();
+    let s = fixture();
+    let ids = [s.id.as_str()];
+    assert_eq!(
+        select(&[cost_candidate(7, 100)], &ids, 1e-3, &p)
+            .unwrap()
+            .selected_id,
+        Some(7)
+    );
+    for gate in 0..5 {
+        let mut c = cost_candidate(7, 100);
+        match gate {
+            0 => c.rows[6].metrics.force_rms_rel = Some(1.),
+            1 => c.rows[6].metrics.force_rms_abs = 1.,
+            2 => c.rows[6].metrics.max_atom_force_error = 1.,
+            3 => c.rows[6].metrics.energy_per_atom_abs = 1.,
+            _ => c.rows[6].metrics.w_per_atom_abs = 1.,
+        }
+        assert_eq!(select(&[c], &ids, 1e-3, &p).unwrap().selected_id, None);
+    }
+    for kind in 0..6 {
+        let mut c = cost_candidate(7, 100);
+        let t = c.timing.as_mut().unwrap();
+        match kind {
+            0 => t.median_ns_per_call = f64::NAN,
+            1 => t.reset_included = false,
+            2 => {
+                t.batch_total_ns.pop();
+            }
+            3 => t.calls_per_batch = 0,
+            4 => t.q3_ns_per_call = 99.,
+            _ => t.batch_total_ns[0] = 0,
+        }
+        assert!(select(&[c], &ids, 1e-3, &p).is_err());
+    }
+    let mut missing = cost_candidate(8, 100);
+    missing.timing = None;
+    assert!(select(&[cost_candidate(7, 100), missing], &ids, 1e-3, &p).is_err());
+}
+#[test]
+fn five_percent_tie_rule_is_deterministic() {
+    let p = protocol();
+    let s = fixture();
+    let ids = [s.id.as_str()];
+    let mut fast = cost_candidate(9, 100);
+    fast.actual_mesh = [12; 3];
+    let mut tied = cost_candidate(8, 105);
+    tied.actual_mesh = [10; 3];
+    let mut outside = cost_candidate(1, 106);
+    outside.actual_mesh = [4; 3];
+    for rows in [
+        vec![fast.clone(), tied.clone(), outside.clone()],
+        vec![outside, tied.clone(), fast],
+    ] {
+        assert_eq!(select(&rows, &ids, 1e-3, &p).unwrap().selected_id, Some(8));
+    }
+    let mut lower_rc = tied.clone();
+    lower_rc.id = 6;
+    lower_rc.parameters.real_cutoff *= 0.9;
+    let mut lower_kappa = lower_rc.clone();
+    lower_kappa.id = 5;
+    lower_kappa.parameters.kappa *= 0.9;
+    let mut lower_kcut = lower_kappa.clone();
+    lower_kcut.id = 4;
+    lower_kcut.parameters.kspace_cutoff *= 0.9;
+    assert_eq!(
+        select(&[tied, lower_rc, lower_kappa, lower_kcut], &ids, 1e-3, &p)
+            .unwrap()
+            .selected_id,
+        Some(4)
+    );
+}
+#[test]
+fn holdout_failure_does_not_select_another_candidate() {
+    let p = protocol();
+    let s = fixture();
+    let ids = [s.id.as_str()];
+    let chosen = cost_candidate(7, 100);
+    let mut decision = select(&[chosen.clone(), cost_candidate(8, 200)], &ids, 1e-3, &p).unwrap();
+    let mut heldout = chosen;
+    heldout.rows[6].metrics.w_per_atom_abs = 1.;
+    finish_confirmation(&mut decision, &heldout, &ids, &p).unwrap();
+    assert_eq!(decision.selected_id, Some(7));
+    assert_eq!(decision.confirmation_status, Status::ConfirmationFailed);
+    assert!(selected_fragment(&decision, &heldout, &p)
+        .unwrap()
+        .is_none());
+    assert!(finish_confirmation(&mut decision, &cost_candidate(8, 1), &ids, &p).is_err());
+}
+#[test]
+fn target_not_reached_emits_no_config() {
+    let p = protocol();
+    let s = fixture();
+    let ids = [s.id.as_str()];
+    let mut c = cost_candidate(7, 100);
+    c.rows[0].metrics.force_rms_rel = Some(1.);
+    let decision = select(&[c.clone()], &ids, 1e-3, &p).unwrap();
+    assert_eq!(decision.selection_status, Status::TargetNotReached);
+    assert_eq!(decision.selected_id, None);
+    assert!(selected_fragment(&decision, &c, &p).unwrap().is_none());
+    let mut passed = select(&[cost_candidate(7, 100)], &ids, 1e-3, &p).unwrap();
+    let good = cost_candidate(7, 100);
+    finish_confirmation(&mut passed, &good, &ids, &p).unwrap();
+    let fragment = selected_fragment(&passed, &good, &p).unwrap().unwrap();
+    assert!(fragment.contains("empirical helper calibration; phase profiling pending"));
+    assert!(fragment.contains("units = \"reduced\""));
+}
+#[test]
+fn ordinary_batch_child_probe() {
+    if std::env::var("MODENA_B05_ORDINARY_CHILD").is_err() {
+        return;
+    }
+    let (p, s) = special_selection(true, true);
+    let mut e = SpmeEvaluator::with_protocol(&s, special_parameters(), &p).unwrap();
+    for _ in 0..5 {
+        e.compute_without_output_copy().unwrap();
+    }
+    let before = e.neighbor_rebuilds();
+    let duration = e.ordinary_batch(20).unwrap();
+    assert!(duration > 0);
+    assert_eq!(e.neighbor_rebuilds(), before);
+    let raw = e.evaluate().unwrap();
+    let expected = evaluate_spme(&s, special_parameters()).unwrap();
+    evaluations_close(&raw, &expected, 1e-12);
+    assert!(e.ordinary_batch(0).is_err());
+}
+#[test]
+fn ordinary_batch_includes_reset_and_reuses_persistent_model() {
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "ordinary_batch_child_probe",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("MODENA_B05_ORDINARY_CHILD", "1")
+        .env("RAYON_NUM_THREADS", "1")
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+}
+
+#[test]
+fn timing_summary_retains_raw_batches_and_quartiles() {
+    let p = protocol();
+    let t = ordinary_timing_summary(11, 13, vec![100, 500, 300, 400, 200], &p).unwrap();
+    assert_eq!(t.batch_total_ns, vec![100, 500, 300, 400, 200]);
+    assert_eq!(
+        (t.median_ns_per_call, t.q1_ns_per_call, t.q3_ns_per_call),
+        (15., 10., 20.)
+    );
+    assert!(ordinary_timing_summary(1, 1, vec![1; 4], &p).is_err());
+}
+#[test]
+fn freeze_requires_complete_grid_before_any_holdout() {
+    let dir = std::env::temp_dir().join(format!("b05-task5-freeze-{}", std::process::id()));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    let snapshots = materialize(&p).unwrap();
+    let ids: Vec<_> = snapshots
+        .iter()
+        .filter(|s| s.role == FixtureRole::Selection)
+        .map(|s| s.id.as_str())
+        .collect();
+    let mut grid = candidate_grid(&p, snapshots[0].cell).unwrap();
+    for c in &mut grid {
+        let sample = cost_candidate(c.id, 100);
+        c.rows = ids
+            .iter()
+            .flat_map(|id| {
+                sample.rows.iter().map(move |row| MetricRow {
+                    snapshot_id: (*id).into(),
+                    ..row.clone()
+                })
+            })
+            .collect();
+        c.timing = sample.timing;
+        c.status = Status::Passed;
+    }
+    assert!(freeze_prepared_selection(&dir, &grid[..grid.len() - 1]).is_err());
+    let frozen = freeze_prepared_selection(&dir, &grid).unwrap();
+    assert_eq!(frozen.decisions().len(), 2);
+    assert!(frozen
+        .decisions()
+        .iter()
+        .all(|d| d.selected_id.is_some() && d.confirmation_status == Status::Pending));
+    let frozen_path = dir.join("frozen.json");
+    let frozen_sha = frozen.write_new(&frozen_path).unwrap();
+    let reloaded = FrozenSelection::load(&dir, &frozen_path, &frozen_sha).unwrap();
+    assert_eq!(frozen.decisions(), reloaded.decisions());
+    assert!(FrozenSelection::load(&dir, &frozen_path, &"0".repeat(64)).is_err());
+    let mut timing = TimingBudget {
+        calls: p.limits.max_timing_calls,
+    };
+    let mut budget = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    assert!(matches!(
+        measure_feasible_candidates(&dir, &mut grid, &mut timing, &mut budget),
+        Err(CalibrationFailure::BudgetExceeded(_))
+    ));
+    assert_eq!(budget.reference.calls, 0);
+    assert_eq!(timing.calls, 20_000);
+    grid[0].timing = None;
+    assert!(freeze_prepared_selection(&dir, &grid).is_err());
+    for c in &mut grid {
+        c.timing = None;
+        for row in &mut c.rows {
+            row.metrics.force_rms_rel = Some(1.);
+        }
+    }
+    let not_reached = freeze_prepared_selection(&dir, &grid).unwrap();
+    let result = not_reached
+        .confirm(&dir, &mut budget, &mut Vec::new())
+        .unwrap();
+    assert_eq!(budget.reference.calls, 0);
+    assert_eq!(budget.accuracy_calls, 0);
+    assert!(result.references.is_none() && result.candidates.is_empty());
+    assert!(result
+        .decisions
+        .iter()
+        .all(|d| d.selection_status == Status::TargetNotReached));
+
+    // A persisted reference file cannot be trusted using its own supplied digest.
+    let path = dir.join("untrusted-reference.json");
+    std::fs::write(&path, b"{}").unwrap();
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    assert!(PreparedReferences::load_selection(&dir, &path, &"0".repeat(64), &mut b).is_err());
+    assert_eq!(b.accuracy_calls, 0);
+    assert_eq!(b.reference.calls, 0);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn ordinary_cost_observer_preserves_completed_batches() {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    // Isolated release-only child: the global guard must never observe another
+    // harness thread. This is exercised by the bounded smoke, not CI speed.
+    if std::env::var("MODENA_B05_COST_OBSERVER_CHILD").is_ok() {
+        let prepared = if let Some(path) = std::env::var_os("MODENA_B05_TASK5_PREPARED") {
+            std::path::PathBuf::from(path)
+        } else {
+            let dir =
+                std::env::temp_dir().join(format!("b05-task5-observer-{}", std::process::id()));
+            prepare(&dir, frozen_protocol("special", 2, 1, true).unwrap()).unwrap();
+            dir
+        };
+        let (p, snapshots, _) = validate_prepared(&prepared).unwrap();
+        let s = snapshots
+            .iter()
+            .find(|s| s.id == "special-3-selection-charged-scaled")
+            .unwrap();
+        let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+        let mut timing = TimingBudget::default();
+        let out = measure_ordinary_with_observer(
+            s,
+            special_parameters(),
+            &p,
+            &mut timing,
+            &mut b,
+            |event| {
+                if event.stage == CostStage::Batch && event.outcome.batch_total_ns.len() == 2 {
+                    return Err(CalibrationFailure::Io(
+                        "induced cost journal failure".into(),
+                    ));
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(matches!(out.failure, Some(CalibrationFailure::Io(_))));
+        assert!(out.cold_ns.is_some() && out.rebuild_ns.is_some());
+        assert_eq!(out.warmups_completed, 5);
+        assert_eq!(out.batch_total_ns.len(), 2);
+        assert_eq!(timing.calls, 47);
+        assert!(out.timing.is_none());
+        return;
+    }
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "ordinary_cost_observer_preserves_completed_batches",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("MODENA_B05_COST_OBSERVER_CHILD", "1")
+        .env("RAYON_NUM_THREADS", "1")
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+}

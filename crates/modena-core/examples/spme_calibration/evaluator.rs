@@ -134,6 +134,59 @@ impl SpmeEvaluator {
         }
         Ok(output)
     }
+    /// Ordinary persistent production cost, including force/W initialization and
+    /// the normal neighbor-cache check. Guard admission/drop and output checking
+    /// are outside both clock reads. No profiling, result copies or budget calls.
+    pub fn ordinary_batch(&mut self, calls: usize) -> Result<u64, CalibrationFailure> {
+        if calls == 0 {
+            return Err(invalid("ordinary batch requires nonzero calls"));
+        }
+        let guard = allocator::NoAllocationGuard::enter().ok_or_else(|| {
+            CalibrationFailure::BudgetExceeded(
+                "primary timing allocator guard not quiescent".into(),
+            )
+        })?;
+        let mut last = (0., 0.);
+        let started = std::time::Instant::now();
+        for _ in 0..calls {
+            self.system.zero_forces();
+            let mut virial = Virial::default();
+            let result = self
+                .model
+                .compute(&mut self.system, &mut virial, &mut self.neighbors);
+            let energy = match result {
+                Ok(value) => value,
+                Err(e) => {
+                    drop(guard);
+                    return Err(invalid(e.to_string()));
+                }
+            };
+            std::hint::black_box((energy, virial.w, self.system.forces.as_slice()));
+            last = (energy, virial.w);
+        }
+        let elapsed = started.elapsed();
+        drop(guard);
+        if !last.0.is_finite()
+            || !last.1.is_finite()
+            || self.system.forces.iter().any(|f| !f.is_finite())
+        {
+            return Err(CalibrationFailure::ReferencePrecisionLimited(
+                "nonfinite timed SPME force".into(),
+            ));
+        }
+        u64::try_from(elapsed.as_nanos())
+            .map_err(|_| CalibrationFailure::BudgetExceeded("timing duration overflow".into()))
+    }
+    /// Separate diagnostic: forced list construction and one normal evaluation.
+    /// This intentionally permits setup allocations and never enters primary cost.
+    pub fn forced_rebuild_call(&mut self) -> Result<u64, CalibrationFailure> {
+        let started = std::time::Instant::now();
+        self.neighbors.force_rebuild(&self.system);
+        self.compute_without_output_copy()
+            .map_err(|e| invalid(e.to_string()))?;
+        u64::try_from(started.elapsed().as_nanos())
+            .map_err(|_| CalibrationFailure::BudgetExceeded("rebuild duration overflow".into()))
+    }
     pub fn actual_mesh(&self) -> [usize; 3] {
         modena_core::spme::mesh_for_box(&self.system.box_size, self.parameters.kspace_cutoff)
     }

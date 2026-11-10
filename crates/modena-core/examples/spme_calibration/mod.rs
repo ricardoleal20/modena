@@ -8,9 +8,22 @@ use std::{
 };
 pub mod allocator;
 mod candidates;
+mod cost;
 mod evaluator;
 mod fixtures;
 mod metrics;
+mod selection;
+#[allow(unused_imports)]
+pub use cost::{
+    begin_selection, cost_smoke, freeze_prepared_selection, measure_feasible_candidates,
+    measure_feasible_candidates_with_observer, measure_ordinary, measure_ordinary_with_observer,
+    ConfirmationOutcome, CostEvent, CostStage, FrozenSelection, OrdinaryCostOutcome,
+    PreparedReferences, TimingBudget,
+};
+#[allow(unused_imports)]
+pub use selection::ordinary_timing_summary;
+#[allow(unused_imports)]
+pub use selection::{finish_confirmation, select, selected_fragment};
 mod reference;
 #[allow(unused_imports)]
 pub use candidates::{

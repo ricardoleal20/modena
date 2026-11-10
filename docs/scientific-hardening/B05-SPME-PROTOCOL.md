@@ -708,3 +708,41 @@ Task4's first bounded actual-model tests are fixed before outcomes: the six-leve
 
 
 Task4 functional evidence update (same physical protocol): the first warm-path guard probe accepted the one-thread child but rejected the four-thread child with exit87 on the production parallel-FFT branch after five warmups. This is a truthful instrumentation rejection, not accepted primary cost data. Four-thread ordinary batches that trigger any allocator callback must remain invalid and cannot rank/select a configuration. No core optimization, weaker guard, or instrumentation-inclusive primary timing is substituted. The retained negative and later callback-kind diagnostic are part of Task4 evidence; cold/profile observations and future independently valid cases remain separate.
+
+
+### Task 5 ordinary-cost functional preregistration (2026-11-10)
+
+Before any accepted Task5 release cost observation, the bounded functional smoke
+is fixed to a fresh current-source six-level `special-3`, one-thread prepared
+protocol and the existing grid candidate kappa*a1.6, rc/Lmin.40, kcut*a24.
+It evaluates exactly the eight selection snapshots and seven shifts using the
+unchanged reference/error/certificate gates, then records a separate ordinary
+cost diagnostic on `special-3-selection-charged-scaled`: construction/first call,
+one forced neighbor rebuild, five warmups, and five batches of twenty calls.
+This single-candidate diagnostic cannot establish a complete feasible set or a
+fastest candidate, and does not produce a selected configuration or use holdout
+candidate results. All original targets, fixtures, grid tuples, six reference
+levels, work/memory/time caps and thread policies remain unchanged.
+
+Pure synthetic selector/confirmation/phase-hash controls exercise the complete
+exact grid and all target decisions without using synthetic costs as measured
+scientific evidence. An isolated release-only timing-observer failure control
+uses the same three-ion candidate and stops after the second completed warm
+batch when its observer returns an induced I/O error; completed cold/rebuild and
+two batch totals must survive, with no accepted TimingRecord. All observers and
+allocator guard entry/exit execute outside primary clocks. This is a lifecycle
+control, separate from the smoke and from the final Task8 campaign.
+
+Accepted ordinary batches retain the no-allocator-callback guard, force/W reset,
+production cache checks and black-box consumption of raw U/W/force slices.
+Incomplete/nonfinite/rejected costs cannot rank. Quartiles of the five retained
+batch costs are sorted order statistics at indices1 and3, with median index2;
+raw totals also retain observed minimum/maximum without another estimator.
+The 5% tie rule remains relative to the global smallest median, followed by
+actual mesh product, rc, kappa/kcut and finally stable ID for identical keys.
+All target IDs freeze before any heldout candidate call; a confirmation failure
+retains its frozen ID, blocks that fragment and never triggers a fallback.
+Source-bound reference reload requires the current prepared manifest identity
+and the authoritative phase-file hash from the orchestrator's trusted journal,
+plus restored cumulative work/calls/elapsed. Revalidating a prepared directory
+alone never gives imported reference records a new origin.

@@ -243,16 +243,16 @@ fn mul(a: u64, b: u64) -> Result<u64, CalibrationFailure> {
     a.checked_mul(b)
         .ok_or_else(|| cap("candidate accounting overflow"))
 }
-fn bytes<T>(v: &Vec<T>) -> u64 {
+pub(super) fn bytes<T>(v: &Vec<T>) -> u64 {
     (v.capacity() * std::mem::size_of::<T>()) as u64
 }
-fn snapshot_bytes(s: &Snapshot) -> u64 {
+pub(super) fn snapshot_bytes(s: &Snapshot) -> u64 {
     bytes(&s.positions)
         + bytes(&s.charges)
         + bytes(&s.scales)
         + (s.id.capacity() + s.family.capacity() + s.units.capacity()) as u64
 }
-fn protocol_bytes(p: &Protocol) -> u64 {
+pub(super) fn protocol_bytes(p: &Protocol) -> u64 {
     (p.schema.capacity() + p.family.capacity() + p.fixture_set.capacity()) as u64
         + bytes(&p.targets)
         + bytes(&p.kappa_a)
@@ -520,6 +520,29 @@ pub fn evaluate_prepared_candidate_with_observer<F>(
     references: &Vec<ReferenceOutcome>,
     b: &mut CandidateBudget,
     certificates: &mut Vec<TranslationCertificate>,
+    observer: F,
+) -> Result<CandidateOutcome, CalibrationFailure>
+where
+    F: FnMut(CandidateEvent<'_>) -> Result<(), CalibrationFailure>,
+{
+    evaluate_prepared_role_with_observer(
+        prepared,
+        candidate,
+        references,
+        b,
+        certificates,
+        FixtureRole::Selection,
+        observer,
+    )
+}
+
+pub(super) fn evaluate_prepared_role_with_observer<F>(
+    prepared: &Path,
+    candidate: &CandidateReport,
+    references: &Vec<ReferenceOutcome>,
+    b: &mut CandidateBudget,
+    certificates: &mut Vec<TranslationCertificate>,
+    role: FixtureRole,
     mut observer: F,
 ) -> Result<CandidateOutcome, CalibrationFailure>
 where
@@ -539,7 +562,7 @@ where
     drop(manifest); // no opaque BTreeMap storage is present during reference accounting
     let first = snapshots
         .iter()
-        .find(|s| s.role == FixtureRole::Selection)
+        .find(|s| s.role == role)
         .ok_or_else(|| invalid("selection snapshots"))?;
     let grid = candidate_grid(&p, first.cell)?;
     if !grid.iter().any(|c| {
@@ -566,23 +589,16 @@ where
     let original_baseline = b.reference.owned_heap_baseline;
     let result = (|| -> Result<(), CalibrationFailure> {
         b.reference.checkpoint()?;
-        let selection_count = snapshots
-            .iter()
-            .filter(|s| s.role == FixtureRole::Selection)
-            .count();
+        let selection_count = snapshots.iter().filter(|s| s.role == role).count();
         let projected = mul(selection_count as u64, 7)?;
         if add(b.accuracy_calls, projected)? > p.limits.max_accuracy_calls {
             return Err(cap("candidate accuracy calls before work"));
         }
         if references.len() != selection_count {
-            return Err(invalid("exact selection reference roster required"));
+            return Err(invalid("exact phase reference roster required"));
         }
         // Validate every prerequisite before computing the first candidate row.
-        for (index, s) in snapshots
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.role == FixtureRole::Selection)
-        {
+        for (index, s) in snapshots.iter().enumerate().filter(|(_, s)| s.role == role) {
             let matching: Vec<_> = references
                 .iter()
                 .filter(|r| {
@@ -633,11 +649,7 @@ where
         let mut projected_work = b.reference.work.clone();
         let mut projected_reference_calls = b.reference.calls;
         let mut projected_pairs = b.candidate_real_pair_upper_bound;
-        for (index, s) in snapshots
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.role == FixtureRole::Selection)
-        {
+        for (index, s) in snapshots.iter().enumerate().filter(|(_, s)| s.role == role) {
             let r = references
                 .iter()
                 .find(|r| r.record.snapshot_id == s.id)
@@ -709,11 +721,7 @@ where
         for r in references {
             fixed = add(fixed, r.owned_heap_bytes()?)?;
         }
-        for (index, s) in snapshots
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.role == FixtureRole::Selection)
-        {
+        for (index, s) in snapshots.iter().enumerate().filter(|(_, s)| s.role == role) {
             let r = references
                 .iter()
                 .find(|r| r.record.snapshot_id == s.id)
@@ -806,10 +814,7 @@ where
         }
         b.reference.owned_heap_baseline = original_baseline;
         let mut evaluator = SpmeEvaluator::with_protocol(first, candidate.parameters.clone(), &p)?;
-        for s in snapshots
-            .iter()
-            .filter(|s| s.role == FixtureRole::Selection)
-        {
+        for s in snapshots.iter().filter(|s| s.role == role) {
             let r = references
                 .iter()
                 .find(|r| r.record.snapshot_id == s.id)
@@ -825,7 +830,7 @@ where
                 let translated = shifted(s, candidate.actual_mesh, p.translations[shift_index]);
                 evaluator.set_snapshot(&translated)?;
                 if evaluator.actual_mesh() != candidate.actual_mesh {
-                    return Err(invalid("selection cell changed actual mesh"));
+                    return Err(invalid("phase cell changed actual mesh"));
                 }
                 b.accuracy_calls = add(b.accuracy_calls, 1)?; // count attempted work, including a failed compute
                 let n = s.charges.len() as u64;
@@ -908,7 +913,7 @@ where
         out.report.status = Status::Passed;
         let ids: Vec<_> = snapshots
             .iter()
-            .filter(|s| s.role == FixtureRole::Selection)
+            .filter(|s| s.role == role)
             .map(|s| s.id.as_str())
             .collect();
         if feasible_targets(&out.report, &ids, &p)?.is_empty() {

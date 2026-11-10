@@ -144,7 +144,18 @@ fn generate_references(
     role: FixtureRole,
     b: &mut CandidateBudget,
 ) -> Result<PreparedReferences, CalibrationFailure> {
-    let (p, snapshots, _) = validate_prepared(prepared)?;
+    generate_references_with_observer(prepared, role, b, |_| Ok(()))
+}
+pub(super) fn generate_references_with_observer<F>(
+    prepared: &Path,
+    role: FixtureRole,
+    b: &mut CandidateBudget,
+    mut observer: F,
+) -> Result<PreparedReferences, CalibrationFailure>
+where
+    F: FnMut(ReferenceEvent<'_>) -> Result<(), CalibrationFailure>,
+{
+    let (_, snapshots, _) = validate_prepared(prepared)?;
     let epoch = sha256(&prepared.join("manifest.json"))?;
     let mut records: Vec<ReferenceOutcome> = Vec::new();
     let original = b.reference.owned_heap_baseline;
@@ -159,15 +170,17 @@ fn generate_references(
                 bytes(&snapshots),
                 bytes(&records),
                 epoch.capacity() as u64,
-                heap_sum(
-                    snapshots
-                        .iter()
-                        .filter(|other| other.id != s.id)
-                        .map(snapshot_bytes),
-                )?,
+                // The source-bound wrapper owns a second materialized roster;
+                // this entire outer roster remains live during that call.
+                heap_sum(snapshots.iter().map(snapshot_bytes))?,
                 retained,
             ])?;
-            let r = converged_reference_with_budget(s, &p, &mut b.reference)?;
+            let r = converged_prepared_reference_with_observer(
+                prepared,
+                &s.id,
+                &mut b.reference,
+                &mut observer,
+            )?;
             let failure = r.failure.clone();
             records.push(r);
             if failure.is_some() {
@@ -193,6 +206,21 @@ pub fn begin_selection(
 ) -> Result<PreparedReferences, CalibrationFailure> {
     begin_selection_with_generator(prepared, b, |prepared, b| {
         generate_references(prepared, FixtureRole::Selection, b)
+    })
+}
+/// Runtime adapter: completed ladder levels and references are durable observer
+/// boundaries. The caller journals them before returning; wrapper writes alone
+/// are insufficient for allocator hard exits.
+pub fn begin_selection_with_reference_observer<F>(
+    prepared: &Path,
+    b: &mut CandidateBudget,
+    observer: F,
+) -> Result<PreparedReferences, CalibrationFailure>
+where
+    F: FnMut(ReferenceEvent<'_>) -> Result<(), CalibrationFailure>,
+{
+    begin_selection_with_generator(prepared, b, |prepared, b| {
+        generate_references_with_observer(prepared, FixtureRole::Selection, b, observer)
     })
 }
 fn begin_selection_with_generator<F>(

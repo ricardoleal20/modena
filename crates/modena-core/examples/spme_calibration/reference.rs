@@ -139,6 +139,9 @@ impl ReferenceBudget {
         }
         Ok(result)
     }
+    pub(super) fn matches_limits(&self, limits: &Limits) -> bool {
+        &self.limits == limits
+    }
     pub fn elapsed(&self) -> Duration {
         self.elapsed_before.saturating_add(self.started.elapsed())
     }
@@ -149,7 +152,7 @@ impl ReferenceBudget {
         }
         Ok(())
     }
-    fn tick(&mut self) -> Result<(), CalibrationFailure> {
+    pub(super) fn tick(&mut self) -> Result<(), CalibrationFailure> {
         self.ticks += 1;
         if self.ticks == 1024 {
             self.ticks = 0;
@@ -535,7 +538,7 @@ pub struct ReferenceUsage {
     pub elapsed_ns: u64,
 }
 impl ReferenceUsage {
-    fn capture(b: &ReferenceBudget) -> Self {
+    pub(super) fn capture(b: &ReferenceBudget) -> Self {
         Self {
             work: b.work.clone(),
             calls: b.calls,
@@ -749,6 +752,120 @@ fn snapshot_hash(s: &Snapshot, available: u64) -> Result<String, CalibrationFail
     }
     Ok(hash.to_ascii_lowercase())
 }
+/// Source binding is constructed only by validation of the materialized preparation.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ReferenceOrigin {
+    pub(super) manifest_sha256: String,
+    pub(super) protocol_sha256: String,
+    pub(super) snapshot_sha256: String,
+    pub(super) snapshot_id: String,
+    pub(super) threads: usize,
+}
+impl ReferenceOrigin {
+    pub(super) fn prepared(dir: &std::path::Path, id: &str) -> Result<Self, CalibrationFailure> {
+        let (p, _, m) = super::validate_prepared(dir)?;
+        Ok(Self {
+            manifest_sha256: super::sha256(&dir.join("manifest.json"))?,
+            protocol_sha256: m.protocol_sha256,
+            snapshot_sha256: m
+                .fixture_sha256
+                .get(id)
+                .ok_or_else(|| invalid("origin fixture ID"))?
+                .clone(),
+            snapshot_id: id.into(),
+            threads: p.threads,
+        })
+    }
+}
+/// Admission is a conservative recovery reservation, NOT an additional charge.
+/// On completion replace the reservation with actual continuing usage. If a child
+/// dies in flight, retain the reservation; never synthesize its evaluation.
+#[derive(serde::Serialize)]
+pub enum ReferenceEvent<'a> {
+    Admitted {
+        origin: &'a ReferenceOrigin,
+        settings: &'a ReferenceSettings,
+        index: usize,
+        crosscheck: bool,
+        reserved: ReferenceUsage,
+    },
+    LevelCompleted {
+        origin: &'a ReferenceOrigin,
+        outcome: &'a ReferenceOutcome,
+    },
+    Complete {
+        origin: &'a ReferenceOrigin,
+        outcome: &'a ReferenceOutcome,
+    },
+}
+/// Exact rectangular two-pass bound used by both runtime admission and the oracle.
+pub(super) fn planned_work(
+    s: &Snapshot,
+    p: &ReferenceSettings,
+) -> Result<WorkCounts, CalibrationFailure> {
+    super::validate_reference_settings(p)?;
+    if s.cell.iter().any(|x| !x.is_finite() || *x <= 0.) {
+        return Err(invalid("reference plan cell"));
+    }
+    let n = s.positions.len() as u64;
+    let real = bounds(s.cell.map(|l| (p.real_cutoff / l).ceil() + 1.))?;
+    let k = bounds(s.cell.map(|l| (p.kspace_cutoff * l / (2. * PI)).ceil()))?;
+    Ok(WorkCounts {
+        real_terms: mul(mul(n, n)?, rectangle(real)?)?
+            .checked_sub(n)
+            .ok_or_else(|| cap("reference plan atoms"))?,
+        atom_k_terms: mul(
+            mul(2, n)?,
+            rectangle(k)?
+                .checked_sub(1)
+                .ok_or_else(|| cap("reference plan modes"))?,
+        )?,
+    })
+}
+pub fn converged_prepared_reference_with_observer<O>(
+    prepared: &std::path::Path,
+    snapshot_id: &str,
+    b: &mut ReferenceBudget,
+    mut observer: O,
+) -> Result<ReferenceOutcome, CalibrationFailure>
+where
+    O: FnMut(ReferenceEvent<'_>) -> Result<(), CalibrationFailure>,
+{
+    let (p, snapshots, _) = super::validate_prepared(prepared)?;
+    let s = snapshots
+        .iter()
+        .find(|s| s.id == snapshot_id)
+        .ok_or_else(|| invalid("prepared reference ID"))?;
+    let origin = ReferenceOrigin::prepared(prepared, snapshot_id)?;
+    let original = b.owned_heap_baseline;
+    let origin_heap = (origin.manifest_sha256.capacity()
+        + origin.protocol_sha256.capacity()
+        + origin.snapshot_sha256.capacity()
+        + origin.snapshot_id.capacity()) as u64;
+    // All OTHER materialized snapshots plus outer allocation remain live here.
+    b.owned_heap_baseline = add(
+        add(original, origin_heap)?,
+        add(
+            super::candidates::bytes(&snapshots),
+            snapshots
+                .iter()
+                .filter(|other| other.id != s.id)
+                .try_fold(0, |sum, s| add(sum, input_heap(s)?))?,
+        )?,
+    )?;
+    let result = run_ladder_observed(
+        s,
+        &p,
+        b,
+        |s, settings, limits, b| {
+            reference_with_budget(s, settings, limits, b).map(|(e, a)| (e, Some(a)))
+        },
+        Some(&origin),
+        &mut observer,
+    );
+    b.owned_heap_baseline = original;
+    result
+}
 /// Convenience one-snapshot wrapper starts a fresh budget. Family orchestration MUST
 /// use `converged_reference_with_budget`, retain its outcome even on failure, and
 /// resume actual cumulative usage across phases. A returned failed status blocks
@@ -798,6 +915,25 @@ where
         &Limits,
         &mut ReferenceBudget,
     ) -> Result<(Evaluation, Option<ReferenceAudit>), CalibrationFailure>,
+{
+    run_ladder_observed(s, p, b, &mut evaluate, None, &mut |_| Ok(()))
+}
+fn run_ladder_observed<F, O>(
+    s: &Snapshot,
+    p: &super::Protocol,
+    b: &mut ReferenceBudget,
+    mut evaluate: F,
+    origin: Option<&ReferenceOrigin>,
+    observer: &mut O,
+) -> Result<ReferenceOutcome, CalibrationFailure>
+where
+    F: FnMut(
+        &Snapshot,
+        ReferenceSettings,
+        &Limits,
+        &mut ReferenceBudget,
+    ) -> Result<(Evaluation, Option<ReferenceAudit>), CalibrationFailure>,
+    O: FnMut(ReferenceEvent<'_>) -> Result<(), CalibrationFailure>,
 {
     validate_ladder(p, b)?;
     let external = b.owned_heap_baseline;
@@ -878,6 +1014,31 @@ where
             };
             b.owned_heap_baseline =
                 add(add(external, protocol_heap(p)?)?, out.owned_heap_bytes()?)?;
+            if let Some(origin) = origin {
+                let upper = planned_work(s, &settings)?;
+                super::check_work([1; 3], &upper, b.owned_heap_baseline, &p.limits)?;
+                let reserved = ReferenceUsage {
+                    work: WorkCounts {
+                        real_terms: add(b.work.real_terms, upper.real_terms)?,
+                        atom_k_terms: add(b.work.atom_k_terms, upper.atom_k_terms)?,
+                    },
+                    calls: add(b.calls, 1)?,
+                    elapsed_ns: ReferenceUsage::capture(b).elapsed_ns,
+                };
+                if reserved.work.real_terms > p.limits.max_real_terms_per_family
+                    || reserved.work.atom_k_terms > p.limits.max_atom_k_terms_per_family
+                    || reserved.calls > p.limits.max_accuracy_calls
+                {
+                    return Err(cap("reference observer admission cap"));
+                }
+                observer(ReferenceEvent::Admitted {
+                    origin,
+                    settings: &settings,
+                    index,
+                    crosscheck: cross,
+                    reserved,
+                })?;
+            }
             let evaluated = b
                 .checkpoint()
                 .and_then(|()| evaluate(s, settings.clone(), &p.limits, b));
@@ -945,6 +1106,13 @@ where
             if add(fixed, out.owned_heap_bytes()?)? > p.limits.max_owned_heap_bytes {
                 return Err(cap("retained reference outcome actual capacities cap"));
             }
+            out.usage = ReferenceUsage::capture(b);
+            if let Some(origin) = origin {
+                observer(ReferenceEvent::LevelCompleted {
+                    origin,
+                    outcome: &out,
+                })?;
+            }
             if precision_limited {
                 out.fail(precision(), Some(attempted_settings), b);
                 return Ok(());
@@ -962,6 +1130,14 @@ where
         attempt.usage = out.usage.clone();
     }
     b.owned_heap_baseline = external;
+    if let Some(origin) = origin {
+        if let Err(f) = observer(ReferenceEvent::Complete {
+            origin,
+            outcome: &out,
+        }) {
+            out.fail(f, None, b);
+        }
+    }
     Ok(out)
 }
 fn score_ladder(out: &mut ReferenceOutcome, p: &super::Protocol) -> Result<(), CalibrationFailure> {

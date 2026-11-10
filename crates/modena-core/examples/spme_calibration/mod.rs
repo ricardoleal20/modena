@@ -12,11 +12,13 @@ mod cost;
 mod evaluator;
 mod fixtures;
 mod metrics;
+pub mod physical;
 pub mod profile;
 mod selection;
 #[allow(unused_imports)]
 pub use cost::{
-    begin_selection, cost_smoke, freeze_prepared_selection, measure_feasible_candidates,
+    begin_selection, begin_selection_with_reference_observer, cost_smoke,
+    freeze_prepared_selection, measure_feasible_candidates,
     measure_feasible_candidates_with_observer, measure_ordinary, measure_ordinary_with_observer,
     ConfirmationOutcome, CostEvent, CostStage, FrozenSelection, OrdinaryCostOutcome,
     PreparedReferences, TimingBudget,
@@ -44,8 +46,9 @@ pub use metrics::{metrics, passes_target};
 pub use reference::converged_reference_test;
 #[allow(unused_imports)]
 pub use reference::{
-    converged_reference, converged_reference_with_budget, reference, reference_with_budget,
-    ReferenceAudit, ReferenceBudget, ReferenceOutcome, ReferenceUsage,
+    converged_prepared_reference_with_observer, converged_reference,
+    converged_reference_with_budget, reference, reference_with_budget, ReferenceAudit,
+    ReferenceBudget, ReferenceEvent, ReferenceOrigin, ReferenceOutcome, ReferenceUsage,
 };
 pub const SCHEMA: &str = "modena-spme-calibration-v1";
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

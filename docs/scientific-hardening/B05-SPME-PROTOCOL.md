@@ -755,3 +755,44 @@ Before Task6 physical/profile observations, fix unchanged analytic-force parity 
 Task6 controller clarification, before profile observations: phase diagnostics use exactly the first Selection snapshot in validated prepared order, unshifted, matching ordinary primary timing (cubic/ortho-{64,216}-neutral-seed-7 or special-3-selection-neutral-bare). Baseline and each distinct confirmed target use the same representative. Each model consumes106profile calls: cold1, warmups5, and five20-call batches. At most318calls fit the unchanged1000cap. These are representative-only phase observations; full selection/confirmation snapshot and translation accuracy gates remain unchanged. The authoritative --campaign profile CLI adapter is Task7-owned alongside its summary/journal schema; Task6 provides the bounded runner, individual records/writer and completed-call observer. No temporary provenance schema substitutes for that chain.
 
 Task6 baseline control roster, fixed before outcomes: explicit baseline parameter tuple; first Selection representative; central evaluation plus nonzero full force/W preload additive evaluation, then first3 atoms x3 axes at central-difference h=1e-5 and5e-6 (36calls), plus isotropic strain at the same two steps (4calls), total42accuracy calls. Force/W analytic-FD absolute residual is the existing Task4 2e-8 bound; additive tolerance is per-component1e-12*max(1,abs(value)). All real pair memberships and actual meshes must remain central; a boundary stops validation, never relaxes a threshold. Derivative coverage is all special3 atoms but only first3 ionic atoms; full-component additive/profile parity still covers all atoms. Retain raw energies/forces/W, signed label/step, mesh/pair identities and derivative residual inputs. Continuing accuracy/pair/deadline caps apply before and during work. Baseline diagnostic ID126 is reserved outside selectable0..125 and never enters ranking/freeze. A bounded special3 release smoke validates those42controls then records106profile calls, followed by at most one cold profiled call whose completed observer deliberately returns Io to test partial retention; ordinary costs/ranking are not run. Missing/source-mismatched/duplicate tokens and upfront profile budget rejection are no-compute controls. Actual smoke requires fresh current-source prepare with six-level preset; no oracle rerun or full campaign.
+
+
+### Task7a runtime physical-verification extraction preregistration (2026-11-10)
+
+Before runtime observations, the existing registered test controls are extracted
+into bounded example-only APIs. Special3 uses the exact neutral/charged,
+bare/scaled Selection roster and the already registered derivative geometry
+kappa1.1/2.2,R8.73,K3.75; steps, full/half-k, background, self-image, bare-fraction,
+translation/wrap, secondary core-Ewald ladders and strict tolerances remain
+those of the existing integration controls. No candidate timing or target
+acceptance occurs. Cubic64 and216 crystal sanity run separately in their own
+family verify phases with the prechosen six-level preset; strict absolute
+convergence may have RelativeUndefined status and cannot certify a force target.
+The optional comparison of both current-source crystal records retains1e-9/a.
+
+The runtime observer journals source/fixture-bound admission reservations before
+risky calls and raw completions before later work. Admission reservations replace
+actual usage only if a child exits in flight; they are not added again after a
+completed event. Oracle and auxiliary work use the same continuing ReferenceBudget;
+independent membership/half-space loops charge conservative rectangular bounds
+and checkpoint within1024terms. Secondary core Ewald uses bounded3atom work with
+before/after deadline checks because production has no inner callback. An expired
+post-call checkpoint prevents a passing proof; this is not an uninterrupted
+core-call deadline guarantee. External launcher deadlines remain required.
+
+Special physical prerequisite usage belongs to special3 at its own thread count
+and must be restored when that family reaches its frozen campaign roster slot.
+Cubic64/216 controls belong to their corresponding continuing family budgets.
+No uncharged global pool, source relabeling or status-only physics proof is allowed.
+
+Task7a smoke roster is fixed before its observations: four special Selection
+fixtures each have42derivative oracle evaluations,42independent membership
+enumerations, full/no-mode/half-space comparisons, one background evaluation,
+eight translation evaluations,19raw-wrap evaluations, six secondary reference
+evaluations and one bounded core call. Each of the two bare fixtures adds
+nine bare-fraction evaluations; one self-image fixture adds one oracle call.
+Totals:331oracle evaluations,172auxiliary enumerations/sums,4core evaluations;
+reference-call accounting includes auxiliaries (503), model accuracy calls4.
+Each cubic crystal has six ladder levels and two cross-kappa evaluations,
+charged to that separate family's existing budget. Whole planned work and
+retained capacity bounds are checked first; cap rejection is retained honestly.

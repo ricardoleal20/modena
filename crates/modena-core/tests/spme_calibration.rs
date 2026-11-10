@@ -2621,3 +2621,252 @@ fn complete_family_projection_preserves_continuing_pair_work_and_checked_counts(
         );
     }
 }
+
+// Task7a: runtime verification must fail closed before any physical call.
+#[test]
+fn physical_preflight_rejects_caps_without_events() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("prepared");
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    b.reference.calls = p.limits.max_accuracy_calls - 1;
+    let mut events = 0;
+    let r = physical::verify_special_with_observer(&dir, &mut b, |_| {
+        events += 1;
+        Ok(())
+    });
+    assert!(matches!(r, Err(CalibrationFailure::BudgetExceeded(_))));
+    assert_eq!(events, 0);
+    assert_eq!(b.reference.calls, p.limits.max_accuracy_calls - 1);
+    assert_eq!(b.accuracy_calls, 0);
+}
+#[test]
+fn physical_source_mismatch_prevents_work() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("prepared");
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    std::fs::write(dir.join("snapshots.json"), b"[]").unwrap();
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    assert!(physical::verify_special_with_observer(&dir, &mut b, |_| panic!("no event")).is_err());
+    assert_eq!(b.reference.calls, 0);
+}
+#[test]
+fn physical_completed_observer_failure_retains_raw_data() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("prepared");
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    let out = physical::verify_special_with_observer(&dir, &mut b, |event| {
+        if matches!(event, physical::PhysicalEvent::Completed { .. }) {
+            return Err(CalibrationFailure::Io(
+                "injected durable observer failure".into(),
+            ));
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert!(matches!(out.failure(), Some(CalibrationFailure::Io(_))));
+    assert_eq!(out.records().len(), 2);
+    assert!(out.records()[1].evaluation.is_some());
+    assert_eq!(b.reference.calls, 2);
+    assert!(!out.passed());
+}
+
+#[test]
+fn physical_overflow_preflight_and_admission_failure_do_no_work() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("prepared");
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    b.reference.work.real_terms = u64::MAX;
+    assert!(matches!(
+        physical::verify_special_with_observer(&dir, &mut b, |_| panic!("no event")),
+        Err(CalibrationFailure::BudgetExceeded(_))
+    ));
+    assert_eq!(b.reference.calls, 0);
+    b.reference.work.real_terms = 0;
+    b.external_owned_heap_bytes = p.limits.max_owned_heap_bytes - 1;
+    assert!(matches!(
+        physical::verify_special_with_observer(&dir, &mut b, |_| panic!("no event")),
+        Err(CalibrationFailure::BudgetExceeded(_))
+    ));
+    assert_eq!(b.reference.calls, 0);
+    b.external_owned_heap_bytes = 0;
+    let out = physical::verify_special_with_observer(&dir, &mut b, |event| {
+        if matches!(event, physical::PhysicalEvent::Admitted { .. }) {
+            Err(CalibrationFailure::Io("admission unavailable".into()))
+        } else {
+            Ok(())
+        }
+    })
+    .unwrap();
+    assert_eq!(b.reference.calls, 0);
+    assert!(out.records().is_empty());
+    assert!(!out.passed());
+}
+#[test]
+fn physical_ladder_completed_level_survives_observer_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("prepared");
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    let id = materialize(&p)
+        .unwrap()
+        .into_iter()
+        .find(|s| s.role == FixtureRole::Selection)
+        .unwrap()
+        .id;
+    let mut b = ReferenceBudget::new(&p.limits);
+    let mut admissions = 0;
+    let out = converged_prepared_reference_with_observer(&dir, &id, &mut b, |event| match event {
+        ReferenceEvent::Admitted { reserved, .. } => {
+            admissions += 1;
+            assert_eq!(reserved.calls, 1);
+            Ok(())
+        }
+        ReferenceEvent::LevelCompleted { outcome, .. } => {
+            assert_eq!(outcome.record.levels.len(), 1);
+            Err(CalibrationFailure::Io("level journal failure".into()))
+        }
+        ReferenceEvent::Complete { .. } => Ok(()),
+    })
+    .unwrap();
+    assert_eq!(admissions, 1);
+    assert_eq!(b.calls, 1);
+    assert_eq!(out.record.levels.len(), 1);
+    assert!(matches!(out.failure, Some(CalibrationFailure::Io(_))));
+    assert!(out.record.chosen_level.is_none());
+}
+#[test]
+fn physical_madelung_budget_rejection_has_no_receipt() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("prepared");
+    let p = frozen_protocol("cubic", 3, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    b.reference.calls = p.limits.max_accuracy_calls - 1;
+    assert!(matches!(
+        physical::verify_madelung_with_observer(&dir, &mut b, |_| panic!("no events")),
+        Err(CalibrationFailure::BudgetExceeded(_))
+    ));
+    assert_eq!(b.reference.calls, p.limits.max_accuracy_calls - 1);
+}
+
+#[test]
+#[ignore = "registered release-only runtime physical evidence; no candidate timing"]
+fn physical_registered_runtime_smoke() {
+    use std::io::Write;
+    if cfg!(debug_assertions) {
+        panic!("runtime physical smoke requires release");
+    }
+    let root = std::path::PathBuf::from(
+        std::env::var("MODENA_B05_PHYSICAL_OUT").expect("new evidence root"),
+    );
+    std::fs::create_dir(&root).unwrap();
+    let new_file = |path: &std::path::Path| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .unwrap()
+    };
+    let special = root.join("special-prepared");
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    prepare(&special, p.clone()).unwrap();
+    let mut journal = new_file(&root.join("special-events.jsonl"));
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    let out = physical::verify_special_with_observer(&special, &mut b, |event| {
+        serde_json::to_writer(&mut journal, &event)
+            .map_err(|e| CalibrationFailure::Io(e.to_string()))?;
+        journal
+            .write_all(b"\n")
+            .and_then(|_| journal.sync_all())
+            .map_err(|e| CalibrationFailure::Io(e.to_string()))
+    })
+    .unwrap();
+    serde_json::to_writer_pretty(new_file(&root.join("special-outcome.json")), &out).unwrap();
+    println!(
+        "SPECIAL passed={} failure={:?} reference_calls={} model_calls={} records={} checks={}",
+        out.passed(),
+        out.failure(),
+        b.reference.calls,
+        b.accuracy_calls,
+        out.records().len(),
+        out.checks().len()
+    );
+    assert!(out.passed(), "special physical failure retained above");
+    assert_eq!(b.reference.calls, 503);
+    assert_eq!(b.accuracy_calls, 4);
+    assert_eq!(out.records().len(), 507);
+    out.validate_for(&special).unwrap();
+    out.validate_special_resume(&special, &b).unwrap();
+    let empty = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    assert!(out.validate_special_resume(&special, &empty).is_err());
+    // Each independent family starts after the special raw data is persisted
+    // and released. Only the prior crystal receipt remains for replication.
+    drop(out);
+    let mut crystals: Vec<(std::path::PathBuf, physical::MadelungOutcome)> = Vec::new();
+    for replicas in [2, 3] {
+        let dir = root.join(format!("cubic-{replicas}-prepared"));
+        let p = frozen_protocol("cubic", replicas, 1, true).unwrap();
+        prepare(&dir, p.clone()).unwrap();
+        let mut journal = new_file(&root.join(format!("cubic-{replicas}-events.jsonl")));
+        let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+        b.external_owned_heap_bytes = (crystals.capacity()
+            * std::mem::size_of::<(std::path::PathBuf, physical::MadelungOutcome)>())
+            as u64;
+        for (path, prior) in &crystals {
+            b.external_owned_heap_bytes +=
+                path.capacity() as u64 + prior.owned_heap_bytes().unwrap();
+        }
+        assert_eq!(b.reference.calls, 0);
+        assert_eq!(b.accuracy_calls, 0);
+        let out = physical::verify_madelung_with_observer(&dir, &mut b, |event| {
+            serde_json::to_writer(&mut journal, &event)
+                .map_err(|e| CalibrationFailure::Io(e.to_string()))?;
+            journal
+                .write_all(b"\n")
+                .and_then(|_| journal.sync_all())
+                .map_err(|e| CalibrationFailure::Io(e.to_string()))
+        });
+        match out {
+            Ok(out) => {
+                serde_json::to_writer_pretty(
+                    new_file(&root.join(format!("cubic-{replicas}-outcome.json"))),
+                    &out,
+                )
+                .unwrap();
+                println!(
+                    "CRYSTAL replicas={replicas} failure={:?} calls={} status={:?}",
+                    out.failure, b.reference.calls, out.reference.record.status
+                );
+                assert!(out.failure.is_none());
+                crystals.push((dir, out));
+            }
+            Err(e) => {
+                serde_json::to_writer_pretty(
+                    new_file(&root.join(format!("cubic-{replicas}-rejection.json"))),
+                    &e,
+                )
+                .unwrap();
+                println!("CRYSTAL replicas={replicas} preflight={e}");
+                assert!(matches!(e, CalibrationFailure::BudgetExceeded(_)));
+            }
+        }
+    }
+    if crystals.len() == 2 {
+        let check = physical::compare_madelung_replication(
+            &crystals[0].1,
+            &crystals[0].0,
+            &crystals[1].1,
+            &crystals[1].0,
+        )
+        .unwrap();
+        serde_json::to_writer_pretty(new_file(&root.join("replication.json")), &check).unwrap();
+        assert!(check.passed);
+    }
+}

@@ -215,6 +215,9 @@ impl CandidateBudget {
             limits: limits.clone(),
         }
     }
+    pub(super) fn matches_limits(&self, limits: &Limits) -> bool {
+        &self.limits == limits && self.reference.matches_limits(limits)
+    }
     pub fn usage(&self) -> CandidateUsage {
         CandidateUsage {
             accuracy_calls: self.accuracy_calls,

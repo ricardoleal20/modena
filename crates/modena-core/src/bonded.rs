@@ -16,6 +16,7 @@
 use crate::error::Result;
 use crate::force_model::{ForceModel, Virial};
 use crate::neighbor::NeighborList;
+use crate::stress::{ModelEvaluation, SymTensor6, TensorAvailability};
 use crate::system::System;
 use crate::vec3::Vec3;
 
@@ -88,31 +89,26 @@ impl BondedForceModel {
     pub fn new(topology: BondedTopology) -> Self {
         Self { topology }
     }
-}
 
-impl ForceModel for BondedForceModel {
-    fn conserves_total_momentum(&self, _system: &System) -> bool {
-        true
-    }
-    fn compute(
-        &self,
-        system: &mut System,
-        virial: &mut Virial,
-        _neighbors: &mut NeighborList,
-    ) -> Result<f64> {
+    /// Share energy/force/scalar arithmetic between both public entry points.
+    /// Each tensor uses only that term's forces and its connected local images.
+    fn evaluate_terms(&self, system: &mut System) -> ModelEvaluation {
         let box_size = system.box_size;
         let mut pe = 0.0;
         let mut w = 0.0;
+        let mut tensor = SymTensor6::ZERO;
 
         for &b in &self.topology.bonds {
-            let (u, fi, fj, vw) = bond_term(system.pos(b.i), system.pos(b.j), b.r0, b.k, box_size);
+            let (u, fi, fj, vw, s) =
+                bond_term(system.pos(b.i), system.pos(b.j), b.r0, b.k, box_size);
             system.add_force(b.i, fi);
             system.add_force(b.j, fj);
             pe += u;
             w += vw;
+            tensor = tensor.plus(s);
         }
         for &a in &self.topology.angles {
-            let (u, fi, fj, fk, vw) = angle_term(
+            let (u, fi, fj, fk, vw, s) = angle_term(
                 system.pos(a.i),
                 system.pos(a.j),
                 system.pos(a.k),
@@ -125,9 +121,10 @@ impl ForceModel for BondedForceModel {
             system.add_force(a.k, fk);
             pe += u;
             w += vw;
+            tensor = tensor.plus(s);
         }
         for d in &self.topology.dihedrals {
-            let (u, fi, fj, fk, fl, vw) = dihedral_term(
+            let (u, fi, fj, fk, fl, vw, s) = dihedral_term(
                 system.pos(d.i),
                 system.pos(d.j),
                 system.pos(d.k),
@@ -141,10 +138,39 @@ impl ForceModel for BondedForceModel {
             system.add_force(d.l, fl);
             pe += u;
             w += vw;
+            tensor = tensor.plus(s);
         }
 
-        virial.w += w;
-        Ok(pe)
+        ModelEvaluation {
+            energy: pe,
+            scalar_virial: w,
+            tensor: TensorAvailability::Complete(tensor),
+        }
+    }
+}
+
+impl ForceModel for BondedForceModel {
+    fn conserves_total_momentum(&self, _system: &System) -> bool {
+        true
+    }
+
+    fn compute(
+        &self,
+        system: &mut System,
+        virial: &mut Virial,
+        _neighbors: &mut NeighborList,
+    ) -> Result<f64> {
+        let evaluation = self.evaluate_terms(system);
+        virial.w += evaluation.scalar_virial;
+        Ok(evaluation.energy)
+    }
+
+    fn evaluate(
+        &self,
+        system: &mut System,
+        _neighbors: &mut NeighborList,
+    ) -> Result<ModelEvaluation> {
+        Ok(self.evaluate_terms(system))
     }
 }
 
@@ -159,7 +185,7 @@ fn bond_term(
     r0: f64,
     k: f64,
     box_size: crate::system::SimBox,
-) -> (f64, Vec3, Vec3, f64) {
+) -> (f64, Vec3, Vec3, f64, SymTensor6) {
     let rvec = box_size.min_image(ri - rj); // j → i
     let r = rvec.norm();
     let dr = r - r0;
@@ -170,7 +196,7 @@ fn bond_term(
     let fj = fi * -1.0;
     // Virial contribution: r_ij · F_i.
     let vw = rvec.dot(fi);
-    (u, fi, fj, vw)
+    (u, fi, fj, vw, SymTensor6::dyad(rvec, fi))
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +212,7 @@ fn angle_term(
     theta0: f64,
     k: f64,
     box_size: crate::system::SimBox,
-) -> (f64, Vec3, Vec3, Vec3, f64) {
+) -> (f64, Vec3, Vec3, Vec3, f64, SymTensor6) {
     // Minimum-image bond vectors like bond/dihedral: an angle whose atoms
     // straddle a periodic face (e.g. vertex j at x=3.99, atom i at x=0.01 in a
     // box of 4.0) would otherwise compute |r1| ≈ 3.98 instead of 0.02 and
@@ -215,7 +241,8 @@ fn angle_term(
     let fk = gk * (-du_dtheta);
     // Virial: Σ r_{a,vertex}·F_a — use the two bond vectors at the vertex.
     let vw = r1.dot(fi) + r2.dot(fk);
-    (u, fi, fj, fk, vw)
+    let tensor = SymTensor6::dyad(r1, fi).plus(SymTensor6::dyad(r2, fk));
+    (u, fi, fj, fk, vw, tensor)
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +265,7 @@ fn dihedral_term(
     rl: Vec3,
     terms: &[DihedralTerm],
     box_size: crate::system::SimBox,
-) -> (f64, Vec3, Vec3, Vec3, Vec3, f64) {
+) -> (f64, Vec3, Vec3, Vec3, Vec3, f64, SymTensor6) {
     // Bond vectors through the minimum image (the four atoms are covalently
     // linked, so across a periodic boundary the bonded vector is the min image).
     let r_ij = box_size.min_image(rj - ri);
@@ -258,6 +285,7 @@ fn dihedral_term(
             Vec3::zero(),
             Vec3::zero(),
             0.0,
+            SymTensor6::ZERO,
         );
     }
     let r = r_kj.norm();
@@ -317,7 +345,13 @@ fn dihedral_term(
     let fl = g_l * (-du_dphi);
     // Virial: use the three bonded vectors' dot with the end-atom forces.
     let vw = r_ij.dot(fi) + r_kl.dot(fl) + r_kj.dot(fj);
-    (u, fi, fj, fk, fl, vw)
+    // Anchor j at zero, then follow the SAME three connected bond images:
+    // q_i=-r_ij, q_k=-r_kj, q_l=-r_kj+r_kl. Independently wrapping
+    // q_l-q_j could choose a different image for an extended chain.
+    let tensor = SymTensor6::dyad(r_ij * -1.0, fi)
+        .plus(SymTensor6::dyad(r_kj * -1.0, fk))
+        .plus(SymTensor6::dyad(r_kl - r_kj, fl));
+    (u, fi, fj, fk, fl, vw, tensor)
 }
 
 #[cfg(test)]
@@ -334,7 +368,7 @@ mod tests {
         // r = 1.5, r0 = 1.0, k = 4 → stretched → attractive (F_i toward j → -x).
         let ri = Vec3::new(1.5, 0.0, 0.0);
         let rj = Vec3::new(0.0, 0.0, 0.0);
-        let (u, fi, fj, _) = bond_term(ri, rj, 1.0, 4.0, box10());
+        let (u, fi, fj, _, _) = bond_term(ri, rj, 1.0, 4.0, box10());
         assert!((u - 0.5 * 4.0 * 0.25).abs() < 1e-12);
         assert!(
             fi.0[0] < 0.0,
@@ -345,7 +379,7 @@ mod tests {
 
     #[test]
     fn angle_force_sums_to_zero() {
-        let (u, fi, fj, fk, _) = angle_term(
+        let (u, fi, fj, fk, _, _) = angle_term(
             Vec3::new(1.0, 0.0, 0.0),
             Vec3::zero(),
             Vec3::new(0.0, 1.0, 0.0),
@@ -366,7 +400,7 @@ mod tests {
         // Vertex j sits at the box edge; atom i wrapped to the far side. The
         // true r1 = (0.02, 0, 0) gives θ = 90°; a raw subtraction gives
         // |r1| ≈ 3.98 and a wrong angle (near 180°).
-        let (u, _, _, _, _) = angle_term(
+        let (u, _, _, _, _, _) = angle_term(
             Vec3::new(0.02, 0.0, 0.0),
             Vec3::new(3.99, 0.0, 0.0),
             Vec3::new(3.99, 1.0, 0.0),
@@ -392,7 +426,7 @@ mod tests {
             k: 2.0,
             delta: 0.0,
         }];
-        let (u, fi, fj, fk, fl, _) = dihedral_term(ri, rj, rk, rl, &terms, box10());
+        let (u, fi, fj, fk, fl, _, _) = dihedral_term(ri, rj, rk, rl, &terms, box10());
         assert!(u.is_finite());
         assert!(
             (fi + fj + fk + fl).norm() < 1e-9,
@@ -420,7 +454,7 @@ mod tests {
             Vec3::new(1.0, 0.0, 0.0),
             Vec3::new(2.0, -1.0, 0.0),
         );
-        let (u_trans, fi, fj, fk, fl, _) =
+        let (u_trans, fi, fj, fk, fl, _, _) =
             dihedral_term(trans.0, trans.1, trans.2, trans.3, &terms, box10());
         assert!(
             u_trans.abs() < 1e-12,
@@ -437,7 +471,7 @@ mod tests {
             Vec3::new(1.0, 0.0, 0.0),
             Vec3::new(2.0, 1.0, 0.0),
         );
-        let (u_cis, _, _, _, _, _) = dihedral_term(cis.0, cis.1, cis.2, cis.3, &terms, box10());
+        let (u_cis, _, _, _, _, _, _) = dihedral_term(cis.0, cis.1, cis.2, cis.3, &terms, box10());
         assert!(
             (u_cis - 2.0 * terms[0].k).abs() < 1e-12,
             "cis must be the n=1 maximum (U = 2k), got U = {u_cis}"

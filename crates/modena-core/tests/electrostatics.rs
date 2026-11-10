@@ -269,7 +269,7 @@ seed = 7
 fn spme_ionic_nve_energy_conservation() {
     // Same ionic deck as the direct-Ewald conservation test, with
     // `method = "spme"` — the mesh path must conserve energy just as well
-    // (the ik forces are the exact derivative of the mesh energy functional).
+    // (the analytic B-spline forces are the exact derivative of the mesh energy functional).
     let toml = r#"
 units = "reduced"
 

@@ -12,6 +12,7 @@ mod cost;
 mod evaluator;
 mod fixtures;
 mod metrics;
+pub mod profile;
 mod selection;
 #[allow(unused_imports)]
 pub use cost::{
@@ -39,6 +40,7 @@ pub use fixtures::{frozen_protocol, materialize, validate_frozen, validate_snaps
 #[allow(unused_imports)]
 pub use metrics::{metrics, passes_target};
 #[cfg(test)]
+#[allow(unused_imports)]
 pub use reference::converged_reference_test;
 #[allow(unused_imports)]
 pub use reference::{

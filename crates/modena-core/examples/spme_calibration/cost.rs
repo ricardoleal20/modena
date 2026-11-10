@@ -600,6 +600,41 @@ impl FrozenSelection {
     pub fn decisions(&self) -> &[TargetDecision] {
         &self.decisions
     }
+    /// Read-only profile roster. Confirmation gates and the frozen epoch/IDs
+    /// are rechecked; this never ranks or substitutes a held-out candidate.
+    pub(super) fn profile_candidates(
+        &self,
+        prepared: &Path,
+        out: &ConfirmationOutcome,
+    ) -> Result<Vec<(usize, Parameters)>, CalibrationFailure> {
+        let (p, _, _) = validate_prepared(prepared)?;
+        if p != self.protocol
+            || self.prepared_manifest_sha256 != sha256(&prepared.join("manifest.json"))?
+            || out.decisions.len() != self.decisions.len()
+        {
+            return Err(invalid("profile frozen origin/decision mismatch"));
+        }
+        if let Some(f) = &out.failure {
+            return Err(f.clone());
+        }
+        let mut models = Vec::new();
+        for d in &self.decisions {
+            if self.fragment(out, d.target, &p)?.is_some() {
+                let id = d
+                    .selected_id
+                    .ok_or_else(|| invalid("confirmed profile ID"))?;
+                if !models.iter().any(|(old, _)| *old == id) {
+                    let c = self
+                        .candidates
+                        .iter()
+                        .find(|c| c.id == id)
+                        .ok_or_else(|| invalid("profile frozen candidate"))?;
+                    models.push((id, c.parameters.clone()));
+                }
+            }
+        }
+        Ok(models)
+    }
     pub fn confirm(
         &self,
         prepared: &Path,

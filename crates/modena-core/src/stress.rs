@@ -204,16 +204,8 @@ impl<'de> Deserialize<'de> for PressureObservation {
                 "invalid endpoint volume or scalar pressure",
             ));
         }
-        match (&record.model, &record.total, record.scalar) {
-            (TensorAvailability::Missing(model), TensorAvailability::Missing(total), None)
-                if model == total => {}
-            (TensorAvailability::Complete(_), TensorAvailability::Complete(_), Some(_)) => (),
-            _ => {
-                return Err(serde::de::Error::custom(
-                    "inconsistent endpoint tensor availability or scalar",
-                ))
-            }
-        }
+        validate_pressure_availability(&record.model, &record.total, record.scalar)
+            .map_err(serde::de::Error::custom)?;
         Ok(Self {
             kinetic: record.kinetic,
             model: record.model,
@@ -224,6 +216,133 @@ impl<'de> Deserialize<'de> for PressureObservation {
             validation: ValidationStatus::Diagnostic,
         })
     }
+}
+
+fn validate_pressure_availability(
+    model: &TensorAvailability,
+    total: &TensorAvailability,
+    scalar: Option<f64>,
+) -> Result<(), &'static str> {
+    match (model, total, scalar) {
+        (TensorAvailability::Missing(a), TensorAvailability::Missing(b), None) if a == b => Ok(()),
+        (TensorAvailability::Complete(_), TensorAvailability::Complete(_), Some(p))
+            if p.is_finite() =>
+        {
+            Ok(())
+        }
+        _ => Err("inconsistent pressure tensor availability or scalar"),
+    }
+}
+
+/// Operator-averaged pressure over one completed mechanical interval.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct IntervalPressure {
+    pub kinetic_average: SymTensor6,
+    pub model_average: TensorAvailability,
+    pub constraint_average: SymTensor6,
+    pub total: TensorAvailability,
+    pub scalar: Option<f64>,
+    pub volume: f64,
+    pub dt: f64,
+    pub validation: ValidationStatus,
+}
+
+impl<'de> Deserialize<'de> for IntervalPressure {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Record {
+            kinetic_average: SymTensor6,
+            model_average: TensorAvailability,
+            constraint_average: SymTensor6,
+            total: TensorAvailability,
+            scalar: Option<f64>,
+            volume: f64,
+            dt: f64,
+            #[serde(rename = "validation")]
+            _claimed_status: ValidationStatus,
+        }
+        let r = Record::deserialize(d)?;
+        if !r.volume.is_finite() || r.volume <= 0. || !r.dt.is_finite() || r.dt <= 0. {
+            return Err(serde::de::Error::custom(
+                "invalid interval volume or timestep",
+            ));
+        }
+        validate_pressure_availability(&r.model_average, &r.total, r.scalar)
+            .map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            kinetic_average: r.kinetic_average,
+            model_average: r.model_average,
+            constraint_average: r.constraint_average,
+            total: r.total,
+            scalar: r.scalar,
+            volume: r.volume,
+            dt: r.dt,
+            validation: ValidationStatus::Diagnostic,
+        })
+    }
+}
+
+/// Per-call residual tolerance and sweep limit for SHAKE and RATTLE.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, try_from = "SolverParameters")]
+pub struct ConstraintSolverOptions {
+    pub tolerance: f64,
+    pub max_iterations: usize,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SolverParameters {
+    tolerance: f64,
+    max_iterations: usize,
+}
+impl TryFrom<SolverParameters> for ConstraintSolverOptions {
+    type Error = crate::ModenaError;
+    fn try_from(p: SolverParameters) -> crate::Result<Self> {
+        let options = Self {
+            tolerance: p.tolerance,
+            max_iterations: p.max_iterations,
+        };
+        options.validate()?;
+        Ok(options)
+    }
+}
+impl ConstraintSolverOptions {
+    pub const DEFAULT: Self = Self {
+        tolerance: 1e-10,
+        max_iterations: 100,
+    };
+    pub const TIGHT: Self = Self {
+        tolerance: 1e-13,
+        max_iterations: 100,
+    };
+    pub(crate) fn validate(self) -> crate::Result<()> {
+        if !self.tolerance.is_finite() || self.tolerance <= 0. || self.max_iterations == 0 {
+            return Err(crate::ModenaError::Config(
+                "constraint solver needs a positive finite tolerance and positive iteration cap"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StepStress {
+    pub solver: ConstraintSolverOptions,
+    pub final_model: ModelEvaluation,
+    pub endpoint: PressureObservation,
+    pub interval: IntervalPressure,
+    pub stages: Vec<crate::constraint_stress::ProjectionReport>,
+    pub bath: Option<crate::constraint_stress::BathImpulse>,
+}
+
+/// Legacy scalar thermodynamics plus optional pre-controller stress.
+#[derive(Debug, Clone)]
+pub struct StepEvaluation {
+    pub energies: crate::Energies,
+    pub stress: Option<StepStress>,
 }
 
 /// Mechanical kinetic numerator Σ mᵢ vᵢ⊗vᵢ (twice kinetic energy in trace).
@@ -262,18 +381,7 @@ pub fn endpoint_pressure(
             "nonfinite endpoint kinetic tensor".into(),
         ));
     }
-    let (total, scalar) = match &model.tensor {
-        TensorAvailability::Missing(why) => (TensorAvailability::Missing(why.clone()), None),
-        TensorAvailability::Complete(tensor) => {
-            let numerator = kinetic.plus(*tensor).plus(constraint);
-            let pressure = SymTensor6(numerator.0.map(|x| x / volume));
-            let scalar = pressure.trace() / 3.;
-            if !pressure.finite() || !scalar.is_finite() {
-                return Err(ModenaError::Physics("nonfinite endpoint pressure".into()));
-            }
-            (TensorAvailability::Complete(pressure), Some(scalar))
-        }
-    };
+    let (total, scalar) = pressure_total(kinetic, &model.tensor, constraint, volume)?;
     Ok(PressureObservation {
         kinetic,
         model: model.tensor.clone(),
@@ -282,5 +390,31 @@ pub fn endpoint_pressure(
         scalar,
         volume,
         validation: ValidationStatus::Diagnostic,
+    })
+}
+
+/// Assemble either estimator after all of its stage-specific numerators are known.
+pub(crate) fn pressure_total(
+    kinetic: SymTensor6,
+    model: &TensorAvailability,
+    constraint: SymTensor6,
+    volume: f64,
+) -> crate::Result<(TensorAvailability, Option<f64>)> {
+    if !kinetic.finite() || !constraint.finite() || !volume.is_finite() || volume <= 0. {
+        return Err(crate::ModenaError::Physics(
+            "invalid pressure numerator or volume".into(),
+        ));
+    }
+    Ok(match model {
+        TensorAvailability::Missing(why) => (TensorAvailability::Missing(why.clone()), None),
+        TensorAvailability::Complete(tensor) => {
+            let numerator = kinetic.plus(*tensor).plus(constraint);
+            let pressure = SymTensor6(numerator.0.map(|x| x / volume));
+            let scalar = pressure.trace() / 3.;
+            if !pressure.finite() || !scalar.is_finite() {
+                return Err(crate::ModenaError::Physics("nonfinite pressure".into()));
+            }
+            (TensorAvailability::Complete(pressure), Some(scalar))
+        }
     })
 }

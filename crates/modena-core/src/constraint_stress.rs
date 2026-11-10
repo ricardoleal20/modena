@@ -66,6 +66,16 @@ pub struct ProjectionReport {
     #[serde(deserialize_with = "finite_scalar")]
     pub max_velocity_residual: f64,
 }
+/// OU momentum exchange at fixed positions, separate from mechanical pressure.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BathImpulse {
+    pub unprojected: Vec<Vec3>,
+    pub reaction: Vec<Vec3>,
+    pub unprojected_moment: SymTensor6,
+    pub reaction_moment: SymTensor6,
+}
+
 fn finite_scalar<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<f64, D::Error> {
     let x = f64::deserialize(d)?;
     if x.is_finite() {

@@ -15,18 +15,23 @@ use chacha20::ChaCha12Rng;
 use rand::SeedableRng;
 use rand_distr::{Distribution, StandardNormal};
 
+use crate::constraint_stress::{constraint_geometry, ProjectionReport, ProjectionStage};
 use crate::constraints::Constraints;
 use crate::error::Result;
 use crate::force_model::{ForceModel, Virial};
 use crate::neighbor::NeighborList;
+use crate::stress::{
+    endpoint_pressure, kinetic_tensor, pressure_total, ConstraintSolverOptions, IntervalPressure,
+    ModelEvaluation, StepEvaluation, StepStress, SymTensor6, TensorAvailability, ValidationStatus,
+};
 use crate::system::System;
 use crate::thermo::Energies;
 
 /// SHAKE/RATTLE convergence: residual tolerance (length² for SHAKE, velocity·
 /// length for RATTLE) and the iteration cap. Tight defaults — the constrained
 /// molecule test verifies energy conservation on the constraint manifold.
-const SHAKE_TOL: f64 = 1e-10;
-const SHAKE_MAX_ITER: usize = 100;
+const SHAKE_TOL: f64 = ConstraintSolverOptions::DEFAULT.tolerance;
+const SHAKE_MAX_ITER: usize = ConstraintSolverOptions::DEFAULT.max_iterations;
 
 /// Time-stepping scheme. `step` advances the system by `dt` and returns the
 /// post-step thermodynamic observables.
@@ -45,6 +50,40 @@ pub trait Integrator: Send {
         neighbors: &mut NeighborList,
         dt: f64,
     ) -> Result<Energies>;
+
+    /// Advance while reporting mechanical stress when the scheme supports it.
+    /// The caller supplies an evaluation for the cached input forces, positions and cell.
+    fn step_with_stress(
+        &mut self,
+        system: &mut System,
+        model: &dyn ForceModel,
+        neighbors: &mut NeighborList,
+        dt: f64,
+        _initial: &ModelEvaluation,
+    ) -> Result<StepEvaluation> {
+        Ok(StepEvaluation {
+            energies: self.step(system, model, neighbors, dt)?,
+            stress: None,
+        })
+    }
+
+    /// External integrators can retain the default solver and legacy trajectory.
+    fn step_with_stress_options(
+        &mut self,
+        system: &mut System,
+        model: &dyn ForceModel,
+        neighbors: &mut NeighborList,
+        dt: f64,
+        initial: &ModelEvaluation,
+        solver: ConstraintSolverOptions,
+    ) -> Result<StepEvaluation> {
+        if solver != ConstraintSolverOptions::DEFAULT {
+            return Err(crate::ModenaError::Config(
+                "this integrator does not support custom constraint solver options".into(),
+            ));
+        }
+        self.step_with_stress(system, model, neighbors, dt, initial)
+    }
 }
 
 /// Velocity-Verlet (NVE). Expects F(t) already in `system.forces`.
@@ -82,30 +121,173 @@ impl Integrator for VelocityVerlet {
         neighbors: &mut NeighborList,
         dt: f64,
     ) -> Result<Energies> {
-        prepare_constraints(system, self.constraints.as_ref())?;
+        Ok(self
+            .advance(
+                system,
+                model,
+                neighbors,
+                dt,
+                None,
+                ConstraintSolverOptions::DEFAULT,
+            )?
+            .energies)
+    }
+
+    fn step_with_stress(
+        &mut self,
+        system: &mut System,
+        model: &dyn ForceModel,
+        neighbors: &mut NeighborList,
+        dt: f64,
+        initial: &ModelEvaluation,
+    ) -> Result<StepEvaluation> {
+        self.step_with_stress_options(
+            system,
+            model,
+            neighbors,
+            dt,
+            initial,
+            ConstraintSolverOptions::DEFAULT,
+        )
+    }
+
+    fn step_with_stress_options(
+        &mut self,
+        system: &mut System,
+        model: &dyn ForceModel,
+        neighbors: &mut NeighborList,
+        dt: f64,
+        initial: &ModelEvaluation,
+        solver: ConstraintSolverOptions,
+    ) -> Result<StepEvaluation> {
+        self.advance(system, model, neighbors, dt, Some(initial), solver)
+    }
+}
+
+impl VelocityVerlet {
+    fn advance(
+        &self,
+        system: &mut System,
+        model: &dyn ForceModel,
+        neighbors: &mut NeighborList,
+        dt: f64,
+        initial: Option<&ModelEvaluation>,
+        solver: ConstraintSolverOptions,
+    ) -> Result<StepEvaluation> {
+        validate_step_inputs(system, dt, initial, solver)?;
+        let constraints = self.constraints.as_ref();
+        prepare_constraints(system, constraints)?;
         let n = system.n();
         let half = 0.5 * dt;
-
-        // First half-kick: v(t+dt/2) = v(t) + (dt/2) a(t), using cached F(t).
         kick(system, n, half);
-
-        project_drift(system, self.constraints.as_ref(), dt, false)?;
-
-        // New forces F(t+dt), potential energy, virial. The model accumulates
-        // (M3 contract), so zero forces first; `virial` is freshly zeroed.
-        system.forces.fill(0.0);
+        let position = position_drift(
+            system,
+            constraints,
+            dt,
+            solver,
+            initial.map(|_| ProjectionStage::VvPosition),
+        )?;
+        system.wrap_positions();
+        // This is the straight drift velocity, including SHAKE's displacement / dt.
+        let measured = initial.map(|m| (m, kinetic_tensor(system)));
+        system.forces.fill(0.);
         let mut virial = Virial::default();
-        let pe = model.compute(system, &mut virial, neighbors)?;
-
-        // Second half-kick: v(t+dt) = v(t+dt/2) + (dt/2) a(t+dt).
+        let (pe, measured) = if let Some((initial, kinetic_average)) = measured {
+            let evaluation = model.evaluate(system, neighbors)?;
+            virial.w = evaluation.scalar_virial;
+            (
+                evaluation.energy,
+                Some((initial, kinetic_average, evaluation)),
+            )
+        } else {
+            (model.compute(system, &mut virial, neighbors)?, None)
+        };
         kick(system, n, half);
+        let final_projection = project_tangent(
+            system,
+            constraints,
+            solver,
+            initial.map(|_| ProjectionStage::VvFinal),
+        )?;
+        let stress = if let Some((initial, kinetic_average, final_model)) = measured {
+            let stages: Vec<_> = position.into_iter().chain(final_projection).collect();
+            let impulse = stages
+                .iter()
+                .fold(SymTensor6::ZERO, |sum, r| sum.plus(r.tensor_impulse));
+            let constraint_average = SymTensor6(impulse.0.map(|x| x / dt));
+            let model_average = average_model_tensors(&initial.tensor, &final_model.tensor);
+            let volume = system.box_size.volume();
+            let (total, scalar) =
+                pressure_total(kinetic_average, &model_average, constraint_average, volume)?;
+            let interval = IntervalPressure {
+                kinetic_average,
+                model_average,
+                constraint_average,
+                total,
+                scalar,
+                volume,
+                dt,
+                validation: ValidationStatus::Diagnostic,
+            };
+            let endpoint = endpoint_pressure(system, &final_model, constraints)?;
+            Some(StepStress {
+                solver,
+                final_model,
+                interval,
+                endpoint,
+                stages,
+                bath: None,
+            })
+        } else {
+            None
+        };
+        Ok(StepEvaluation {
+            energies: Energies::from(system, pe, &virial),
+            stress,
+        })
+    }
+}
 
-        // RATTLE: project the velocities onto the constraint tangent.
-        if let Some(cons) = &self.constraints {
-            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER)?;
+fn validate_step_inputs(
+    system: &System,
+    dt: f64,
+    initial: Option<&ModelEvaluation>,
+    solver: ConstraintSolverOptions,
+) -> Result<()> {
+    solver.validate()?;
+    if !dt.is_finite() || dt <= 0. {
+        return Err(crate::ModenaError::Config(
+            "timestep must be finite and positive".into(),
+        ));
+    }
+    let volume = system.box_size.volume();
+    if !volume.is_finite() || volume <= 0. {
+        return Err(crate::ModenaError::Physics(
+            "volume must be finite and positive".into(),
+        ));
+    }
+    if let Some(m) = initial {
+        if !m.energy.is_finite()
+            || !m.scalar_virial.is_finite()
+            || matches!(m.tensor,TensorAvailability::Complete(t) if !t.finite())
+        {
+            return Err(crate::ModenaError::Physics(
+                "nonfinite initial model evaluation".into(),
+            ));
         }
+    }
+    Ok(())
+}
 
-        Ok(Energies::from(system, pe, &virial))
+fn average_model_tensors(
+    initial: &TensorAvailability,
+    final_value: &TensorAvailability,
+) -> TensorAvailability {
+    use TensorAvailability::{Complete, Missing};
+    match (initial, final_value) {
+        (Complete(a), Complete(b)) => Complete(a.scaled(0.5).plus(b.scaled(0.5))),
+        (Missing(a), Missing(b)) => Missing(a.iter().chain(b).cloned().collect()),
+        (Missing(a), _) | (_, Missing(a)) => Missing(a.clone()),
     }
 }
 
@@ -260,25 +442,81 @@ pub(crate) fn project_drift(
     interval: f64,
     tangent: bool,
 ) -> Result<()> {
-    let reference = cons.map(|_| system.positions.clone());
-    drift(system, system.n(), interval);
-    if let (Some(cons), Some(reference)) = (cons, reference) {
-        let predicted = system.positions.clone();
-        cons.shake(system, &reference, SHAKE_TOL, SHAKE_MAX_ITER)?;
-        for ((v, x), predicted) in system
-            .velocities
-            .iter_mut()
-            .zip(&system.positions)
-            .zip(predicted)
-        {
-            *v += (*x - predicted) / interval;
-        }
-        if tangent {
-            cons.rattle(system, SHAKE_TOL, SHAKE_MAX_ITER)?;
-        }
+    position_drift(
+        system,
+        cons,
+        interval,
+        ConstraintSolverOptions::DEFAULT,
+        None,
+    )?;
+    if tangent {
+        project_tangent(system, cons, ConstraintSolverOptions::DEFAULT, None)?;
     }
     system.wrap_positions();
     Ok(())
+}
+
+/// Freeze the image before prediction and leave the corrected drift unwrapped.
+fn position_drift(
+    system: &mut System,
+    cons: Option<&Constraints>,
+    interval: f64,
+    solver: ConstraintSolverOptions,
+    stage: Option<ProjectionStage>,
+) -> Result<Option<ProjectionReport>> {
+    let Some(cons) = cons else {
+        drift(system, system.n(), interval);
+        return Ok(None);
+    };
+    let geometry = constraint_geometry(system, cons)?;
+    drift(system, system.n(), interval);
+    let predicted = system.positions.clone();
+    let report = if let Some(stage) = stage {
+        Some(cons.shake_report(
+            system,
+            &geometry,
+            interval,
+            stage,
+            solver.tolerance,
+            solver.max_iterations,
+        )?)
+    } else {
+        cons.shake_at_geometry(system, &geometry, solver.tolerance, solver.max_iterations)?;
+        None
+    };
+    for ((v, x), predicted) in system
+        .velocities
+        .iter_mut()
+        .zip(&system.positions)
+        .zip(predicted)
+    {
+        *v += (*x - predicted) / interval;
+    }
+    Ok(report)
+}
+
+fn project_tangent(
+    system: &mut System,
+    cons: Option<&Constraints>,
+    solver: ConstraintSolverOptions,
+    stage: Option<ProjectionStage>,
+) -> Result<Option<ProjectionReport>> {
+    let Some(cons) = cons else {
+        return Ok(None);
+    };
+    if let Some(stage) = stage {
+        let geometry = constraint_geometry(system, cons)?;
+        Ok(Some(cons.rattle_report(
+            system,
+            &geometry,
+            stage,
+            solver.tolerance,
+            solver.max_iterations,
+        )?))
+    } else {
+        cons.rattle(system, solver.tolerance, solver.max_iterations)?;
+        Ok(None)
+    }
 }
 
 /// Half-kick: `v += factor * F / m` over all atoms (flat SoA).

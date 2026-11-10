@@ -216,9 +216,20 @@ impl Constraints {
         max_iter: usize,
     ) -> Result<()> {
         let geometry = geometry_from_positions(system, self, x_ref)?;
+        self.shake_at_geometry(system, &geometry, tol, max_iter)
+    }
+
+    /// Use a pre-drift geometry without recording a ledger on the legacy path.
+    pub(crate) fn shake_at_geometry(
+        &self,
+        system: &mut System,
+        geometry: &ConstraintGeometry,
+        tol: f64,
+        max_iter: usize,
+    ) -> Result<()> {
         self.project(
             system,
-            &geometry,
+            geometry,
             Projection::Position { interval: 1. },
             tol,
             max_iter,

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add B09's opt-in persistent pinned ASE EMT sessions while retaining the
+  one-shot default and unchanged physical/checkpoint identity. Session errors
+  are terminal and clean up the direct child. Public Rust `AseEmtSpec` literals
+  require the new `transport` field; omitted TOML keeps the prior default.
+- Add optional `modena.ase.ModenaCalculator` and strict native shifted-force LJ
+  snapshot CLI with energy/forces only for a single species and full periodic
+  orthorhombic cells. No tensor stress or general DFT/ML calculator support.
+- Retain reproducible B09 full-CLI timing evidence on pinned short Cu runs and
+  exact transport parity; local startup savings are not general solver speed.
+  See [B09 verification](docs/B09_VERIFICATION.md).
 - **Breaking real-pressure correction:** use exact standard atmospheres
   (68568.42296625092 per kcal/(mol Å³)); update real pressure targets and
   inverse-pressure compressibility. Reduced inputs and fixed-cell integration

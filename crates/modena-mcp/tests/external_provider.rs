@@ -93,6 +93,7 @@ fn discovery_schema_exposes_exact_external_pins_and_scope() {
             "pbc",
             "python",
             "timeout_ms",
+            "transport",
             "type"
         ]
     );
@@ -101,6 +102,11 @@ fn discovery_schema_exposes_exact_external_pins_and_scope() {
     assert_eq!(props["pbc"]["items"]["const"], true);
     assert_eq!(props["asap_cutoff"]["const"], false);
     assert_eq!(props["composition"]["const"], "total");
+    assert_eq!(
+        props["transport"]["enum"],
+        json!(["one_shot", "persistent"])
+    );
+    assert_eq!(props["transport"]["default"], "one_shot");
     assert_eq!(
         props["atomic_numbers"]["items"]["enum"],
         json!([13, 28, 29, 46, 47, 78, 79])
@@ -125,7 +131,7 @@ fn actual_ase_tool_json_probe_and_async_status_preserve_discovered_identity() {
         return;
     };
     let identity = modena_core::describe_ase_emt(&python, 120000).unwrap();
-    let cfg = config(&python, &identity.ase_version, &identity.model_sha256);
+    let mut cfg = config(&python, &identity.ase_version, &identity.model_sha256);
     let wire = rpc_tool("run_probe", json!({"config":cfg,"max_steps":2}));
     assert!(wire.get("isError").is_none(), "{wire}");
     let wire_probe: Value =
@@ -135,6 +141,7 @@ fn actual_ase_tool_json_probe_and_async_status_preserve_discovered_identity() {
         serde_json::to_value(&identity).unwrap()
     );
     let mgr = RunManager::default();
+    cfg["model"]["transport"] = json!("persistent");
     let probe = call_tool("run_probe", &json!({"config":cfg,"max_steps":2}), &mgr).unwrap();
     assert_eq!(
         probe["metadata"]["provider"],

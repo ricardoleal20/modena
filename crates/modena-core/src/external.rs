@@ -1,6 +1,7 @@
-//! Pinned, one-shot ASE EMT provider. No Python dependency is needed to build.
+//! Pinned ASE EMT provider. No Python dependency is needed to build.
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::{ForceModel, ModenaError, NeighborList, Result, System, UnitFactors, Virial};
@@ -10,6 +11,7 @@ const PROTOCOL: &str = "modena-ase-emt-v1";
 const WORKER: &str = include_str!("external/ase_emt_worker.py");
 const MAX_STDOUT: u64 = 16 * 1024 * 1024;
 const MAX_STDERR: u64 = 64 * 1024;
+mod session;
 /// Exact SI conversion from eV per particle to kcal per mole.
 pub const EV_TO_KCAL_MOL: f64 = 1.602176634e-19 * 6.02214076e23 / 4184.0;
 
@@ -21,6 +23,15 @@ fn full_pbc() -> [bool; 3] {
 }
 fn default_timeout() -> u64 {
     30_000
+}
+
+/// Process transport does not contribute to the physical provider identity.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AseEmtTransport {
+    #[default]
+    OneShot,
+    Persistent,
 }
 
 /// Fixed EMT parameters and required physical/model pins.
@@ -39,6 +50,8 @@ pub struct AseEmtSpec {
     pub asap_cutoff: bool,
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
+    #[serde(default)]
+    pub transport: AseEmtTransport,
 }
 
 /// Explicit wire unit convention.
@@ -91,6 +104,36 @@ struct EvaluateResponse {
     action: String,
     identity: ProviderIdentity,
     evaluation: ProviderEvaluation,
+}
+
+#[derive(Serialize)]
+struct EvaluateRequest<'a> {
+    protocol: &'static str,
+    action: &'static str,
+    atomic_numbers: &'a [u8],
+    positions_angstrom: ScaledPositions<'a>,
+    cell_angstrom: [[f64; 3]; 3],
+    pbc: [bool; 3],
+    asap_cutoff: bool,
+}
+// Borrow the caller's snapshot; triples are scaled on the stack during
+// serialization instead of materializing another N-atom buffer or Value tree.
+struct ScaledPositions<'a> {
+    positions: &'a [f64],
+    sigma: f64,
+}
+impl Serialize for ScaledPositions<'_> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.positions.len() / 3))?;
+        for p in self.positions.chunks_exact(3) {
+            seq.serialize_element(&[p[0] * self.sigma, p[1] * self.sigma, p[2] * self.sigma])?;
+        }
+        seq.end()
+    }
 }
 
 fn failure(message: impl Into<String>) -> ModenaError {
@@ -166,6 +209,7 @@ pub struct AseEmtForceModel {
     spec: AseEmtSpec,
     factors: UnitFactors,
     identity: ProviderIdentity,
+    session: Option<Mutex<session::Session>>,
 }
 impl AseEmtForceModel {
     pub fn new(spec: AseEmtSpec, factors: UnitFactors) -> Result<Self> {
@@ -208,7 +252,23 @@ impl AseEmtForceModel {
         {
             return Err(failure("positive finite physical unit scales required"));
         }
-        let identity = describe_ase_emt(&spec.python, spec.timeout_ms)?;
+        let mut session = match spec.transport {
+            AseEmtTransport::OneShot => None,
+            AseEmtTransport::Persistent => {
+                Some(session::Session::new(&spec.python, spec.timeout_ms)?)
+            }
+        };
+        let identity = if let Some(session) = session.as_mut() {
+            let response: InfoResponse =
+                session.request(&serde_json::json!({"protocol":PROTOCOL,"action":"info"}))?;
+            if response.protocol != PROTOCOL || response.action != "info" {
+                return Err(failure("invalid info envelope"));
+            }
+            validate_identity(&response.identity)?;
+            response.identity
+        } else {
+            describe_ase_emt(&spec.python, spec.timeout_ms)?
+        };
         if identity.ase_version != spec.ase_version || identity.model_sha256 != spec.model_sha256 {
             return Err(failure("ase_version or model_sha256 pin mismatch"));
         }
@@ -216,6 +276,7 @@ impl AseEmtForceModel {
             spec,
             factors,
             identity,
+            session: session.map(Mutex::new),
         })
     }
     pub fn identity(&self) -> &ProviderIdentity {
@@ -228,6 +289,11 @@ impl AseEmtForceModel {
     /// Evaluate a fresh snapshot without changing any system or accumulator.
     pub fn evaluate(&self, system: &System) -> Result<ProviderEvaluation> {
         let n = system.n();
+        // Even the smallest JSON numbers/triples need at least ten bytes per
+        // atom. Reject impossible frames before snapshot validation/encoding.
+        if self.session.is_some() && n > MAX_STDOUT as usize / 10 {
+            return Err(failure("snapshot exceeds session input frame limit"));
+        }
         if system.atomic_numbers != self.spec.atomic_numbers || n != self.spec.atomic_numbers.len()
         {
             return Err(failure(
@@ -242,11 +308,6 @@ impl AseEmtForceModel {
         {
             return Err(failure("invalid snapshot buffers, charges or constraints"));
         }
-        let positions: Vec<[f64; 3]> = system
-            .positions
-            .chunks_exact(3)
-            .map(|p| std::array::from_fn(|k| p[k] * self.factors.sigma))
-            .collect();
         let cell = system
             .box_size
             .basis()
@@ -255,23 +316,51 @@ impl AseEmtForceModel {
         let volume = a.dot(b.cross(c));
         if !volume.is_finite()
             || volume <= 0.0
-            || positions
+            || system
+                .positions
                 .iter()
-                .flatten()
-                .chain(cell.iter().flatten())
-                .any(|x| !x.is_finite())
+                .any(|x| !(x * self.factors.sigma).is_finite())
+            || cell.iter().flatten().any(|x| !x.is_finite())
         {
             return Err(failure(
                 "snapshot requires finite positions and positive cell volume",
             ));
         }
-        let data = invoke(
-            &self.spec.python,
-            self.spec.timeout_ms,
-            &serde_json::json!({"protocol":PROTOCOL,"action":"evaluate","atomic_numbers":system.atomic_numbers,"positions_angstrom":positions,"cell_angstrom":cell,"pbc":self.spec.pbc,"asap_cutoff":self.spec.asap_cutoff}),
-        )?;
-        let response: EvaluateResponse = serde_json::from_slice(&data)
-            .map_err(|e| failure(format!("invalid evaluation response: {e}")))?;
+        let request = EvaluateRequest {
+            protocol: PROTOCOL,
+            action: "evaluate",
+            atomic_numbers: &system.atomic_numbers,
+            positions_angstrom: ScaledPositions {
+                positions: &system.positions,
+                sigma: self.factors.sigma,
+            },
+            cell_angstrom: cell,
+            pbc: self.spec.pbc,
+            asap_cutoff: self.spec.asap_cutoff,
+        };
+        if let Some(session) = &self.session {
+            let mut session = session
+                .lock()
+                .map_err(|_| failure("session lock poisoned"))?;
+            let response = session.request(&request)?;
+            let result = self.validate_evaluation(response, n, volume);
+            if result.is_err() {
+                session.terminate();
+            }
+            result
+        } else {
+            let data = invoke(&self.spec.python, self.spec.timeout_ms, &request)?;
+            let response = serde_json::from_slice(&data)
+                .map_err(|e| failure(format!("invalid evaluation response: {e}")))?;
+            self.validate_evaluation(response, n, volume)
+        }
+    }
+    fn validate_evaluation(
+        &self,
+        response: EvaluateResponse,
+        n: usize,
+        volume: f64,
+    ) -> Result<ProviderEvaluation> {
         if response.protocol != PROTOCOL
             || response.action != "evaluate"
             || response.identity != self.identity
@@ -306,6 +395,14 @@ impl AseEmtForceModel {
         }
         self.converted(&evaluation, volume)?;
         Ok(evaluation)
+    }
+    fn terminate_session(&self) {
+        if let Some(session) = &self.session {
+            session
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .terminate();
+        }
     }
     fn converted(
         &self,
@@ -343,7 +440,9 @@ impl ForceModel for AseEmtForceModel {
     ) -> Result<f64> {
         let evaluation = self.evaluate(system)?;
         let volume = system.box_size.volume() * self.factors.sigma.powi(3);
-        let (energy, forces, w) = self.converted(&evaluation, volume)?;
+        let (energy, forces, w) = self
+            .converted(&evaluation, volume)
+            .inspect_err(|_| self.terminate_session())?;
         // Stage even the additions: overflow or malformed existing accumulators
         // must not leave a partially applied provider contribution.
         let accumulated: Vec<f64> = system
@@ -354,6 +453,7 @@ impl ForceModel for AseEmtForceModel {
             .collect();
         let total_w = virial.w + w;
         if !total_w.is_finite() || accumulated.iter().any(|x| !x.is_finite()) {
+            self.terminate_session();
             return Err(failure("nonfinite force/virial accumulation"));
         }
         system.forces.copy_from_slice(&accumulated);
@@ -368,7 +468,7 @@ fn diagnostic(file: &mut std::fs::File) -> String {
     let _ = file.take(4096).read_to_end(&mut bytes);
     String::from_utf8_lossy(&bytes).into_owned()
 }
-fn invoke(python: &str, timeout_ms: u64, request: &serde_json::Value) -> Result<Vec<u8>> {
+fn invoke(python: &str, timeout_ms: u64, request: &impl Serialize) -> Result<Vec<u8>> {
     if python.trim().is_empty() || timeout_ms == 0 {
         return Err(failure("python and positive timeout_ms required"));
     }

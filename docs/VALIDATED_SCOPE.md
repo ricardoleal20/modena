@@ -10,7 +10,8 @@ converged material properties.
 | Area | Implementation and evidence |
 | --- | --- |
 | Pair interactions | Lennard-Jones, Buckingham, Morse, soft-sphere, and tabulated models. Force/energy and cutoff checks cover selected parameters. Tabulated energy and force share cubic Hermite interpolation, including the lower endpoint tangent extension; the legacy selector is still named `linear`. |
-| Optional ASE EMT | Pinned total energy/forces/stress, seven standard EMT metals with explicit Z/masses, real units and full PBC, unconstrained fixed-cell NVE/NVT. Displaced orthorhombic/skew Cu snapshot parity, finite-difference force/virial, translation and selected restart/transport checks against direct installed EMT; [executed B01 record](B01_VERIFICATION.md). |
+| Optional ASE EMT | Pinned total energy/forces/stress, seven standard EMT metals with explicit Z/masses, real units and full PBC, unconstrained fixed-cell NVE/NVT. Default one-shot and opt-in persistent sessions share physical identity/checkpoints. Displaced orthorhombic/skew Cu parity, derivatives, translation, restart and session failure/cleanup checks against installed EMT; [B01 reference](B01_VERIFICATION.md), [B09 transport evidence](B09_VERIFICATION.md). |
+| MODENA as ASE calculator | Optional native shifted-force single-species LJ energy/forces through the strict snapshot CLI; full PBC and positive diagonal orthorhombic cells only. Independent analytic pair/finite-difference checks and cache/failure/input validation; no tensor stress, charge/spin, constraints or general calculator selection. [B09 scope](B09_VERIFICATION.md). |
 | NVE | Velocity-Verlet, with short energy/momentum tests and a timestep convergence check. Pair and direct-Ewald paths support orthorhombic and triclinic periodic cells. |
 | NVT | Stochastic velocity rescaling, Langevin BAOAB, and Nosé–Hoover chains. Coverage includes conditional/stationary kinetic moments, free-atom Maxwell variance, selected constrained sampling, and extended-Hamiltonian checks. |
 | Molecular models | Bond/angle/dihedral terms, explicit topology weights and exceptions, typed XYZ, SHAKE/RATTLE, and rigid-water projection. Force gradients, constraint errors, and selected rigid-rotation statistics are checked. |
@@ -31,8 +32,9 @@ Representative tests are
 
 - **External EMT checks are bounded reference checks.** They establish interface,
   conversion and derivative agreement with the same installed model, not Cu
-  material accuracy, converged sampling or independent-engine parity. One-shot
-  Python startup has no throughput claim; external cost estimates are unsupported.
+  material accuracy, converged sampling or independent-engine parity. B09's
+  local short-Cu full-run timing ratios quantify avoided repeated startup,
+  not isolated steady solver speed; external cost estimates are unsupported.
   `asap_cutoff=false` only; unsupported charges/spin, partial PBC, constraints,
   NPT and composition fail. See [B01 usage/migration](B01_EXTERNAL_PROVIDER.md).
 - **Constrained pressure is diagnostic.** It omits constraint impulse stress.

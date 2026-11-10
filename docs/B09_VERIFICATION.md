@@ -1,0 +1,238 @@
+# B09: ASE sessions and calculator verification
+
+B09 implements two separate adapter directions:
+
+- The ordinary MODENA real-unit runner can use pinned official ASE EMT as a
+  total energy/forces/stress provider. `transport="one_shot"` remains the
+  default; `transport="persistent"` explicitly reuses one Python process and
+  EMT calculator per provider. Both use the same physical identity, units and
+  compatible checkpoint signature. See [provider usage](B01_EXTERNAL_PROVIDER.md).
+- Optional `modena.ase.ModenaCalculator` exposes native shifted-force LJ to ASE
+  through `modena snapshot`. It supports energy and forces for one species,
+  full PBC and positive diagonal orthorhombic cells. Constraints, nonzero
+  charge/spin, mixed species and unsupported cells fail. Tensor stress is not
+  implemented. Base `import modena` needs neither ASE nor NumPy. See the
+  [calculator guide](../python/README.md#modena-as-an-optional-ase-calculator).
+
+These are bounded interface/numerical checks. They do not establish chemical
+or material accuracy, converged ensembles, DFT/ML support, independent-engine
+parity or GPU hardware speed.
+
+## Pre-review source and retained evidence
+
+The driver/tests were committed before measurement (`146c097`), then hardened
+to record malformed metadata failures (`2781f44`). Final measurement used
+clean source **`ce22be15367423480fd7f53b585a4eff4e24f503`**, including that fix
+and the initial scope/evidence documentation. The source tree was clean during
+both release build invocations, the final campaign and scientific smoke.
+Native and adapter production source is unchanged from `e547758`.
+
+Local raw evidence is retained under the ignored shared target directory:
+`target/b09-evidence/task3-ce22be1/`. It includes preserved executable copies,
+build commands/logs, `transport/ase_transport.json`, every input deck, stdout,
+stderr, thermo CSV and final checkpoint, and `scientific-smoke/validation.*`.
+Generated binaries and large raw series are not committed. The timing artifact
+contains all tracked source-file SHA-256 hashes, input hashes, commands,
+thread environment, return codes, completed steps, per-run loads and timings.
+The earlier complete campaign remains unchanged under
+`target/b09-evidence/task3-146c097/`; the tables below use the complete final
+campaign, without selecting runs from either campaign.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Sorted source-file hash manifest | `3338fd91a4c821df84866fd8cbe7b2136ae0bda0b55b1004049a5b9eb101d0b3` |
+| `bench/ase_transport.py` | `86df2957ce7d0574b5addf5670bcc38221111b000175415e90985d7d6583e1b4` |
+| Release CLI | `b8d812fa4db93b17d2cda6a642fdc2c72fed57b1206c1e3164a5900ae04c3a19` |
+| Release scientific example | `47fb3cb131b089cd77212d41a050f2ce4ea498c0b61a2d62386ebda75d2614d4` |
+
+Host: Apple M3 Pro, 11 logical CPUs, macOS 26.6.2 arm64; rustc 1.97.1
+(`8bab26f4f`, LLVM 22.1.6), Python 3.14.5, ASE 3.29.0, NumPy 2.5.4. EMT source
+SHA-256 was `8ce8bb2f90e8afad8f091b8c3f600ea260534e5c270a6b2c82cae1817cdf3881`,
+with `asap_cutoff=false`. The initial load averages were 12.4375/5.9243/4.1895;
+recorded one-minute loads ranged from 4.3540 to 12.4375. This was a shared host,
+without concurrent builds/tests during samples, not an isolated machine.
+
+## Full-run timing experiment
+
+Measured 2026-11-05 16:40:15–16:42:14 UTC. Each mode used equivalent FCC Cu
+configurations with replicas `[1,1,1]` (4 atoms) and `[3,3,3]` (108 atoms),
+lattice constant 3.61 Å, mass 63.546 amu, seed 42, initial temperature 10 K,
+Velocity-Verlet and dt 0.0001 ps for **40 integration steps**. Both modes used
+thermo every step, no trajectory file, and a final checkpoint at step 40.
+`OMP_NUM_THREADS=OPENBLAS_NUM_THREADS=RAYON_NUM_THREADS=1` in both modes.
+
+For each atom count, separate 10-step warmups in fresh processes were discarded.
+Five measured pairs alternated one-shot/persistent, persistent/one-shot,
+one-shot/persistent, persistent/one-shot, one-shot/persistent. All 24 CLI runs
+exited zero; all measured runs completed 40 steps. Each had a new CLI process
+and provider session. `time.perf_counter()` measured the whole child process,
+including Python startup/imports, discovery, setup, integration, output and
+cleanup. It excludes the driver's separate initial pin-discovery call.
+
+| Cu atoms | One-shot median (s) | Persistent median (s) | One-shot / persistent |
+| --- | ---: | ---: | ---: |
+| 4 | 10.857594125 | 0.315893166 | 34.3711 |
+| 108 | 10.230833792 | 0.709647791 | 14.4168 |
+
+Measured wall seconds, in repetition order:
+
+| Repetition | Cu4 one-shot | Cu4 persistent | Cu108 one-shot | Cu108 persistent |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 11.059284875 | 0.315893166 | 10.956578416 | 0.718266875 |
+| 2 | 10.857594125 | 0.320207291 | 10.230833792 | 0.711115041 |
+| 3 | 10.933011291 | 0.311761208 | 10.171143208 | 0.708149625 |
+| 4 | 10.405538667 | 0.315783375 | 10.324397583 | 0.709647791 |
+| 5 | 10.369810209 | 0.357212625 | 10.124615959 | 0.706577167 |
+
+The driver required exact full checkpoint structural/numeric equality and
+exact thermo CSV values across transports and repetitions at each step count.
+This includes final full-precision energy, forces, virial, positions,
+velocities and physical signature, plus all 41 thermo rows, 41 diagnostic
+samples and complete runtime metadata/identity. Warmup comparisons use a
+separate 10-step baseline. All comparisons passed. The timings are therefore
+not explained by skipped steps, stale cached snapshots or changed physics.
+
+These local ratios measure savings from avoiding repeated Python/EMT startup
+in short full runs. They are not isolated steady-evaluation measurements,
+pristine cold-file-cache measurements or a claim that EMT arithmetic became
+faster. OS file caches may be warm. No controller pilot timings are included;
+the results cannot be generalized to DFT, ML, other engines or GPU hardware.
+
+## Reproduction
+
+Use a clean checkout of the measured revision, Python 3.11+ with ASE installed,
+and a **fresh** output path. Preserve the venv executable symlink. From the
+repository root (set `CARGO_TARGET_DIR` if using a shared build directory):
+
+```bash
+rtk proxy cargo build --release --bin modena --locked --offline
+rtk proxy cargo build --release -p modena-core --example scientific_validation --locked --offline
+rtk proxy /absolute/ase-venv/bin/python bench/ase_transport.py \
+  --modena /absolute/target/release/modena \
+  --python /absolute/ase-venv/bin/python \
+  --output /absolute/target/b09-evidence/new-transport-run
+rtk proxy /absolute/ase-venv/bin/python bench/validate.py \
+  --binary /absolute/target/release/examples/scientific_validation \
+  --output /absolute/target/b09-evidence/new-scientific-smoke
+```
+
+`--offline` requires dependencies already cached. The driver discovers exact
+installed pins, never overwrites an existing output directory, and exits
+nonzero while retaining evidence on command, metadata, completed-step or
+parity errors. macOS hardware/resource queries require host permission in a
+restricted sandbox. See `build-commands.json` and the timing artifact for the
+exact local paths and invocation.
+
+## Regression and numerical checks
+
+The frozen release scientific smoke passed **67/67 observations**, retaining
+six raw observable series of 13,667 values each and their sampling analysis.
+The raw series remain in `validation.stdout`; the finite-series estimates do
+not establish ensemble convergence.
+
+After measurement, the affected benchmark-tool suite passed **28/28** tests
+(`python -m unittest discover -s bench/tests -v`), including six new driver
+tests using actual child processes for success, alternating order, retained
+failure evidence, incomplete steps, identity/thermo/checkpoint mismatch and
+overwrite refusal and malformed discovery metadata. Rust formatting and
+whitespace checks passed.
+
+Earlier Task 1/2 validation on unchanged functional source covered default/GPU
+lint and actual Rust 1.90 locked checks. Combined non-overlapping workspace
+coverage was **351 passing tests and one intentionally ignored doctest**:
+the original workspace command had 349 passes and one stale MCP fixture
+failure, followed by the corrected complete 47-test MCP suite and doctests.
+It was not a zero-exit original workspace command. Python checks passed all
+33 with actual ASE, and 26 with seven explicit skips without optional ASE.
+These heavy checks were not repeated for driver/documentation changes.
+The minimal standalone validation-harness lock repair preserved all prior
+pins. GPU runtime/hardware and MPI runtime were not exercised. The upstream
+ASE/NumPy shape-assignment warning remains visible in direct reference checks.
+
+Task 1/2 focused read-only reviews and fixes preceded this measurement.
+Whole-branch review and remote CI/shipping outcomes belong to the eventual PR;
+this record does not claim them. No B09/B02 merge is authorized here.
+
+Persistent session failure/drop kills and reaps the direct worker child;
+protocol errors and deadlines leave the session terminal. This is not a
+process-tree sandbox. Cancellation is observed at safe setup/step boundaries;
+an in-flight call is bounded by its configured deadline plus bookkeeping,
+without immediate preemption or a hard global wall-time guarantee.
+
+## Final review fixes and fresh verification
+
+Whole-branch review of `427d438` found five issues. The corrected source,
+tests and interface limits were committed at
+**`f14d6efd4a2a6e84e658a2f60a39805cf783ef55`** before broad validation or
+measurement. The tables above retain the earlier `ce22be1` campaign; its
+timings and Task 2's combined coverage remain historical.
+
+- The ASE calculator compares atom state exactly by default. Crossing the
+  native singularity threshold by less than 1e-15 Å now forces reevaluation
+  and clears stale E/F on failure. An empty noncalculating probe returns None.
+- Snapshot wrapping uses periodic remainder arithmetic. In a 20 Å box, positions
+  100000000000000016 and 16 with their neighbor at 17 give identical forces,
+  as do −100000000000000016 and 4 with their neighbor at 5.
+- The snapshot streams candidates and caps its single pair vector at
+  **1,000,000 distinct half-pairs within cutoff plus skin**. Growth requests
+  are limited before appending; on a 64-bit host this requests at most 16 MB
+  of pair storage. This is not a total memory or CPU limit. The 8 MiB input,
+  100,000 atom and 1,000,000 grid cell limits remain. Ordinary MD retains
+  its unrestricted serial/parallel neighbor paths. Tiny budget tests cover
+  coincident, dense nonsingular, sparse and zero-skin inputs, capacity bounds
+  and an ordinary rebuild after bounded failure.
+- Benchmark verification first requires the checkpoint's physical signature,
+  pinned Cu EMT model, integrator and unit-factor data, and all eight thermo
+  columns. Both previous 24-run campaigns pass the tightened verification;
+  copies of a real artifact with the signature removed or step-only thermo fail.
+
+The fresh locked/offline full workspace run **exited zero: 355 passed, zero
+failed, one intentionally ignored doctest** with actual ASE enabled. Python
+passed 35/35 with ASE, and 26 passed with 9 explicit skips without ASE;
+the real worker suite passed 5/5, and benchmark tools passed 29/29. Formatting,
+default and GPU all-target Clippy (`-D warnings`), and Rust 1.90 locked/offline
+default, GPU and standalone validation-harness checks passed. The release
+scientific smoke passed 67/67 observations. These are CPU runtime tests plus
+GPU compilation/lint, not MPI or GPU hardware validation.
+
+The clean source above produced both locked/offline release executables.
+Raw evidence is retained in **`target/b09-evidence/final-fix-f14d6ef/`**:
+`build-provenance.json`, `frozen/`, `checks/`, `transport/ase_transport.json`,
+all 24 run directories, `audit.json` and `scientific-smoke/validation.*`.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Sorted source-file hash manifest | `709fd9e54dbc1693fbedfbec81d52979e59780c415680bbc533c6b8a1d54710b` |
+| Benchmark driver | `6cd7e5f69fb73489307044b1bde63eb599af8ab527b55cd6b6d0d048b22dd0e5` |
+| Release CLI | `b95cf5c9b355abe0c0574c892ed6516b92980db378a96020edd535a7509d0fc0` |
+| Release scientific example | `e0845e5c040652adfea58771eca5dd346e289041206ee7e44ba657c2adf01e64` |
+
+**2026-11-05 17:09:35–17:11:31 UTC.** Same M3 Pro, Rust, ASE/NumPy, pinned
+model, single-thread settings, decks and fresh-process alternating order as
+above. Initial load averages: 4.3950/4.2056/3.6646; observed one-minute range
+2.7065–4.3950. No concurrent builds/tests during sampling. All 24 runs exited
+zero with identical checkpoints, thermo, diagnostics and metadata within each
+size/step group. Each measured run completed 40 steps, with 41 thermo and
+diagnostic samples. A second check recomputed source/binary/artifact hashes
+and median ratios, and verified byte-identical checkpoint/thermo files within
+each group. Every row below belongs to this one campaign; no selection across
+epochs. Wall seconds:
+
+| Repetition | Cu4 one-shot | Cu4 persistent | Cu108 one-shot | Cu108 persistent |
+| --- | ---: | ---: | ---: | ---: |
+| Warmup (discarded) | 2.914666500 | 0.254992958 | 2.957508417 | 0.387601750 |
+| 1 | 9.727928542 | 0.301460958 | 10.428737292 | 0.708115584 |
+| 2 | 9.909554333 | 0.306619375 | 10.304467375 | 0.707247084 |
+| 3 | 9.917972417 | 0.309043958 | 10.256008041 | 0.722976084 |
+| 4 | 9.727633917 | 0.283684917 | 10.811194209 | 0.739274250 |
+| 5 | 9.850397542 | 0.301518541 | 11.687496833 | 0.759593000 |
+
+| Cu atoms | One-shot median (s) | Persistent median (s) | One-shot / persistent |
+| --- | ---: | ---: | ---: |
+| 4 | 9.850397542 | 0.301518541 | 32.6693 |
+| 108 | 10.428737292 | 0.722976084 | 14.4247 |
+
+These local ratios measure full CLI runs including startup, evaluation,
+integration, output and teardown. They do not measure isolated steady-state
+solver time, guarantee cold file caches, or establish speedups on other
+models or hardware.

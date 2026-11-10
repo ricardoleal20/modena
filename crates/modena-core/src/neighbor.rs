@@ -298,6 +298,29 @@ impl NeighborList {
     }
 
     fn rebuild(&mut self, system: &System) {
+        self.rebuild_impl::<false>(system, usize::MAX)
+            .expect("unbounded pair scan");
+    }
+
+    /// Snapshot-only: stream distance candidates into one capped pair
+    /// vector. No speculative N*27 reserve or per-thread staging vectors.
+    pub(crate) fn rebuild_bounded(
+        &mut self,
+        system: &System,
+        max_pairs: usize,
+    ) -> crate::Result<()> {
+        self.built = false;
+        if self.pairs.capacity() > max_pairs {
+            self.pairs = Vec::new();
+        }
+        self.rebuild_impl::<true>(system, max_pairs)
+    }
+
+    fn rebuild_impl<const BOUNDED: bool>(
+        &mut self,
+        system: &System,
+        max_pairs: usize,
+    ) -> crate::Result<()> {
         let n = system.n();
         let box_size = system.box_size;
         self.rebuild_count += 1;
@@ -327,10 +350,13 @@ impl NeighborList {
         // contiguous j>i double loop visits the same candidate set
         // (∏min(d,3)·N/… ≈ N²/2 here) with dense sequential access and no
         // per-cell indirection. Same pair set, same min-image predicate.
+        let mut pairs = std::mem::take(&mut self.pairs);
+        pairs.clear();
         if box_size.is_triclinic() || dims.iter().all(|&d| d <= 3) {
             let lc2 = self.list_cutoff2;
-            self.pairs.clear();
-            self.pairs.reserve(n * 27);
+            if !BOUNDED {
+                pairs.reserve(n * 27);
+            }
             for i in 0..n {
                 let ri = system.pos(i);
                 for j in (i + 1)..n {
@@ -339,15 +365,16 @@ impl NeighborList {
                     }
                     let d = box_size.min_image(ri - system.pos(j));
                     if d.norm2() < lc2 {
-                        self.pairs.push((i, j));
+                        push_pair::<BOUNDED>(&mut pairs, (i, j), max_pairs)?;
                     }
                 }
             }
+            self.pairs = pairs;
             self.ref_positions.clear();
             self.ref_positions.extend_from_slice(system.positions_raw());
             self.ref_box = Some(box_size);
             self.built = true;
-            return;
+            return Ok(());
         }
 
         let ncells = dims[0] * dims[1] * dims[2];
@@ -369,13 +396,10 @@ impl NeighborList {
         let dys = stencil_deltas(dims[1]);
         let dzs = stencil_deltas(dims[2]);
 
-        let mut pairs = std::mem::take(&mut self.pairs);
-        pairs.clear(); // mem::take hands us the old list — rebuild from empty
-                       // The env knob forces the serial path (reproducibility override; the
-                       // parallel path already preserves the exact serial pair order, so this
-                       // exists for bench comparison, not determinism).
+        // The env knob forces serial MD scans for benchmarking. Snapshots
+        // always use one buffer to enforce the cap across the whole build.
         let force_serial = std::env::var("MODENA_SERIAL_NEIGHBOR").is_ok();
-        if n >= NEIGHBOR_PAR_MIN && !force_serial {
+        if !BOUNDED && n >= NEIGHBOR_PAR_MIN && !force_serial {
             // Parallel over `i`-ranges, concatenated in order: rayon's indexed
             // `par_chunks().map().collect()` preserves per-chunk order and the
             // chunk sequence, and the per-`i` scan is unchanged, so the pair
@@ -390,7 +414,14 @@ impl NeighborList {
                 .map(|is| {
                     let mut buf: Vec<(usize, usize)> = Vec::new();
                     for &i in is {
-                        self.scan_atom(system, i, &dxs, &dys, &dzs, &mut buf);
+                        self.scan_atom::<false>(
+                            system,
+                            i,
+                            [&dxs, &dys, &dzs],
+                            &mut buf,
+                            usize::MAX,
+                        )
+                        .expect("unbounded pair scan");
                     }
                     buf
                 })
@@ -400,7 +431,7 @@ impl NeighborList {
             }
         } else {
             for i in 0..n {
-                self.scan_atom(system, i, &dxs, &dys, &dzs, &mut pairs);
+                self.scan_atom::<BOUNDED>(system, i, [&dxs, &dys, &dzs], &mut pairs, max_pairs)?;
             }
         }
         self.pairs = pairs;
@@ -410,6 +441,7 @@ impl NeighborList {
         self.ref_positions.extend_from_slice(system.positions_raw());
         self.ref_box = Some(box_size);
         self.built = true;
+        Ok(())
     }
 
     /// Scan the ±1-stencil neighbor cells of atom `i` and push every qualifying
@@ -417,15 +449,14 @@ impl NeighborList {
     /// The shared core of the serial and parallel builds — the pair order (and
     /// thus the force-accumulation order) is identical in both.
     #[inline]
-    fn scan_atom(
+    fn scan_atom<const BOUNDED: bool>(
         &self,
         system: &System,
         i: usize,
-        dxs: &[i32],
-        dys: &[i32],
-        dzs: &[i32],
+        [dxs, dys, dzs]: [&[i32]; 3],
         out: &mut Vec<(usize, usize)>,
-    ) {
+        max_pairs: usize,
+    ) -> crate::Result<()> {
         let dims = self.dims;
         let lc2 = self.list_cutoff2;
         let box_size = system.box_size;
@@ -447,7 +478,7 @@ impl NeighborList {
                             let rj = system.pos(j);
                             let d = box_size.min_image(ri - rj);
                             if d.norm2() < lc2 {
-                                out.push((i, j));
+                                push_pair::<BOUNDED>(out, (i, j), max_pairs)?;
                             }
                         }
                         p = self.next[j];
@@ -455,6 +486,7 @@ impl NeighborList {
                 }
             }
         }
+        Ok(())
     }
     #[inline]
     fn cell_of(&self, r: Vec3) -> usize {
@@ -474,6 +506,28 @@ impl NeighborList {
         let ix = c / (dims[1] * dims[2]);
         (ix, iy, iz)
     }
+}
+
+#[inline]
+fn push_pair<const BOUNDED: bool>(
+    pairs: &mut Vec<(usize, usize)>,
+    pair: (usize, usize),
+    max_pairs: usize,
+) -> crate::Result<()> {
+    if BOUNDED && pairs.len() >= max_pairs {
+        return Err(crate::ModenaError::Input(format!(
+            "snapshot exceeds {max_pairs} neighbor pairs"
+        )));
+    }
+    if BOUNDED && pairs.len() == pairs.capacity() {
+        // Never let Vec::push choose an uncapped geometric growth request.
+        let next = pairs.len().saturating_mul(2).max(4).min(max_pairs);
+        pairs.try_reserve_exact(next - pairs.len()).map_err(|_| {
+            crate::ModenaError::Input("cannot allocate snapshot neighbor pairs".into())
+        })?;
+    }
+    pairs.push(pair);
+    Ok(())
 }
 
 #[inline]
@@ -514,6 +568,45 @@ mod tests {
         nl.build(&sys);
         // Half list: one pair (0,1).
         assert_eq!(nl.pairs(), &[(0, 1)]);
+    }
+
+    #[test]
+    fn bounded_build_limits_capacity_and_recovers_after_dense_failure() {
+        // Exercise both the dense-loop and binned stencil, including PBC
+        // and an excluded contact. The three remaining pairs fit exactly.
+        for edge in [6., 20.] {
+            let sys = sys_with(
+                &[
+                    Vec3::new(edge - 0.1, 0., 0.),
+                    Vec3::new(0.1, 0., 0.),
+                    Vec3::new(0.4, 0., 0.),
+                    Vec3::new(0.7, 0., 0.),
+                ],
+                edge,
+            );
+            let mut nl = NeighborList::with_skin_exclusions(2., 0.1, &[(0, 2), (0, 3), (1, 3)]);
+            nl.rebuild_bounded(&sys, 3).unwrap();
+            let expected = nl.pairs().to_vec();
+            let mut sorted = expected.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, [(0, 1), (1, 2), (2, 3)]);
+            assert!(nl.pairs.capacity() <= 3);
+            assert!(nl.rebuild_bounded(&sys, 2).is_err());
+            assert!(nl.pairs().is_empty());
+            assert!(nl.pairs.capacity() <= 2);
+            nl.build(&sys); // same box/positions and positive skin: cannot reuse partial data
+            assert_eq!(nl.pairs(), expected);
+        }
+    }
+
+    #[test]
+    fn bounded_build_accepts_sparse_system_with_zero_pair_budget() {
+        let points: Vec<_> = (0..100).map(|i| Vec3::new(3. * i as f64, 0., 0.)).collect();
+        let sys = sys_with(&points, 300.);
+        let mut nl = NeighborList::with_skin(2., 0.5);
+        nl.rebuild_bounded(&sys, 0).unwrap();
+        assert!(nl.pairs().is_empty());
+        assert_eq!(nl.pairs.capacity(), 0);
     }
 
     #[test]

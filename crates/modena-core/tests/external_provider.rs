@@ -16,6 +16,7 @@ fn spec(python: &str) -> AseEmtSpec {
         pbc: [true; 3],
         asap_cutoff: false,
         timeout_ms: 5000,
+        transport: Default::default(),
     }
 }
 fn fixture(evaluate: &str) -> (tempfile::TempDir, String) {
@@ -637,9 +638,16 @@ fn real_ase_runner_split_continuation_and_selected_z_mutation() {
     assert_eq!(a.conservation.diagnostics.unwrap().samples, 3);
     assert_eq!(a.metadata.provider.as_ref(), Some(&id));
     first.write_checkpoint(&dir.path().join("ase.chk")).unwrap();
-    let mut resumed = build_runner(&format!("{text}\nrestore_file = \"ase.chk\""), dir.path());
+    let persistent = text.replace(
+        "composition = \"total\"",
+        "composition = \"total\"\ntransport = \"persistent\"",
+    );
+    let mut resumed = build_runner(
+        &format!("{persistent}\nrestore_file = \"ase.chk\""),
+        dir.path(),
+    );
     let b = resumed.run().unwrap();
-    let mut full = build_runner(&text.replace("steps = 2", "steps = 4"), dir.path());
+    let mut full = build_runner(&persistent.replace("steps = 2", "steps = 4"), dir.path());
     let c = full.run().unwrap();
     assert_eq!(resumed.current_step(), 4);
     assert_eq!(resumed.system().positions, full.system().positions);

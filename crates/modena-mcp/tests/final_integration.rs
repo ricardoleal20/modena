@@ -35,6 +35,7 @@ fn discovery_request_lists_every_model_with_schema_parameters() {
                 "pbc",
                 "asap_cutoff",
                 "timeout_ms",
+                "transport",
             ],
         ),
     ] {

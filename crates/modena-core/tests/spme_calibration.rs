@@ -2205,3 +2205,36 @@ fn timing_guard_rejects_an_inflight_callback_before_clocks() {
     assert!(state.begin_guard());
     state.end_guard();
 }
+
+#[test]
+fn candidate_two_pass_whole_sweep_projection_rejects_insufficient_budget() {
+    let mut p = frozen_protocol("special", 2, 1, true).unwrap();
+    let snapshots = materialize(&p).unwrap();
+    let b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    let projected = preflight_selection_sweep(&p, &snapshots, &b).unwrap();
+    // Independent rectangular count: (2*12+1)*(2*14+1)*(2*15+1)-1.
+    // Each nonzero mode visits all3 atoms for rho AND again for forces.
+    let per_shift = 2 * 3 * (25 * 29 * 31 - 1);
+    assert_eq!(per_shift, 134_844);
+    let distinct_meshes = candidate_grid(&p, snapshots[0].cell)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.actual_mesh)
+        .collect::<std::collections::BTreeSet<_>>()
+        .len() as u64;
+    let selection = snapshots
+        .iter()
+        .filter(|s| s.role == FixtureRole::Selection)
+        .count() as u64;
+    assert_eq!(
+        projected.atom_k_terms,
+        6 * distinct_meshes * selection * per_shift
+    );
+    // Between the old one-pass projection and the required two-pass reservation.
+    p.limits.max_atom_k_terms_per_family = projected.atom_k_terms * 3 / 4;
+    let b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    assert!(matches!(
+        preflight_selection_sweep(&p, &materialize(&p).unwrap(), &b),
+        Err(CalibrationFailure::BudgetExceeded(_))
+    ));
+}

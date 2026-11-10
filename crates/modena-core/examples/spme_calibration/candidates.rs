@@ -346,6 +346,7 @@ fn valid_certificate(
         && c.usage.calls <= b.calls
         && c.usage.work.real_terms <= b.work.real_terms
         && c.usage.work.atom_k_terms <= b.work.atom_k_terms
+        && c.usage.elapsed_ns <= usage(b).elapsed_ns
         && c.shifts.iter().enumerate().all(|(i, row)| {
             row.shift_index == i + 1
                 && metrics(
@@ -356,6 +357,26 @@ fn valid_certificate(
                 )
                 .is_ok_and(|m| m == row.delta && invariant(&m, p))
         })
+}
+fn check_certificate_elapsed(
+    c: &TranslationCertificate,
+    epoch: &str,
+    hash: &str,
+    mesh: [usize; 3],
+    settings: &ReferenceSettings,
+    b: &ReferenceBudget,
+) -> Result<(), CalibrationFailure> {
+    if c.prepared_manifest_sha256 == epoch
+        && c.snapshot_sha256 == hash
+        && c.actual_mesh == mesh
+        && &c.settings == settings
+        && c.usage.elapsed_ns > usage(b).elapsed_ns
+    {
+        return Err(invalid(
+            "translation certificate cumulative elapsed was not resumed",
+        ));
+    }
+    Ok(())
 }
 fn reference_passes(record: &ReferenceRecord) -> bool {
     record.chosen_level.is_some()
@@ -395,7 +416,8 @@ fn reference_upper(
     let n = s.charges.len() as u64;
     Ok(WorkCounts {
         real_terms: mul(mul(n, n)?, images)?,
-        atom_k_terms: mul(n, vectors - 1)?,
+        // Match the oracle reservation: rho and force atom passes.
+        atom_k_terms: mul(mul(2, n)?, vectors - 1)?,
     })
 }
 /// Whole selection+worst-case confirmation call preflight and distinct-mesh
@@ -624,6 +646,18 @@ where
                 .record
                 .chosen_level
                 .ok_or_else(|| invalid("reference level"))?];
+            // A stale elapsed baseline is not permission to spend the old work
+            // again. Reject before either oracle or production candidate compute.
+            for c in certificates.iter() {
+                check_certificate_elapsed(
+                    c,
+                    &epoch,
+                    &hashes[index],
+                    candidate.actual_mesh,
+                    &level.settings,
+                    &b.reference,
+                )?;
+            }
             let cached = certificates.iter().any(|c| {
                 valid_certificate(
                     c,
@@ -906,4 +940,154 @@ where
         out.report.status = Status::Failed;
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod accounting_tests {
+    use super::*;
+    #[test]
+    fn missing_certificate_projection_reserves_both_atom_passes_before_work() {
+        let p = frozen_protocol("special", 2, 1, true).unwrap();
+        let s = materialize(&p).unwrap().remove(0);
+        let settings = ReferenceSettings {
+            kappa: 1.1 / p.a,
+            real_cutoff: 9. * p.a,
+            kspace_cutoff: 18. / p.a,
+        };
+        let upper = reference_upper(&s, &settings).unwrap();
+        let six_shift_projection = mul(6, upper.atom_k_terms).unwrap();
+        let remaining = 404_532;
+        assert!(six_shift_projection>remaining,"six shifts were admitted with only {remaining} terms remaining: {six_shift_projection}");
+        assert_eq!(upper.atom_k_terms, 134_844);
+        assert_eq!(six_shift_projection, 809_064);
+    }
+    #[test]
+    fn completed_certificate_requires_its_elapsed_budget_to_be_resumed() {
+        // Synthetic control only: identical raw forces guarantee invariant deltas.
+        // No oracle or production-model calculation is called by this test.
+        let p = frozen_protocol("special", 2, 1, true).unwrap();
+        let work = WorkCounts {
+            real_terms: 10,
+            atom_k_terms: 20,
+        };
+        let settings = ReferenceSettings {
+            kappa: 1.1 / p.a,
+            real_cutoff: 9. * p.a,
+            kspace_cutoff: 18. / p.a,
+        };
+        let evaluation = Evaluation {
+            energy: 1.,
+            strain_w: 1.,
+            forces: vec![[1., 0., 0.]; 3],
+        };
+        let level = ReferenceLevel {
+            settings: settings.clone(),
+            evaluation: evaluation.clone(),
+            delta_from_previous: None,
+            work: work.clone(),
+        };
+        let audit = ReferenceAudit {
+            real_bounds: [0; 3],
+            reciprocal_bounds: [0; 3],
+            prechecked_work: work.clone(),
+            work: work.clone(),
+            real_included_terms: 0,
+            reciprocal_vectors: 0,
+            reciprocal_enumerated_vectors: 0,
+            real_membership_hash: 0,
+            reciprocal_membership_hash: 0,
+            owned_heap_bytes: 0,
+            deadline_checks: 0,
+            background_energy: 0.,
+            background_w: 0.,
+        };
+        let delta = metrics(&evaluation, &evaluation, 3, 1e-8 / (p.a * p.a)).unwrap();
+        let certificate = TranslationCertificate {
+            prepared_manifest_sha256: "synthetic-source".into(),
+            snapshot_sha256: "synthetic-snapshot".into(),
+            actual_mesh: [32, 36, 40],
+            settings,
+            shifts: (1..7)
+                .map(|shift_index| ShiftReference {
+                    shift_index,
+                    evaluation: evaluation.clone(),
+                    delta: delta.clone(),
+                    audit: audit.clone(),
+                })
+                .collect(),
+            status: Status::Passed,
+            failure: None,
+            usage: ReferenceUsage {
+                work: work.clone(),
+                calls: 6,
+                elapsed_ns: 100_000_000_000,
+            },
+        };
+        let stale = ReferenceBudget::resume(
+            &p.limits,
+            work.clone(),
+            6,
+            std::time::Duration::from_secs(1),
+            0,
+        )
+        .unwrap();
+        assert!(
+            !valid_certificate(
+                &certificate,
+                "synthetic-source",
+                "synthetic-snapshot",
+                [32, 36, 40],
+                &level,
+                &p,
+                &stale
+            ),
+            "cache admitted a certificate whose elapsed work was not resumed"
+        );
+        let before_work = stale.work.clone();
+        let before_calls = stale.calls;
+        assert!(matches!(
+            check_certificate_elapsed(
+                &certificate,
+                "synthetic-source",
+                "synthetic-snapshot",
+                [32, 36, 40],
+                &level.settings,
+                &stale
+            ),
+            Err(CalibrationFailure::InvalidInput(_))
+        ));
+        assert_eq!(stale.work, before_work);
+        assert_eq!(stale.calls, before_calls);
+        // A different source epoch is historical, not a reusable matching cache.
+        check_certificate_elapsed(
+            &certificate,
+            "different-source",
+            "synthetic-snapshot",
+            [32, 36, 40],
+            &level.settings,
+            &stale,
+        )
+        .unwrap();
+        let resumed =
+            ReferenceBudget::resume(&p.limits, work, 6, std::time::Duration::from_secs(101), 0)
+                .unwrap();
+        check_certificate_elapsed(
+            &certificate,
+            "synthetic-source",
+            "synthetic-snapshot",
+            [32, 36, 40],
+            &level.settings,
+            &resumed,
+        )
+        .unwrap();
+        assert!(valid_certificate(
+            &certificate,
+            "synthetic-source",
+            "synthetic-snapshot",
+            [32, 36, 40],
+            &level,
+            &p,
+            &resumed
+        ));
+    }
 }

@@ -627,3 +627,109 @@ fn velocity_overflow_after_an_earlier_correction_rolls_back_both_arrays() {
     assert_eq!(s.positions, positions);
     assert_eq!(s.velocities, velocities);
 }
+
+#[test]
+fn report_contract_shake_only_accepts_position_stages() {
+    use ProjectionStage::*;
+    for (stage, valid) in [
+        (VvPosition, true),
+        (VvFinal, false),
+        (BaoabB0, false),
+        (BaoabA1Pre, true),
+        (BaoabA1Post, false),
+        (BaoabO, false),
+        (BaoabA2Pre, true),
+        (BaoabA2Post, false),
+        (BaoabB1, false),
+    ] {
+        let (mut s, c) = rotor(1., 3.);
+        let g = constraint_geometry(&s, &c).unwrap();
+        s.add_pos(1, g.edges[0].reference * 0.01);
+        let before = s.clone();
+        let result = c.shake_report(&mut s, &g, 0.1, stage, 1e-13, 100);
+        if valid {
+            assert_eq!(result.unwrap().stage, stage);
+        } else {
+            assert!(
+                matches!(result, Err(modena_core::error::ModenaError::Physics(_))),
+                "{stage:?}"
+            );
+            assert_eq!(s.positions, before.positions);
+            assert_eq!(s.velocities, before.velocities);
+        }
+    }
+}
+#[test]
+fn report_contract_rattle_only_accepts_velocity_stages() {
+    use ProjectionStage::*;
+    for (stage, valid) in [
+        (VvPosition, false),
+        (VvFinal, true),
+        (BaoabB0, true),
+        (BaoabA1Pre, false),
+        (BaoabA1Post, true),
+        (BaoabO, true),
+        (BaoabA2Pre, false),
+        (BaoabA2Post, true),
+        (BaoabB1, true),
+    ] {
+        let (mut s, c) = rotor(1., 3.);
+        let g = constraint_geometry(&s, &c).unwrap();
+        s.add_vel(1, g.edges[0].reference * 0.2);
+        let before = s.clone();
+        let result = c.rattle_report(&mut s, &g, stage, 1e-13, 100);
+        if valid {
+            assert_eq!(result.unwrap().stage, stage);
+        } else {
+            assert!(
+                matches!(result, Err(modena_core::error::ModenaError::Physics(_))),
+                "{stage:?}"
+            );
+            assert_eq!(s.positions, before.positions);
+            assert_eq!(s.velocities, before.velocities);
+        }
+    }
+}
+#[test]
+fn report_contract_rejects_unrepresented_velocity_impulses() {
+    let mut s = support::atoms(&[[0., 0., 0.], [1., 0., 0.]], &[1., 1.]);
+    let c = Constraints {
+        bonds: vec![Constraint { i: 0, j: 1, d: 1. }],
+        waters: vec![],
+    };
+    let g = constraint_geometry(&s, &c).unwrap();
+    let huge = 2_f64.powi(53);
+    s.set_vel(0, Vec3::new(huge, 0., 0.));
+    s.set_vel(1, Vec3::new(huge + 2., 0., 0.));
+    let before = s.clone();
+    // Both final velocities round to 2^53, so changes (0,-2) cannot equal (+1,-1).
+    let result = c.rattle_report(&mut s, &g, ProjectionStage::VvFinal, 1e-13, 100);
+    assert!(matches!(
+        result,
+        Err(modena_core::error::ModenaError::Physics(_))
+    ));
+    assert_eq!(s.positions, before.positions);
+    assert_eq!(s.velocities, before.velocities);
+}
+#[test]
+fn report_contract_rejects_unrepresented_position_impulses() {
+    let mut s = support::atoms(&[[0., 0., 0.], [5., 0., 0.]], &[1., 3.]);
+    let c = Constraints {
+        bonds: vec![Constraint { i: 0, j: 1, d: 5. }],
+        waters: vec![],
+    };
+    let g = constraint_geometry(&s, &c).unwrap();
+    let huge = 2_f64.powi(53);
+    s.set_pos(0, Vec3::new(huge - 2., 0., 0.));
+    s.set_pos(1, Vec3::new(huge + 4., 0., 0.));
+    let before = s.clone();
+    // The unit change in represented length exactly satisfies SHAKE. Over a
+    // half-unit interval the realized atom impulses (+2,0) differ from ±1.375.
+    let result = c.shake_report(&mut s, &g, 0.5, ProjectionStage::VvPosition, 1e-13, 100);
+    assert!(matches!(
+        result,
+        Err(modena_core::error::ModenaError::Physics(_))
+    ));
+    assert_eq!(s.positions, before.positions);
+    assert_eq!(s.velocities, before.velocities);
+}

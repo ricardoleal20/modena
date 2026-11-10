@@ -88,6 +88,44 @@ impl ProjectionReport {
             max_velocity_residual: 0.,
         }
     }
+    /// Finite coordinates or velocities can lose a correction to rounding even
+    /// when the final constraint residual is zero. Compare each atom component
+    /// to the §9 impulse tolerance using only its incident ledger increments.
+    pub(crate) fn check_reconstruction(
+        &self,
+        geometry: &ConstraintGeometry,
+        masses: &[f64],
+        before: &[f64],
+        after: &[f64],
+        interval: f64,
+    ) -> Result<()> {
+        const RECONSTRUCTION_TOLERANCE: f64 = 5e-10;
+        let mut impulses = vec![(Vec3::zero(), Vec3::zero()); masses.len()];
+        for update in &self.impulses {
+            let edge = &geometry.edges[update.edge];
+            let magnitude = Vec3(update.impulse_on_j.0.map(f64::abs));
+            for (atom, contribution) in [
+                (edge.i, -update.impulse_on_j),
+                (edge.j, update.impulse_on_j),
+            ] {
+                let (sum, absolute_sum) = &mut impulses[atom];
+                *sum += contribution;
+                *absolute_sum += magnitude;
+            }
+        }
+        for (i, (sum, absolute_sum)) in impulses.iter().enumerate() {
+            for axis in 0..3 {
+                let k = 3 * i + axis;
+                let represented = masses[i] * (after[k] - before[k]) / interval;
+                let difference = (represented - sum.0[axis]).abs();
+                let tolerance = RECONSTRUCTION_TOLERANCE * (1. + absolute_sum.0[axis]);
+                if !difference.is_finite() || !tolerance.is_finite() || difference > tolerance {
+                    return Err(geometry_error(format!("stage {:?}, atom {i}, axis {axis}: represented impulse {represented:e} differs from ledger {:e} (tolerance {tolerance:e})",self.stage,sum.0[axis])));
+                }
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn record(&mut self, edge: usize, lever: Vec3, impulse_on_j: Vec3) -> Result<()> {
         let tensor = self
             .tensor_impulse

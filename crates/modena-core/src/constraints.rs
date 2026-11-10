@@ -245,14 +245,14 @@ impl Constraints {
         tol: f64,
         max_iter: usize,
     ) -> Result<ProjectionReport> {
-        let mode = Projection::Position { interval };
-        let before = system.positions.clone();
-        let mut report = ProjectionReport::new(stage);
-        if let Err(error) = self.project(system, geometry, mode, tol, max_iter, Some(&mut report)) {
-            system.positions = before;
-            return Err(error);
-        }
-        Ok(report)
+        self.project_report(
+            system,
+            geometry,
+            Projection::Position { interval },
+            stage,
+            tol,
+            max_iter,
+        )
     }
 
     /// Project only velocities at fixed geometry. A stale lever is rejected.
@@ -265,17 +265,37 @@ impl Constraints {
         tol: f64,
         max_iter: usize,
     ) -> Result<ProjectionReport> {
-        let before = system.velocities.clone();
+        self.project_report(system, geometry, Projection::Velocity, stage, tol, max_iter)
+    }
+
+    fn project_report(
+        &self,
+        system: &mut System,
+        geometry: &ConstraintGeometry,
+        mode: Projection,
+        stage: ProjectionStage,
+        tol: f64,
+        max_iter: usize,
+    ) -> Result<ProjectionReport> {
+        mode.validate_stage(stage)?;
+        let before = mode.buffer(system).to_vec();
         let mut report = ProjectionReport::new(stage);
-        if let Err(error) = self.project(
-            system,
-            geometry,
-            Projection::Velocity,
-            tol,
-            max_iter,
-            Some(&mut report),
-        ) {
-            system.velocities = before;
+        let result = self
+            .project(system, geometry, mode, tol, max_iter, Some(&mut report))
+            .and_then(|()| {
+                report.check_reconstruction(
+                    geometry,
+                    &system.masses,
+                    &before,
+                    mode.buffer(system),
+                    mode.interval(),
+                )
+            });
+        if let Err(error) = result {
+            match mode {
+                Projection::Position { .. } => system.positions = before,
+                Projection::Velocity => system.velocities = before,
+            }
             return Err(error);
         }
         Ok(report)
@@ -571,6 +591,25 @@ enum Projection {
     Velocity,
 }
 impl Projection {
+    fn validate_stage(self, stage: ProjectionStage) -> Result<()> {
+        use ProjectionStage::*;
+        let position_stage = match stage {
+            VvPosition | BaoabA1Pre | BaoabA2Pre => true,
+            VvFinal | BaoabB0 | BaoabA1Post | BaoabO | BaoabA2Post | BaoabB1 => false,
+        };
+        if position_stage != matches!(self, Self::Position { .. }) {
+            return Err(constraint_error(&format!(
+                "stage {stage:?} does not match projection operation"
+            )));
+        }
+        Ok(())
+    }
+    fn buffer(self, s: &System) -> &[f64] {
+        match self {
+            Self::Position { .. } => &s.positions,
+            Self::Velocity => &s.velocities,
+        }
+    }
     fn interval(self) -> f64 {
         match self {
             Self::Position { interval } => interval,

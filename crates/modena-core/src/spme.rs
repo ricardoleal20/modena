@@ -1,4 +1,4 @@
-//! Smooth Particle-Mesh Ewald energy, force and isotropic strain virial.
+//! Smooth Particle-Mesh Ewald energy, force and symmetric strain virial.
 //!
 //! The order-4 B-spline charge spread + 3D FFT + influence-function sum that
 //! reproduces the direct reciprocal Ewald energy on a mesh
@@ -28,6 +28,7 @@
 
 use crate::error::{ModenaError, Result};
 use crate::force_model::{ForceModel, Virial};
+use crate::stress::{ModelEvaluation, SymTensor6, TensorAvailability};
 use crate::system::{SimBox, System};
 
 use crate::vec3::Vec3;
@@ -260,20 +261,30 @@ impl SpmeForceModel {
         virial: &mut Virial,
         neighbors: &mut crate::neighbor::NeighborList,
     ) -> Result<(f64, SpmeProfile)> {
-        let started = std::time::Instant::now();
-        let mut profile = SpmeProfile::default();
-        let energy = self.compute_observed(system, virial, neighbors, &mut profile)?;
-        profile.total = started.elapsed();
-        Ok((energy, profile))
+        let (evaluation, profile) = self.evaluate_profiled(system, neighbors)?;
+        virial.w += evaluation.scalar_virial;
+        Ok((evaluation.energy, profile))
     }
 
-    fn compute_observed<O: Observer>(
+    /// Full tensor evaluation with the same twelve opt-in phase timings.
+    pub fn evaluate_profiled(
         &self,
         system: &mut System,
-        virial: &mut Virial,
+        neighbors: &mut crate::neighbor::NeighborList,
+    ) -> Result<(ModelEvaluation, SpmeProfile)> {
+        let started = std::time::Instant::now();
+        let mut profile = SpmeProfile::default();
+        let evaluation = self.evaluate_observed(system, neighbors, &mut profile)?;
+        profile.total = started.elapsed();
+        Ok((evaluation, profile))
+    }
+
+    fn evaluate_observed<O: Observer>(
+        &self,
+        system: &mut System,
         neighbors: &mut crate::neighbor::NeighborList,
         observer: &mut O,
-    ) -> Result<f64> {
+    ) -> Result<ModelEvaluation> {
         if system.box_size.is_triclinic() {
             return Err(ModenaError::Config(
                 "SPME supports orthorhombic boxes only (triclinic given)".into(),
@@ -286,13 +297,13 @@ impl SpmeForceModel {
         observer.finish(Phase::Neighbor, started);
         let n = system.n();
         if n == 0 {
-            return Ok(0.0);
+            return Ok(ModelEvaluation::zero());
         }
         // Real-space erfc + self/background (identical to Ewald). Split the
         // force buffer separately so positions/charges stay shared borrows.
         let forces = &mut system.forces;
         let started = observer.start();
-        let (u_real, w_real) = self.real_space(
+        let (u_real, w_real, s_real) = self.real_space(
             system.box_size,
             &system.positions,
             &system.charges,
@@ -302,7 +313,7 @@ impl SpmeForceModel {
         );
         observer.finish(Phase::RealSpace, started);
         let started = observer.start();
-        let (u_excl, w_excl, _) = crate::ewald::exclusion_correction(
+        let (u_excl, w_excl, s_excl) = crate::ewald::exclusion_correction(
             self.kappa,
             &system.box_size,
             &system.positions,
@@ -328,7 +339,7 @@ impl SpmeForceModel {
         }
         // The lock covers key validation through FFT/influence use, so a
         // shared model cannot mix another simulation's mesh or box state.
-        let (u_rec, w_rec) = {
+        let (u_rec, w_rec, s_rec) = {
             let mut guard = self.workspace.lock().unwrap();
             if guard.as_ref().is_none_or(|w| w.mesh != mesh) {
                 *guard = Some(SpmeWorkspace::new(mesh)?);
@@ -351,9 +362,17 @@ impl SpmeForceModel {
         let sum_q: f64 = system.charges.iter().sum();
         let u_bg = -std::f64::consts::PI / (2.0 * v * self.kappa * self.kappa) * sum_q * sum_q;
 
-        virial.w += w_real + w_rec + 3.0 * u_bg;
+        let scalar_virial = w_real + w_rec + 3.0 * u_bg;
+        let tensor = s_real
+            .plus(s_excl)
+            .plus(s_rec)
+            .plus(SymTensor6([u_bg, u_bg, u_bg, 0., 0., 0.]));
         observer.finish(Phase::SelfBackground, started);
-        Ok(u_real + u_rec + u_self + u_bg)
+        Ok(ModelEvaluation {
+            energy: u_real + u_rec + u_self + u_bg,
+            scalar_virial,
+            tensor: TensorAvailability::Complete(tensor),
+        })
     }
 
     fn real_space(
@@ -364,13 +383,14 @@ impl SpmeForceModel {
         neighbors: &crate::neighbor::NeighborList,
         policy: &crate::ewald::CoulombPolicy<'_>,
         forces: &mut [f64],
-    ) -> (f64, f64) {
+    ) -> (f64, f64, SymTensor6) {
         // erfc-screened short-range sum — same formula as the direct Ewald's
         // real space (shared-form; a later refactor can unify the loop).
         let rc2 = self.real_cutoff * self.real_cutoff;
         let kappa = self.kappa;
         let mut u = 0.0;
         let mut w = 0.0;
+        let mut tensor = SymTensor6::ZERO;
         for &(i, j) in neighbors.pairs() {
             let pi = Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
             let pj = Vec3::new(positions[3 * j], positions[3 * j + 1], positions[3 * j + 2]);
@@ -386,13 +406,14 @@ impl SpmeForceModel {
             u += qprod * erfc_kr / r;
             let coef = qprod * (TWO_OVER_SQRT_PI * kappa * exp_kr2 / r2 + erfc_kr / (r2 * r));
             let fv = d * coef;
+            tensor = tensor.plus(SymTensor6::dyad(d, fv));
             for a in 0..3 {
                 forces[3 * i + a] += fv.0[a];
                 forces[3 * j + a] -= fv.0[a];
                 w += d.0[a] * fv.0[a];
             }
         }
-        (u, w)
+        (u, w, tensor)
     }
 }
 
@@ -413,7 +434,16 @@ impl ForceModel for SpmeForceModel {
         virial: &mut Virial,
         neighbors: &mut crate::neighbor::NeighborList,
     ) -> Result<f64> {
-        self.compute_observed(system, virial, neighbors, &mut Noop)
+        let evaluation = self.evaluate_observed(system, neighbors, &mut Noop)?;
+        virial.w += evaluation.scalar_virial;
+        Ok(evaluation.energy)
+    }
+    fn evaluate(
+        &self,
+        system: &mut System,
+        neighbors: &mut crate::neighbor::NeighborList,
+    ) -> Result<ModelEvaluation> {
+        self.evaluate_observed(system, neighbors, &mut Noop)
     }
 }
 
@@ -426,6 +456,8 @@ impl ForceModel for SpmeForceModel {
 struct InfluenceFactors {
     fac: Vec<f64>,
     vfac: Vec<f64>,
+    // Six additional f64 per mode (48 bytes), retaining legacy scalar arithmetic.
+    strain: Vec<[f64; 6]>,
 }
 
 type InfluenceKey = (u64, [u64; 3]);
@@ -449,6 +481,7 @@ fn influence_factors(kappa: f64, box_size: &SimBox, mesh: [usize; 3]) -> Influen
         |kh: i64, nn: usize| -> f64 { (4.0 + 2.0 * (two_pi * kh as f64 / nn as f64).cos()) / 6.0 };
     let mut fac = vec![0.0f64; ntot];
     let mut vfac = vec![0.0f64; ntot];
+    let mut strain = vec![[0.0f64; 6]; ntot];
     // L1 layout: idx = (n2i*n1 + n1i)*n0 + n0i.
     for n2i in 0..n2 {
         let kz = khat(n2, n2i);
@@ -468,10 +501,27 @@ fn influence_factors(kappa: f64, box_size: &SimBox, mesh: [usize; 3]) -> Influen
                 let idx = (n2i * n1 + n1i) * n0 + n0i;
                 fac[idx] = alpha * w / (b * b);
                 vfac[idx] = 1.0 - k2 / (2.0 * kappa2);
+                let factor = 2.0 / k2 + 1.0 / (2.0 * kappa2);
+                let k = [phx, phy, phz];
+                let indices = [n0i, n1i, n2i];
+                let nyquist: [bool; 3] =
+                    std::array::from_fn(|a| mesh[a].is_multiple_of(2) && indices[a] == mesh[a] / 2);
+                for a in 0..3 {
+                    strain[idx][a] = 1.0 - factor * k[a] * k[a];
+                }
+                // Equal independent +/- Nyquist lifts cancel only the cross
+                // terms touching that axis. Other mixed terms still survive.
+                for (c, (a, b)) in [(0, 1), (0, 2), (1, 2)].into_iter().enumerate() {
+                    strain[idx][c + 3] = if nyquist[a] || nyquist[b] {
+                        0.0
+                    } else {
+                        -factor * k[a] * k[b]
+                    };
+                }
             }
         }
     }
-    InfluenceFactors { fac, vfac }
+    InfluenceFactors { fac, vfac, strain }
 }
 
 /// Owned plan/grid/scratch storage; the model holds this under one mutex.
@@ -634,7 +684,7 @@ pub fn spme_reciprocal_forces(
     forces: &mut [f64],
 ) -> Result<(f64, f64)> {
     let mut workspace = SpmeWorkspace::new(mesh)?;
-    reciprocal_pass(
+    let (energy, scalar, _) = reciprocal_pass(
         kappa,
         box_size,
         positions,
@@ -642,7 +692,32 @@ pub fn spme_reciprocal_forces(
         forces,
         &mut workspace,
         &mut Noop,
-    )
+    )?;
+    Ok((energy, scalar))
+}
+
+/// Reciprocal mesh energy and symmetric affine-strain tensor at an explicit grid.
+/// Production remains orthorhombic; even Nyquist axes use the equal-lift
+/// continuation documented in the B07 design. Forces add into the caller buffer.
+pub fn spme_reciprocal_tensor(
+    kappa: f64,
+    box_size: &SimBox,
+    positions: &[f64],
+    charges: &[f64],
+    forces: &mut [f64],
+    mesh: [usize; 3],
+) -> Result<(f64, SymTensor6)> {
+    let mut workspace = SpmeWorkspace::new(mesh)?;
+    let (energy, _, tensor) = reciprocal_pass(
+        kappa,
+        box_size,
+        positions,
+        charges,
+        forces,
+        &mut workspace,
+        &mut Noop,
+    )?;
+    Ok((energy, tensor))
 }
 
 fn reciprocal_pass<O: Observer>(
@@ -653,7 +728,7 @@ fn reciprocal_pass<O: Observer>(
     forces: &mut [f64],
     workspace: &mut SpmeWorkspace,
     observer: &mut O,
-) -> Result<(f64, f64)> {
+) -> Result<(f64, f64, SymTensor6)> {
     if box_size.is_triclinic()
         || box_size.size.0.iter().any(|x| !x.is_finite() || *x <= 0.0)
         || !kappa.is_finite()
@@ -743,7 +818,13 @@ fn reciprocal_pass<O: Observer>(
     let mut e = 0.0f64;
     let mut wr = 0.0f64;
     let (mut e_comp, mut w_comp) = (0.0, 0.0);
-    for (dst, (f, vf)) in l1.iter_mut().zip(infl.fac.iter().zip(infl.vfac.iter())) {
+    let mut tensor = SymTensor6::ZERO;
+    let mut tensor_comp = [0.0; 6];
+    for ((dst, (f, vf)), strain) in l1
+        .iter_mut()
+        .zip(infl.fac.iter().zip(infl.vfac.iter()))
+        .zip(&infl.strain)
+    {
         let qhat = *dst;
         let u_k = f * qhat.norm_sqr();
         // Compensated sums keep finite-strain/force differences stable even
@@ -756,12 +837,18 @@ fn reciprocal_pass<O: Observer>(
         let next = wr + y;
         w_comp = (next - wr) - y;
         wr = next;
+        for c in 0..6 {
+            let y = u_k * strain[c] - tensor_comp[c];
+            let next = tensor.0[c] + y;
+            tensor_comp[c] = (next - tensor.0[c]) - y;
+            tensor.0[c] = next;
+        }
         *dst = qhat * f;
     }
 
     observer.finish(Phase::Influence, started);
     if forces.is_empty() {
-        return Ok((e, wr));
+        return Ok((e, wr, tensor));
     }
 
     let started = observer.start();
@@ -819,7 +906,7 @@ fn reciprocal_pass<O: Observer>(
         forces[3 * i + 2] += fv.0[2];
     }
     observer.finish(Phase::Gather, started);
-    Ok((e, wr))
+    Ok((e, wr, tensor))
 }
 
 /// Derivative of the cubic B-spline weights w.r.t. `u` (sums to 0).

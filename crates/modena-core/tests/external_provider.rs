@@ -511,7 +511,7 @@ fn external_checkpoint_checks_atomic_numbers_runtime_identity_and_transport_inde
     sim.run().unwrap();
     let path = dir.path().join("state.chk");
     sim.write_checkpoint(&path).unwrap();
-    let mut cp = restart::load(&path).unwrap();
+    let mut cp = restart::load_with_stress(&path).unwrap().mechanical;
     cp.continuation.as_mut().unwrap().physical_signature["output_unit_factors"][5] =
         serde_json::json!(69477.8);
     restart::save(&path, &cp).unwrap();
@@ -602,7 +602,8 @@ fn older_native_v2_checkpoint_keeps_signature_and_unspecified_z_compatibility() 
     sim.run().unwrap();
     let path = dir.path().join("state.chk");
     sim.write_checkpoint(&path).unwrap();
-    let cp = restart::load(&path).unwrap();
+    let cp = restart::load_with_stress(&path).unwrap().mechanical;
+    restart::save(&path, &cp).unwrap();
     let state = cp.continuation.unwrap();
     // Hand-written legacy physical-v2 identity: no atomic-number/provider keys.
     let expected = serde_json::json!({"schema":"modena-physical-v2","model":{"type":"lennard_jones","sigma":1.0,"epsilon":1.0,"cutoff":2.5,"types":[],"overrides":[],"mixing":"lorentz_berthelot"},"integrator":{"type":"velocity_verlet","dt":0.005},"thermostat":null,"barostat":null,"electrostatics":null,"topology":null,"constraints":null,"water_geometry":null,"initialization_seed":42,"initial_temperature":1.0,"masses":[1.0,1.0,1.0,1.0],"species":[0,0,0,0],"charges":[0.0,0.0,0.0,0.0],"elements":["X","X","X","X"],"output_unit_factors":null});
@@ -634,7 +635,9 @@ fn checkpoint_rejects_nonempty_atomic_number_buffer_with_wrong_length() {
     let sim = build_runner(NATIVE_TOML, dir.path());
     let path = dir.path().join("state.chk");
     sim.write_checkpoint(&path).unwrap();
-    let mut cp = modena_core::io::restart::load(&path).unwrap();
+    let mut cp = modena_core::io::restart::load_with_stress(&path)
+        .unwrap()
+        .mechanical;
     cp.continuation.as_mut().unwrap().atomic_numbers = vec![29];
     assert!(modena_core::io::restart::save(&path, &cp).is_err());
 }
@@ -747,8 +750,9 @@ fn failed_runner_is_terminal_and_preserves_good_checkpoint() {
     assert_eq!(resumed.current_step(), 0);
     assert_eq!(
         resumed.system().positions,
-        modena_core::io::restart::load(checkpoint)
+        modena_core::io::restart::load_with_stress(checkpoint)
             .unwrap()
+            .mechanical
             .positions
     );
 }
@@ -791,7 +795,7 @@ fn legacy_real_fixed_cell_signature_migrates_only_exact_old_pressure_factor() {
         sim.run().unwrap();
         let path = dir.path().join("old.chk");
         sim.write_checkpoint(&path).unwrap();
-        let mut old = restart::load(&path).unwrap();
+        let mut old = restart::load_with_stress(&path).unwrap().mechanical;
         old.continuation.as_mut().unwrap().physical_signature["output_unit_factors"][5] =
             serde_json::json!(3.0 / (2.0 * 2.0 * 2.0) * 69477.8);
         restart::save(&path, &old).unwrap();
@@ -800,7 +804,9 @@ fn legacy_real_fixed_cell_signature_migrates_only_exact_old_pressure_factor() {
         resumed
             .write_checkpoint(&dir.path().join("new.chk"))
             .unwrap();
-        let new = restart::load(dir.path().join("new.chk")).unwrap();
+        let new = restart::load_with_stress(dir.path().join("new.chk"))
+            .unwrap()
+            .mechanical;
         assert_eq!(
             new.continuation.as_ref().unwrap().physical_signature["output_unit_factors"][5],
             serde_json::json!(25713.158612344094)
@@ -832,7 +838,7 @@ fn legacy_real_fixed_cell_signature_migrates_only_exact_old_pressure_factor() {
     let coupled = format!("units = \"real\"\n{NATIVE_TOML}\n[barostat]\ntype = \"monte_carlo\"\ntarget_pressure = 1.0\ntarget_temperature = 10.0").replace("type = \"velocity_verlet\"\ndt = 0.005","type = \"langevin_baoab\"\ndt = 0.0001\ngamma = 1.0\ntarget_temperature = 10.0");
     let sim = build_runner(&coupled, dir.path());
     sim.write_checkpoint(&path).unwrap();
-    let mut old = restart::load(&path).unwrap();
+    let mut old = restart::load_with_stress(&path).unwrap().mechanical;
     old.continuation.as_mut().unwrap().physical_signature["output_unit_factors"][5] =
         serde_json::json!(69477.8);
     restart::save(&path, &old).unwrap();

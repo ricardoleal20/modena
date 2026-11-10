@@ -40,7 +40,12 @@ if mode.startswith('missing:'): del state['continuation'][mode.split(':',1)[1]]
 if mode=='nan': state['continuation']['forces'][0]=float('nan')
 if mode=='box': state['box_edges'][0]*=2
 if mode=='time': state['time']+=1
-Path('final.checkpoint').write_text('MODENA_RESTART 2\\n'+json.dumps(state))
+if mode.startswith('v3'):
+ if mode=='v3-signed-zero': state['continuation']['forces'][0]=-0.0
+ if mode=='v3-key': state['extra_field']=True
+ header, state='MODENA_RESTART 3',dict(mechanical=state,stress=None)
+else: header='MODENA_RESTART 2'
+Path('final.checkpoint').write_text(header+'\\n'+json.dumps(state))
 with Path('thermo.csv').open('w') as f:
  w=csv.writer(f); w.writerow(['step','time','kinetic','potential','total','temperature','pressure','virial'])
  for i in range(0,steps+1,100): w.writerow([i,i*.005,1,-1,0,1,1,2])
@@ -128,6 +133,19 @@ class DriverTests(unittest.TestCase):
             self.assertEqual(len(artifact['runs']), 6)
             self.assertTrue(all(r['physics_verified'] for r in artifact['runs']))
 
+    def test_cross_version_parity_compares_exact_mechanics(self):
+        for mode, expected in [('v3', 0), ('v3-signed-zero', 1), ('v3-key', 1)]:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                result, artifact, _ = self.run_driver(Path(tmp), after_mode=mode)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                row = artifact['runs'][-1]
+                comparison = row['comparison']
+                self.assertEqual(comparison['kind'], 'mechanical_payload_and_thermo')
+                self.assertNotEqual(comparison['reference_format'], row['checkpoint_format'])
+                self.assertNotEqual(comparison['reference_checkpoint_sha256'], row['checkpoint_sha256'])
+                if expected:
+                    self.assertIn('exact', artifact['error'])
+
     def test_one_thread_parity_rejects_signed_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -165,6 +183,8 @@ class DriverTests(unittest.TestCase):
             checkpoint = directory / 'final.checkpoint'
             state = json.loads(checkpoint.read_text().split('\n', 1)[1])
             stdout = (directory / 'stdout').read_text()
+            checkpoint.write_text('MODENA_RESTART 3\n' + json.dumps(dict(mechanical=state, stress=None)))
+            MODULE.verify_run(directory, stdout, row['atoms'], row['steps'])
             fields = ['masses', 'species', 'atomic_numbers', 'charges', 'elements',
                       'constraint_count', 'conserved_com_dof', 'integrator', 'thermostat', 'barostat']
             mutations = [(f'missing-{key}', lambda c, key=key: c.pop(key)) for key in fields]

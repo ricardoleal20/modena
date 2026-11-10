@@ -115,7 +115,7 @@ restart_every = 500
     // …and the run loop's own end-of-run write.
     let run_written = dir.join("run.chk");
     for path in [&manual, &run_written] {
-        let cp = restart::load(path).unwrap();
+        let cp = restart::load_with_stress(path).unwrap().mechanical;
         let sys = sim.system();
         assert_eq!(cp.atoms, sys.n(), "atom count");
         assert_eq!(cp.step, 137, "step counter");

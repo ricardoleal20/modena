@@ -473,7 +473,25 @@ fn persistent_checkpoint_transport_independence_and_safe_step_cancellation() {
     assert_eq!(resumed.system().forces, full.system().forces);
     // Change transport in the checkpoint signature's input configuration: the
     // native physical signature intentionally contains neither transport nor path.
-    let cp = modena_core::io::restart::load(dir.path().join("state.chk")).unwrap();
+    let cp = modena_core::io::restart::load_with_stress(dir.path().join("state.chk"))
+        .unwrap()
+        .mechanical;
+    modena_core::io::restart::save(dir.path().join("v2.chk"), &cp).unwrap();
+    let evaluations = || {
+        std::fs::read_to_string(dir.path().join("requests"))
+            .unwrap()
+            .lines()
+            .filter(|action| *action == "evaluate")
+            .count()
+    };
+    let before_restore = evaluations();
+    let legacy = build(&format!("{text}\nrestore_file=\"v2.chk\"\n"));
+    assert_eq!(
+        evaluations(),
+        before_restore,
+        "restoring v2 evaluated a live worker"
+    );
+    assert!(legacy.pressure_observation().unwrap().scalar.is_none());
     let signature = &cp.continuation.unwrap().physical_signature;
     assert!(signature["model"].get("transport").is_none());
     assert!(signature["model"].get("python").is_none());
@@ -493,7 +511,7 @@ fn persistent_checkpoint_transport_independence_and_safe_step_cancellation() {
             .unwrap()
             .lines()
             .count(),
-        3
+        4
     );
 }
 

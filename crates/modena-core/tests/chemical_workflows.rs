@@ -153,8 +153,9 @@ fn legacy_exclude_bonded_uses_graph_even_without_angles() {
 fn pe(s: &Simulation, dir: &Path) -> f64 {
     let path = dir.join("probe.chk");
     s.write_checkpoint(&path).unwrap();
-    modena_core::io::restart::load(path)
+    modena_core::io::restart::load_with_stress(path)
         .unwrap()
+        .mechanical
         .continuation
         .unwrap()
         .potential_energy
@@ -386,7 +387,9 @@ fn previous_real_charge_convention_checkpoint_cannot_continue_silently() {
     let c = InputConfig::from_str(&deck("real", "")).unwrap();
     let sim = Simulation::from_config_without_outputs(&c, &dir).unwrap();
     sim.write_checkpoint(&dir.join("old.chk")).unwrap();
-    let mut cp = modena_core::io::restart::load(dir.join("old.chk")).unwrap();
+    let mut cp = modena_core::io::restart::load_with_stress(dir.join("old.chk"))
+        .unwrap()
+        .mechanical;
     let state = cp.continuation.as_mut().unwrap();
     for q in &mut state.charges {
         *q *= 2.0;

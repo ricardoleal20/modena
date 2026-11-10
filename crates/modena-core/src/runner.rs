@@ -20,6 +20,7 @@ use crate::composite::LongRangeForceModel;
 use crate::conservation::{
     ConservationApplicability, ConservationReport, EnergyErrorThresholds, EnergyMonitor,
 };
+use crate::constraint_stress::{BathImpulse, ProjectionReport};
 use crate::constraints::{Constraint, Constraints, RigidWater};
 use crate::error::{ModenaError, Result};
 use crate::ewald::EwaldForceModel;
@@ -31,6 +32,10 @@ use crate::io::input::{
     IntegratorSpec, InterpKindSpec, ModelSpec, RestartMode, RunSpec, StructureSpec, ThermostatSpec,
 };
 use crate::io::log::LogWriter;
+use crate::io::restart::{
+    load_with_stress, save_with_stress, stress_signature, Checkpoint, ContinuationState,
+    RestartStress, StressCheckpoint,
+};
 use crate::io::xyz::{read_xyz_with_identity, TrajectoryWriter};
 use crate::lattice::{fcc, random_alloy, rocksalt, water_lattice, AlloySpecies};
 use crate::neighbor::{NeighborList, PairScale};
@@ -42,8 +47,8 @@ use crate::potential::{
 };
 use crate::spme::SpmeForceModel;
 use crate::stress::{
-    endpoint_pressure, IntervalPressure, MissingTensor, MissingTensorReason, ModelEvaluation,
-    PressureObservation, TensorAvailability,
+    endpoint_pressure, ConstraintSolverOptions, IntervalPressure, MissingTensor,
+    MissingTensorReason, ModelEvaluation, PressureObservation, TensorAvailability,
 };
 use crate::system::{SimBox, System};
 use crate::thermo::Energies;
@@ -79,6 +84,8 @@ pub struct Simulation {
     model_generation: u64,
     endpoint: PressureObservation,
     interval: Option<IntervalPressure>,
+    last_stages: Vec<ProjectionReport>,
+    last_bath: Option<BathImpulse>,
     /// When `Some`, output (CSV log, trajectory, events) is converted from the
     /// internal reduced units back to real units for display. The physics stays
     /// reduced; only the rendered observables are scaled.
@@ -213,13 +220,23 @@ impl Simulation {
             system.atomic_numbers = spec.atomic_numbers.clone();
         }
         crate::config::validation::validate_system(config, &system)?;
-        let checkpoint = config
+        let loaded = config
             .run
             .restore_file
             .as_ref()
-            .map(|file| crate::io::restart::load(base_dir.join(file)))
+            .map(|file| load_with_stress(base_dir.join(file)))
             .transpose()?;
-        if checkpoint.as_ref().is_some_and(|cp| cp.atoms != system.n()) {
+        let checkpoint = loaded.as_ref().map(|cp| &cp.mechanical);
+        let saved_stress = loaded
+            .as_ref()
+            .and_then(|cp| cp.stress.as_ref())
+            .filter(|_| matches!(config.run.restart_mode, RestartMode::Continue));
+        if saved_stress.is_some_and(|s| s.solver != ConstraintSolverOptions::DEFAULT) {
+            return Err(ModenaError::Config(
+                "restart constraint solver options differ from the runner".into(),
+            ));
+        }
+        if checkpoint.is_some_and(|cp| cp.atoms != system.n()) {
             return Err(ModenaError::Config(
                 "restart atom count differs from the structure".into(),
             ));
@@ -385,7 +402,7 @@ impl Simulation {
         let com_eligible = !matches!(config.integrator, IntegratorSpec::LangevinBaoab { .. })
             && model.conserves_total_momentum(&system);
         system.set_conserved_com_dof(if com_eligible && system.n() > 1 { 3 } else { 0 })?;
-        let restored_step = if let Some(cp) = &checkpoint {
+        let restored_step = if let Some(cp) = checkpoint {
             system.positions = cp.positions.clone();
             system.velocities = cp.velocities.clone();
             system.box_size = cp.box_size;
@@ -437,16 +454,22 @@ impl Simulation {
         let mut barostat = build_barostat(&config.barostat)?;
 
         let mut restored_model = None;
-        if let Some(cp) = &checkpoint {
+        if let Some(cp) = checkpoint {
             match config.run.restart_mode {
                 RestartMode::Continue => {
                     let state=cp.continuation.as_ref().ok_or_else(||ModenaError::Config(
                         "legacy/mechanical checkpoint requires explicit restart_mode = \"state_only\"; full continuation state is absent".into()))?;
-                    if !checkpoint_signature_matches(
-                        config,
-                        &state.physical_signature,
-                        &physical_signature,
-                    ) || state.masses != system.masses
+                    let identity_matches = if saved_stress.is_some() {
+                        state.physical_signature == physical_signature
+                    } else {
+                        checkpoint_signature_matches(
+                            config,
+                            &state.physical_signature,
+                            &physical_signature,
+                        )
+                    };
+                    if !identity_matches
+                        || state.masses != system.masses
                         || state.species != system.species
                         || !(state.atomic_numbers == system.atomic_numbers
                             || (state.atomic_numbers.is_empty()
@@ -465,12 +488,32 @@ impl Simulation {
                         None => NoneThermostat.restore_state(&state.thermostat)?,
                     }
                     barostat.restore_state(&state.barostat)?;
+                    if saved_stress.is_some()
+                        && (integrator.checkpoint_state()? != state.integrator
+                            || thermostat
+                                .as_ref()
+                                .map(|t| t.checkpoint_state())
+                                .transpose()?
+                                .unwrap_or_default()
+                                != state.thermostat
+                            || barostat.checkpoint_state()? != state.barostat)
+                    {
+                        return Err(ModenaError::Config(
+                            "unrecognized or inconsistent v3 controller state".into(),
+                        ));
+                    }
                     system.forces = state.forces.clone();
-                    restored_model = Some(ModelEvaluation {
-                        energy: state.potential_energy,
-                        scalar_virial: state.virial,
-                        tensor: missing("v2 checkpoint", MissingTensorReason::LegacyRestart),
-                    });
+                    restored_model = Some(saved_stress.map_or_else(
+                        || ModelEvaluation {
+                            energy: state.potential_energy,
+                            scalar_virial: state.virial,
+                            tensor: missing(
+                                "legacy checkpoint",
+                                MissingTensorReason::LegacyRestart,
+                            ),
+                        },
+                        |s| s.model.clone(),
+                    ));
                 }
                 RestartMode::StateOnly => {
                     // State-only intentionally resets extended/RNG state; impose
@@ -518,7 +561,33 @@ impl Simulation {
         };
 
         check_setup_stop(stop)?;
-        let endpoint = endpoint_pressure(&system, &current_model, constraints.as_ref())?;
+        let (endpoint, interval, last_stages, last_bath) = if let Some(s) = saved_stress {
+            // Recompute only the deterministic mechanical reaction from saved q/v/F.
+            // A legacy integrator may have masked its endpoint even after a box refresh.
+            let endpoint_model = ModelEvaluation {
+                tensor: s.endpoint.model.clone(),
+                ..current_model.clone()
+            };
+            let expected = endpoint_pressure(&system, &endpoint_model, constraints.as_ref())?;
+            if expected != s.endpoint {
+                return Err(ModenaError::Config(
+                    "restart endpoint differs from saved mechanics".into(),
+                ));
+            }
+            (
+                s.endpoint.clone(),
+                s.interval.clone(),
+                s.last_stages.clone(),
+                s.last_bath.clone(),
+            )
+        } else {
+            (
+                endpoint_pressure(&system, &current_model, constraints.as_ref())?,
+                None,
+                Vec::new(),
+                None,
+            )
+        };
         let pressure_writer = if outputs {
             open_pressure_output(&config.run, base_dir)?
         } else {
@@ -583,7 +652,9 @@ impl Simulation {
             model_generation: 0,
             constraints,
             endpoint,
-            interval: None,
+            interval,
+            last_stages,
+            last_bath,
             pressure_writer,
             unit_factors: config.unit_factors,
             physical_signature,
@@ -638,41 +709,58 @@ impl Simulation {
 
     /// Rejects failed instances without opening the destination; a failed step
     /// may leave partial buffers and requires construction from a good checkpoint.
-    /// Atomically write v2 mechanical, identity, DOF, cached force, RNG and
+    /// Atomically write v3 pressure, mechanical, identity, DOF, cached force, RNG and
     /// extended state (reduced units) to `path`. Called by the run
     /// loop every `restart_every` steps and at run end; public for tests and
     /// callers that drive stepping manually.
     pub fn write_checkpoint(&self, path: &Path) -> Result<()> {
         self.ensure_usable()?;
         self.ensure_current_model()?;
-        crate::io::restart::save(
+        let mechanical = Checkpoint {
+            atoms: self.system.n(),
+            step: self.current_step,
+            time: self.current_step as f64 * self.dt,
+            box_size: self.system.box_size,
+            positions: self.system.positions.clone(),
+            velocities: self.system.velocities.clone(),
+            continuation: Some(ContinuationState {
+                forces: self.system.forces.clone(),
+                masses: self.system.masses.clone(),
+                species: self.system.species.clone(),
+                atomic_numbers: self.system.atomic_numbers.clone(),
+                charges: self.system.charges.clone(),
+                elements: self.system.elements.clone(),
+                constraint_count: self.system.constraint_count(),
+                conserved_com_dof: self.system.conserved_com_dof(),
+                potential_energy: self.current_model.energy,
+                virial: self.current_model.scalar_virial,
+                physical_signature: self.physical_signature.clone(),
+                integrator: self.integrator.checkpoint_state()?,
+                thermostat: match &self.thermostat {
+                    Some(t) => t.checkpoint_state()?,
+                    None => NoneThermostat.checkpoint_state()?,
+                },
+                barostat: self.barostat.checkpoint_state()?,
+            }),
+        };
+        let solver = ConstraintSolverOptions::DEFAULT;
+        let stress = RestartStress {
+            estimator_version: 1,
+            solver,
+            model: self.current_model.clone(),
+            endpoint: self.endpoint.clone(),
+            interval: self.interval.clone(),
+            last_stages: self.last_stages.clone(),
+            last_bath: self.last_bath.clone(),
+            step: self.current_step,
+            dt: self.dt,
+            physical_signature: stress_signature(&self.physical_signature, solver),
+        };
+        save_with_stress(
             path,
-            &crate::io::restart::Checkpoint {
-                atoms: self.system.n(),
-                step: self.current_step,
-                time: self.current_step as f64 * self.dt,
-                box_size: self.system.box_size,
-                positions: self.system.positions.clone(),
-                velocities: self.system.velocities.clone(),
-                continuation: Some(crate::io::restart::ContinuationState {
-                    forces: self.system.forces.clone(),
-                    masses: self.system.masses.clone(),
-                    species: self.system.species.clone(),
-                    atomic_numbers: self.system.atomic_numbers.clone(),
-                    charges: self.system.charges.clone(),
-                    elements: self.system.elements.clone(),
-                    constraint_count: self.system.constraint_count(),
-                    conserved_com_dof: self.system.conserved_com_dof(),
-                    potential_energy: self.current_model.energy,
-                    virial: self.current_model.scalar_virial,
-                    physical_signature: self.physical_signature.clone(),
-                    integrator: self.integrator.checkpoint_state()?,
-                    thermostat: match &self.thermostat {
-                        Some(t) => t.checkpoint_state()?,
-                        None => NoneThermostat.checkpoint_state()?,
-                    },
-                    barostat: self.barostat.checkpoint_state()?,
-                }),
+            &StressCheckpoint {
+                mechanical,
+                stress: Some(stress),
             },
         )
     }
@@ -865,15 +953,19 @@ impl Simulation {
             self.dt,
             &self.current_model,
         )?;
-        let (mut model, pre_controller_endpoint, mut interval) = match out.stress {
+        let (mut model, pre_controller_endpoint, mut interval, stages, bath) = match out.stress {
             Some(stress) => (
                 stress.final_model,
                 Some(stress.endpoint),
                 Some(stress.interval),
+                stress.stages,
+                stress.bath,
             ),
             None => (
                 legacy_missing(out.energies.potential, out.energies.virial),
                 None,
+                None,
+                Vec::new(),
                 None,
             ),
         };
@@ -919,6 +1011,8 @@ impl Simulation {
         self.current_model = model;
         self.model_generation = self.geometry_generation;
         self.interval = interval;
+        self.last_stages = stages;
+        self.last_bath = bath;
         Ok(self.energies())
     }
 

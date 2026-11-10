@@ -119,7 +119,13 @@ def verify_run(directory, stdout, identity, atoms, steps):
         raise ValueError('full-rate diagnostic sample count mismatch')
     header, payload = (directory / 'final.checkpoint').read_text().split('\n', 1)
     checkpoint = strict_json(payload)
-    if header != 'MODENA_RESTART 2' or checkpoint['step'] != steps or checkpoint['atoms'] != atoms:
+    if header == 'MODENA_RESTART 3':
+        if not isinstance(checkpoint, dict) or set(checkpoint) != {'mechanical', 'stress'}:
+            raise ValueError('invalid v3 checkpoint envelope')
+        checkpoint = checkpoint['mechanical']
+    elif header != 'MODENA_RESTART 2':
+        raise ValueError('unsupported checkpoint format')
+    if not isinstance(checkpoint, dict) or checkpoint['step'] != steps or checkpoint['atoms'] != atoms:
         raise ValueError('checkpoint step/atom/version mismatch')
     for values in [checkpoint['positions'], checkpoint['velocities'], checkpoint['continuation']['forces']]:
         if len(values) != atoms * 3 or any(type(x) not in (int, float) or not math.isfinite(x) for x in values):

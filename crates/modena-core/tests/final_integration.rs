@@ -236,7 +236,9 @@ fn unsupported_mesh_com_checkpoint_is_rejected_and_state_only_reassesses_model()
     s.write_checkpoint(&fixture.0.join("cp.chk")).unwrap();
     let path = fixture.0.join("cp.chk");
     let text = std::fs::read_to_string(&path).unwrap();
-    let mut cp: serde_json::Value = serde_json::from_str(text.split_once('\n').unwrap().1).unwrap();
+    let mut payload: serde_json::Value =
+        serde_json::from_str(text.split_once('\n').unwrap().1).unwrap();
+    let mut cp = payload["mechanical"].take();
     // Recreate old unsupported COM3 metadata, with exactly zero imported momentum.
     cp["continuation"]["conserved_com_dof"] = serde_json::json!(3);
     cp["velocities"] = serde_json::json!([1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0]);

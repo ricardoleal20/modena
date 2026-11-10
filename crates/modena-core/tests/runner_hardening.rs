@@ -267,7 +267,9 @@ fn intentional_protocol_switch_and_legacy_import_require_state_only() {
     let second = sim(&state_only, &d);
     assert_eq!(first.system().positions, second.system().positions);
     assert_eq!(first.system().velocities, second.system().velocities);
-    let mut legacy = modena_core::io::restart::load(d.join("cp.chk")).unwrap();
+    let mut legacy = modena_core::io::restart::load_with_stress(d.join("cp.chk"))
+        .unwrap()
+        .mechanical;
     legacy.continuation = None;
     // Genuine v1 imports lack atom/ensemble state and must opt in explicitly.
     let mut text = format!(
@@ -294,6 +296,10 @@ fn version_two_carries_atom_identity_and_rejects_corrupt_payloads() {
     let s = sim(BASE, &d);
     let p = d.join("cp.chk");
     s.write_checkpoint(&p).unwrap();
+    let mechanical = modena_core::io::restart::load_with_stress(&p)
+        .unwrap()
+        .mechanical;
+    modena_core::io::restart::save(&p, &mechanical).unwrap();
     let text = std::fs::read_to_string(&p).unwrap();
     assert!(text.starts_with("MODENA_RESTART 2\n"));
     let cp = modena_core::io::restart::load(&p).unwrap();

@@ -53,3 +53,65 @@ pub fn affine(source: &System, component: usize, eta: f64) -> System {
     }
     s
 }
+
+/// Frozen oblique free rotor from the B07 specification.
+pub fn rotor(m1: f64, m2: f64) -> (System, modena_core::constraints::Constraints) {
+    use modena_core::constraints::{Constraint, Constraints};
+    let r = Vec3::new(1., 2., 2.) * (1.3 / 3.);
+    let u = Vec3::new(2., -1., 0.) * (1.3 * 0.7 / 5_f64.sqrt());
+    let center = Vec3::new(5., 6., 7.);
+    let velocity = Vec3::new(0.2, -0.1, 0.3);
+    let mut s = atoms(
+        &[
+            (center - r * (m2 / (m1 + m2))).0,
+            (center + r * (m1 / (m1 + m2))).0,
+        ],
+        &[m1, m2],
+    );
+    s.set_vel(0, velocity - u * (m2 / (m1 + m2)));
+    s.set_vel(1, velocity + u * (m1 / (m1 + m2)));
+    (
+        s,
+        Constraints {
+            bonds: vec![Constraint { i: 0, j: 1, d: 1.3 }],
+            waters: vec![],
+        },
+    )
+}
+
+/// Oblique rigid triangle with the specification's principal-axis rotation.
+pub fn water(masses: [f64; 3]) -> (System, modena_core::constraints::Constraints) {
+    use modena_core::constraints::{Constraints, RigidWater};
+    let half = 109.47_f64.to_radians() / 2.;
+    let p = [
+        Vec3::zero(),
+        Vec3::new(half.cos(), half.sin(), 0.),
+        Vec3::new(half.cos(), -half.sin(), 0.),
+    ];
+    let center = (p[0] * masses[0] + p[1] * masses[1] + p[2] * masses[2])
+        * (1. / masses.iter().sum::<f64>());
+    let axis = Vec3::new(1., 2., 3.) * (1. / 14_f64.sqrt());
+    let rotate = |v: Vec3| {
+        v * 0.41_f64.cos()
+            + axis.cross(v) * 0.41_f64.sin()
+            + axis * (axis.dot(v) * (1. - 0.41_f64.cos()))
+    };
+    let omega = rotate(Vec3::new(0., 0., 0.7));
+    let mut s = atoms(&[[0.; 3]; 3], &masses);
+    for (i, x) in p.into_iter().enumerate() {
+        let rho = rotate(x - center);
+        s.set_pos(i, Vec3::new(5., 6., 7.) + rho);
+        s.set_vel(i, Vec3::new(0.2, -0.1, 0.3) + omega.cross(rho));
+    }
+    (
+        s,
+        Constraints {
+            bonds: vec![],
+            waters: vec![RigidWater {
+                first: 0,
+                d_oh: 1.,
+                d_hh: 2. * half.sin(),
+            }],
+        },
+    )
+}

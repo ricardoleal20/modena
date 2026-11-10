@@ -693,16 +693,7 @@ fn charged_scaled_translation_converges_on_fixed_ladder_to_independent_ewald() {
         let mut translation = Vec::new();
         for n in [8, 16, 32] {
             let values = [mesh_values(&f, n), mesh_values(&moved, n)];
-            let error = values
-                .iter()
-                .zip(&references)
-                .flat_map(|(a, b)| a.iter().zip(b).map(|(x, y)| (x - y).abs()))
-                .fold(0., f64::max);
-            let movement = values[0]
-                .iter()
-                .zip(&values[1])
-                .map(|(x, y)| (x - y).abs())
-                .fold(0., f64::max);
+            let (error, movement) = mesh_component_errors(&values, &references);
             println!("mesh convergence fixture={} mesh={n} max_EFS_error={error:.16e} max_translation_change={movement:.16e} original_EFS={:?} translated_EFS={:?}",f.name,values[0],values[1]);
             errors.push(error);
             translation.push(movement);
@@ -824,4 +815,111 @@ fn scientific_aggregate(statuses: &[ScientificStatus]) -> ScientificStatus {
     } else {
         ScientificStatus::Failed
     }
+}
+
+fn mesh_component_errors(values: &[Vec<f64>; 2], references: &[Vec<f64>]) -> (f64, f64) {
+    // Validate every raw E/F/S value before reducing: f64::max would otherwise
+    // discard NaN, and zip would silently discard a mismatched trailing value.
+    let components = values[0].len();
+    let invalid = (f64::INFINITY, f64::INFINITY);
+    if components == 0
+        || references.len() != values.len()
+        || values
+            .iter()
+            .chain(references)
+            .any(|row| row.len() != components || row.iter().any(|value| !value.is_finite()))
+    {
+        return invalid;
+    }
+    let mut error: f64 = 0.;
+    for (measured, reference) in values.iter().zip(references) {
+        for (x, y) in measured.iter().zip(reference) {
+            let component_error = (x - y).abs();
+            if !component_error.is_finite() {
+                return invalid; // finite inputs can still overflow subtraction
+            }
+            error = error.max(component_error);
+        }
+    }
+    let mut movement: f64 = 0.;
+    for (x, y) in values[0].iter().zip(&values[1]) {
+        let component_movement = (x - y).abs();
+        if !component_movement.is_finite() {
+            return invalid;
+        }
+        movement = movement.max(component_movement);
+    }
+    (error, movement)
+}
+
+#[test]
+fn component_pipeline_rejects_nonfinite_measured_and_reference_values() {
+    // E, nine Cartesian force values, then six tensor components. Every
+    // injection passes through the same component reduction as the real ladder.
+    let values = [vec![0.; 16], vec![1e-5; 16]];
+    let references = [vec![0.; 16], vec![0.; 16]];
+    let classify = |values: &[Vec<f64>; 2], reference: &[Vec<f64>]| {
+        let (error, translation) = mesh_component_errors(values, reference);
+        classify_mesh_ladder([1e-2, 1e-3, error], [1e-2, 1e-3, translation])
+    };
+    assert_eq!(classify(&values, &references), ScientificStatus::Passed);
+    for measured in [true, false] {
+        for row in 0..2 {
+            for component in 0..16 {
+                for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                    let mut bad_values = values.clone();
+                    let mut bad_reference = references.clone();
+                    if measured {
+                        bad_values[row][component] = invalid;
+                    } else {
+                        bad_reference[row][component] = invalid;
+                    }
+                    assert_eq!(
+                        classify(&bad_values, &bad_reference),
+                        ScientificStatus::Failed,
+                        "measured={measured} row={row} component={component} value={invalid}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn component_pipeline_rejects_shapes_and_nonfinite_derived_differences() {
+    let values = [vec![0.; 16], vec![1e-5; 16]];
+    let references = [vec![0.; 16], vec![0.; 16]];
+    assert_eq!(mesh_component_errors(&values, &references), (1e-5, 1e-5));
+    let invalid = (f64::INFINITY, f64::INFINITY);
+    assert_eq!(mesh_component_errors(&values, &references[..1]), invalid);
+    assert_eq!(
+        mesh_component_errors(&[vec![], vec![]], &[vec![], vec![]]),
+        invalid
+    );
+    for measured in [true, false] {
+        let mut bad_values = values.clone();
+        let mut bad_reference = references.clone();
+        if measured {
+            bad_values[1].push(f64::NAN);
+        } else {
+            bad_reference[1].push(f64::NAN);
+        }
+        assert_eq!(mesh_component_errors(&bad_values, &bad_reference), invalid);
+    }
+    // Both raw inputs are finite, but the E/F/S comparison overflows.
+    let mut extreme_values = values.clone();
+    let mut extreme_reference = references.clone();
+    extreme_values[0][0] = f64::MAX;
+    extreme_reference[0][0] = -f64::MAX;
+    assert_eq!(
+        mesh_component_errors(&extreme_values, &extreme_reference),
+        invalid
+    );
+    // Each reference comparison is exactly zero; only translation overflows.
+    extreme_values[1][0] = -f64::MAX;
+    extreme_reference = extreme_values.clone();
+    assert_eq!(
+        mesh_component_errors(&extreme_values, &extreme_reference),
+        invalid
+    );
 }

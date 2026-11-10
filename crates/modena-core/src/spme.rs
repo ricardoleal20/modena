@@ -38,6 +38,76 @@ use rayon::prelude::*;
 
 use num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
+/// Per-call diagnostic durations. FFT phases include their transposes; total
+/// includes observer overhead and need not equal the sum of the other fields.
+#[derive(Clone, Debug, Default)]
+pub struct SpmeProfile {
+    pub neighbor: std::time::Duration,
+    pub real_space: std::time::Duration,
+    pub pair_correction: std::time::Duration,
+    pub workspace_setup: std::time::Duration,
+    pub influence_setup: std::time::Duration,
+    pub spread: std::time::Duration,
+    pub fft_forward: std::time::Duration,
+    pub influence: std::time::Duration,
+    pub fft_inverse: std::time::Duration,
+    pub gather: std::time::Duration,
+    pub self_background: std::time::Duration,
+    pub total: std::time::Duration,
+}
+
+#[derive(Clone, Copy)]
+enum Phase {
+    Neighbor,
+    RealSpace,
+    PairCorrection,
+    WorkspaceSetup,
+    InfluenceSetup,
+    Spread,
+    FftForward,
+    Influence,
+    FftInverse,
+    Gather,
+    SelfBackground,
+}
+
+// Static dispatch keeps the ordinary specialization free of clocks and profile storage.
+trait Observer {
+    type Stamp;
+    fn start(&self) -> Self::Stamp;
+    fn finish(&mut self, phase: Phase, start: Self::Stamp);
+}
+struct Noop;
+impl Observer for Noop {
+    type Stamp = ();
+    #[inline(always)]
+    fn start(&self) {}
+    #[inline(always)]
+    fn finish(&mut self, _: Phase, _: ()) {}
+}
+impl Observer for SpmeProfile {
+    type Stamp = std::time::Instant;
+    fn start(&self) -> Self::Stamp {
+        std::time::Instant::now()
+    }
+    fn finish(&mut self, phase: Phase, start: Self::Stamp) {
+        let field = match phase {
+            Phase::Neighbor => &mut self.neighbor,
+            Phase::RealSpace => &mut self.real_space,
+            Phase::PairCorrection => &mut self.pair_correction,
+            Phase::WorkspaceSetup => &mut self.workspace_setup,
+            Phase::InfluenceSetup => &mut self.influence_setup,
+            Phase::Spread => &mut self.spread,
+            Phase::FftForward => &mut self.fft_forward,
+            Phase::Influence => &mut self.influence,
+            Phase::FftInverse => &mut self.fft_inverse,
+            Phase::Gather => &mut self.gather,
+            Phase::SelfBackground => &mut self.self_background,
+        };
+        *field += start.elapsed();
+    }
+}
+
 /// Cubic (order-4) B-spline weights at fractional `u ∈ [0,1)` for the four
 /// node offsets `{-1, 0, 1, 2}`. Sums to 1 exactly.
 #[inline]
@@ -63,11 +133,20 @@ pub fn spme_reciprocal_energy(
 ) -> Result<f64> {
     let _ = kcut; // mesh dimensions define this finite reciprocal functional
     let mut workspace = SpmeWorkspace::new(mesh)?;
-    Ok(reciprocal_pass(kappa, box_size, positions, charges, &mut [], &mut workspace)?.0)
+    Ok(reciprocal_pass(
+        kappa,
+        box_size,
+        positions,
+        charges,
+        &mut [],
+        &mut workspace,
+        &mut Noop,
+    )?
+    .0)
 }
 
 // ---------------------------------------------------------------------------
-// Stage B/C: full `SpmeForceModel` — forces (ik-differentiation), strain-form
+// Stage B/C: full `SpmeForceModel` — forces (analytic B-spline differentiation), strain-form
 // reciprocal virial, and real-space/self/background wiring.
 // ---------------------------------------------------------------------------
 
@@ -173,6 +252,110 @@ impl SpmeForceModel {
         self.real_cutoff
     }
 
+    /// Opt-in actual phase timings. Ordinary `ForceModel::compute` uses a
+    /// separate compile-time no-op observer and never reads the profile clock.
+    pub fn compute_profiled(
+        &self,
+        system: &mut System,
+        virial: &mut Virial,
+        neighbors: &mut crate::neighbor::NeighborList,
+    ) -> Result<(f64, SpmeProfile)> {
+        let started = std::time::Instant::now();
+        let mut profile = SpmeProfile::default();
+        let energy = self.compute_observed(system, virial, neighbors, &mut profile)?;
+        profile.total = started.elapsed();
+        Ok((energy, profile))
+    }
+
+    fn compute_observed<O: Observer>(
+        &self,
+        system: &mut System,
+        virial: &mut Virial,
+        neighbors: &mut crate::neighbor::NeighborList,
+        observer: &mut O,
+    ) -> Result<f64> {
+        if system.box_size.is_triclinic() {
+            return Err(ModenaError::Config(
+                "SPME supports orthorhombic boxes only (triclinic given)".into(),
+            ));
+        }
+        let started = observer.start();
+        neighbors.build(system);
+        let policy =
+            crate::ewald::CoulombPolicy::new(&self.pair_scales, neighbors.scales(), system.n())?;
+        observer.finish(Phase::Neighbor, started);
+        let n = system.n();
+        if n == 0 {
+            return Ok(0.0);
+        }
+        // Real-space erfc + self/background (identical to Ewald). Split the
+        // force buffer separately so positions/charges stay shared borrows.
+        let forces = &mut system.forces;
+        let started = observer.start();
+        let (u_real, w_real) = self.real_space(
+            system.box_size,
+            &system.positions,
+            &system.charges,
+            neighbors,
+            &policy,
+            forces,
+        );
+        observer.finish(Phase::RealSpace, started);
+        let started = observer.start();
+        let (u_excl, w_excl) = crate::ewald::exclusion_correction(
+            self.kappa,
+            &system.box_size,
+            &system.positions,
+            &system.charges,
+            self.real_cutoff,
+            policy.entries(),
+            forces,
+        );
+        observer.finish(Phase::PairCorrection, started);
+        let u_real = u_real + u_excl;
+        let w_real = w_real + w_excl;
+        // Reciprocal on the mesh. The 4-tap stencil needs ≥4 planes per axis
+        // to resolve anything; a smaller mesh means the k-space cutoff is too
+        // small for the box (raise it, or use the default direct Ewald).
+        let started = observer.start();
+        let mesh = mesh_for_box(&system.box_size, self.kspace_cutoff);
+        if mesh[0] < 4 || mesh[1] < 4 || mesh[2] < 4 {
+            return Err(ModenaError::Config(format!(
+                "SPME mesh {:?} too small for the box (kspace_cutoff {}); \
+                 need >= 4 planes per axis",
+                mesh, self.kspace_cutoff
+            )));
+        }
+        // The lock covers key validation through FFT/influence use, so a
+        // shared model cannot mix another simulation's mesh or box state.
+        let (u_rec, w_rec) = {
+            let mut guard = self.workspace.lock().unwrap();
+            if guard.as_ref().is_none_or(|w| w.mesh != mesh) {
+                *guard = Some(SpmeWorkspace::new(mesh)?);
+            }
+            observer.finish(Phase::WorkspaceSetup, started);
+            reciprocal_pass(
+                self.kappa,
+                &system.box_size,
+                &system.positions,
+                &system.charges,
+                forces,
+                guard.as_mut().unwrap(),
+                observer,
+            )?
+        };
+        let started = observer.start();
+        let u_self = -(self.kappa / std::f64::consts::PI.sqrt())
+            * system.charges.iter().map(|q| q * q).sum::<f64>();
+        let v = system.box_size.volume();
+        let sum_q: f64 = system.charges.iter().sum();
+        let u_bg = -std::f64::consts::PI / (2.0 * v * self.kappa * self.kappa) * sum_q * sum_q;
+
+        virial.w += w_real + w_rec + 3.0 * u_bg;
+        observer.finish(Phase::SelfBackground, started);
+        Ok(u_real + u_rec + u_self + u_bg)
+    }
+
     fn real_space(
         &self,
         box_size: SimBox,
@@ -230,75 +413,7 @@ impl ForceModel for SpmeForceModel {
         virial: &mut Virial,
         neighbors: &mut crate::neighbor::NeighborList,
     ) -> Result<f64> {
-        if system.box_size.is_triclinic() {
-            return Err(ModenaError::Config(
-                "SPME supports orthorhombic boxes only (triclinic given)".into(),
-            ));
-        }
-        neighbors.build(system);
-        let policy =
-            crate::ewald::CoulombPolicy::new(&self.pair_scales, neighbors.scales(), system.n())?;
-        let n = system.n();
-        if n == 0 {
-            return Ok(0.0);
-        }
-        // Real-space erfc + self/background (identical to Ewald). Split the
-        // force buffer separately so positions/charges stay shared borrows.
-        let forces = &mut system.forces;
-        let (u_real, w_real) = self.real_space(
-            system.box_size,
-            &system.positions,
-            &system.charges,
-            neighbors,
-            &policy,
-            forces,
-        );
-        let (u_excl, w_excl) = crate::ewald::exclusion_correction(
-            self.kappa,
-            &system.box_size,
-            &system.positions,
-            &system.charges,
-            self.real_cutoff,
-            policy.entries(),
-            forces,
-        );
-        let u_real = u_real + u_excl;
-        let w_real = w_real + w_excl;
-        // Reciprocal on the mesh. The 4-tap stencil needs ≥4 planes per axis
-        // to resolve anything; a smaller mesh means the k-space cutoff is too
-        // small for the box (raise it, or use the default direct Ewald).
-        let mesh = mesh_for_box(&system.box_size, self.kspace_cutoff);
-        if mesh[0] < 4 || mesh[1] < 4 || mesh[2] < 4 {
-            return Err(ModenaError::Config(format!(
-                "SPME mesh {:?} too small for the box (kspace_cutoff {}); \
-                 need >= 4 planes per axis",
-                mesh, self.kspace_cutoff
-            )));
-        }
-        // The lock covers key validation through FFT/influence use, so a
-        // shared model cannot mix another simulation's mesh or box state.
-        let (u_rec, w_rec) = {
-            let mut guard = self.workspace.lock().unwrap();
-            if guard.as_ref().is_none_or(|w| w.mesh != mesh) {
-                *guard = Some(SpmeWorkspace::new(mesh)?);
-            }
-            reciprocal_pass(
-                self.kappa,
-                &system.box_size,
-                &system.positions,
-                &system.charges,
-                forces,
-                guard.as_mut().unwrap(),
-            )?
-        };
-        let u_self = -(self.kappa / std::f64::consts::PI.sqrt())
-            * system.charges.iter().map(|q| q * q).sum::<f64>();
-        let v = system.box_size.volume();
-        let sum_q: f64 = system.charges.iter().sum();
-        let u_bg = -std::f64::consts::PI / (2.0 * v * self.kappa * self.kappa) * sum_q * sum_q;
-
-        virial.w += w_real + w_rec + 3.0 * u_bg;
-        Ok(u_real + u_rec + u_self + u_bg)
+        self.compute_observed(system, virial, neighbors, &mut Noop)
     }
 }
 
@@ -519,16 +634,25 @@ pub fn spme_reciprocal_forces(
     forces: &mut [f64],
 ) -> Result<(f64, f64)> {
     let mut workspace = SpmeWorkspace::new(mesh)?;
-    reciprocal_pass(kappa, box_size, positions, charges, forces, &mut workspace)
+    reciprocal_pass(
+        kappa,
+        box_size,
+        positions,
+        charges,
+        forces,
+        &mut workspace,
+        &mut Noop,
+    )
 }
 
-fn reciprocal_pass(
+fn reciprocal_pass<O: Observer>(
     kappa: f64,
     box_size: &SimBox,
     positions: &[f64],
     charges: &[f64],
     forces: &mut [f64],
     workspace: &mut SpmeWorkspace,
+    observer: &mut O,
 ) -> Result<(f64, f64)> {
     if box_size.is_triclinic()
         || box_size.size.0.iter().any(|x| !x.is_finite() || *x <= 0.0)
@@ -545,7 +669,10 @@ fn reciprocal_pass(
             "SPME positions/charges/force lengths differ".into(),
         ));
     }
+    let started = observer.start();
     workspace.prepare_workers();
+    observer.finish(Phase::WorkspaceSetup, started);
+    let started = observer.start();
     let mesh = workspace.mesh;
     let [n0, n1, n2] = mesh;
     let l = box_size.size.0;
@@ -558,6 +685,8 @@ fn reciprocal_pass(
     {
         workspace.influence = Some((key, influence_factors(kappa, box_size, mesh)));
     }
+    observer.finish(Phase::InfluenceSetup, started);
+    let started = observer.start();
     let SpmeWorkspace {
         fwd,
         bwd,
@@ -595,6 +724,8 @@ fn reciprocal_pass(
         }
     }
 
+    observer.finish(Phase::Spread, started);
+    let started = observer.start();
     // --- 2. forward FFT: axes 2/1 on the L0 grid, then transpose to L1 ---
     // ([n2][n1][n0]) and transform axis 0 contiguously — no serial axis pass
     // remains; both grid buffers persist in the owned workspace.
@@ -604,6 +735,8 @@ fn reciprocal_pass(
     transpose_021(grid, l1, mesh, parallel);
     fft_contiguous(l1, fwd[0].as_ref(), n0, parallel, workers);
 
+    observer.finish(Phase::FftForward, started);
+    let started = observer.start();
     // --- 3. k-pass (in the L1 layout): energy + strain virial + Q̂' in place.
     // (influence factors cached per (κ, box, mesh), in L1 order). ---
     let infl = &influence.as_ref().unwrap().1;
@@ -626,10 +759,12 @@ fn reciprocal_pass(
         *dst = qhat * f;
     }
 
+    observer.finish(Phase::Influence, started);
     if forces.is_empty() {
         return Ok((e, wr));
     }
 
+    let started = observer.start();
     // --- 4. inverse FFT: axis 0 contiguous on L1, transpose back into the
     // spread grid's allocation, axes 1/2 on L0 → Re[Φ]. ---
     fft_contiguous(l1, bwd[0].as_ref(), n0, parallel, workers);
@@ -638,6 +773,8 @@ fn reciprocal_pass(
     fft_contiguous(grid, bwd[2].as_ref(), n2, parallel, workers);
     let phi = grid;
 
+    observer.finish(Phase::FftInverse, started);
+    let started = observer.start();
     // --- 5. force assembly via the B-spline weight derivatives. ---
     // F_i = −2·q_i·Σ_{m∈stencil} ∂W_i(m)/∂r_i · Re[Φ(m)].
     // ∂W/∂r_a = (N_a/L_a)·w′_{ka}(u_a)·∏_{b≠a} w_{kb}(u_b)
@@ -681,6 +818,7 @@ fn reciprocal_pass(
         forces[3 * i + 1] += fv.0[1];
         forces[3 * i + 2] += fv.0[2];
     }
+    observer.finish(Phase::Gather, started);
     Ok((e, wr))
 }
 
@@ -792,7 +930,7 @@ mod tests {
         sys
     }
 
-    /// Stage B gate: the ik-differentiated mesh forces are the exact derivative
+    /// Stage B gate: the analytically differentiated mesh forces are the exact derivative
     /// of the SAME mesh energy functional (the never-separate-U/F-interpolants
     /// rule from the engine research — FD of `spme_reciprocal_energy` vs
     /// `spme_reciprocal_forces`, same κ and mesh).

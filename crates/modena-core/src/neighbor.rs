@@ -274,9 +274,10 @@ impl NeighborList {
         Self::with_skin(cutoff, 0.0)
     }
 
-    /// Select a diagnostic request. Auto and forced FractionalStencil currently
-    /// execute Scalar; reports always name the actual builder. Changing the
-    /// request invalidates the cached list so the next build honors it.
+    /// Select a diagnostic request. Auto remains Scalar. Forced FractionalStencil
+    /// attempts the certified stencil, with safety/cost fallbacks to Scalar;
+    /// reports always name the actual builder. Changing the request invalidates
+    /// the cached list so the next build honors it.
     #[cfg(feature = "neighbor-diagnostics")]
     pub fn with_triclinic_strategy_for_diagnostics(
         mut self,

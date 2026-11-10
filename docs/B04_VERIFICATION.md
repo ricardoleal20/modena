@@ -941,7 +941,10 @@ and failed E0514 against Rust 1.97.1; that failed receipt is retained. A narrow
 only by the documentation recheck. No cargo clean, broad test repetition,
 production source change or timing rerun was performed.
 
-Native checks emitted no warning diagnostics. The historical upstream
+Native compiler and Clippy checks emitted no warning diagnostics. The retained
+full-core proptest receipt contains five `FileFailurePersistence` diagnostics
+(`proptest: FileFailurePersistence::SourceParallel set, but failed to find
+lib.rs or main.rs.`); these do not change the check results. The historical upstream
 MACE/TorchScript annotation warnings remain disclosed and were not resolved by
 changing pins or suppressing warnings. The official driver captures helper
 stderr internally on success; absence from its success log does not establish
@@ -949,6 +952,11 @@ that the dependency warning was removed. Existing pinned environments and
 dependency/source receipts were reused; no weights/packages were downloaded.
 Stable final checks are fresh; earlier Rust 1.90 evidence retains its own
 historical execution epoch and is not relabeled as a Task8 rerun.
+
+This documentation-only revision clarifies the warning receipt and diagnostic
+API rustdoc. It does not change the measured frozen `f56f288` source/binary
+epoch or add numerical validation; G1–G3 remain historical/fresh-at-Task8
+results, and G4 remains not passed with Auto Scalar.
 
 Unchanged thresholds: graph vectors atol=rtol=2e-12; MACE E/F atol=rtol=1e-10 and finite differences 1e-6; classical component normalization threshold 1e-10; initial cutoff margin >1e-8. No tolerance was widened.
 

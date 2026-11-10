@@ -688,3 +688,9 @@ complete-family-memory acceptance claim. Family orchestration must retain the
 budget context, caller-owned capacities and elapsed time across phases. No
 candidate SPME evaluation, ranking, target acceptance, phase profiling, production
 convergence workflow or full-campaign claim is made by these oracle regressions.
+
+### Post-B04 integration and main-campaign preset, 2026-11-09
+
+B05 Tasks1–3 were rebased onto integrated main `4fcca11527d62402d23a810a573f9bf45dc6540e` before Task4. All eight B05-owned files and the entire B05 patch remained byte-identical during synchronization; the prior approved implementation is preserved. The production SPME/Ewald/input/runner/pair-policy interfaces are unchanged. Earlier prepared/reference artifacts retain their original source epochs and are not reused as current-source certification.
+
+The forthcoming main families at both thread counts use the already defined `--reference-extended` option, chosen before any SPME candidate outcome: `(R/a,K*a)=(4,8),(5,10),(6,12),(7,14),(8,16),(9,18)`, kappa*a1.1, and both cross-kappa*a.9/1.3 checks. The failed four-level reference remains a negative result. All work/memory/time caps, tolerances, fixture seeds, candidate tuples and held-out roles remain unchanged. New current-source prepare artifacts must precede candidate evaluations. This preset does not assert convergence or target attainment; failures still block calibration.

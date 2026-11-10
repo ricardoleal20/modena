@@ -1153,14 +1153,19 @@ pub fn compare_madelung_replication(
         .as_ref()
         .ok_or_else(|| invalid("right Madelung sanity"))?
         .actual;
+    Ok(madelung_replication_check(a, b))
+}
+
+/// Pure comparison boundary, after the caller has validated both crystal proofs.
+pub(super) fn madelung_replication_check(a: f64, b: f64) -> PhysicalCheck {
     let tolerance = 1e-9 / A;
-    Ok(PhysicalCheck {
+    PhysicalCheck {
         label: "Madelung finite-cell replication sanity".into(),
         actual: a,
         expected: b,
         tolerance,
         passed: (a - b).abs() <= tolerance,
-    })
+    }
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ import tempfile
 import os
 import subprocess
 import unittest
+from unittest import mock
 SPEC = importlib.util.spec_from_file_location("spme_campaign", Path(__file__).resolve().parents[1] / "spme_calibration_campaign.py")
 M = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(M)
@@ -71,11 +72,14 @@ class LauncherTests(unittest.TestCase):
                 if phase=="sweep": code=4
                 if family=="ortho" and threads==1 and "ortho-2-" in str(out) and phase=="sweep": code=86
                 if phase=="profile": (dest/"phase-times.jsonl").write_text("{}\n")
+            elif phase=="report":
+                dest=Path(flags["--out"]); dest.mkdir()
+                for name in M.REPORT_FILES: (dest/name).write_text("{}\n")
             return {"phase":phase,"actual_child_exit":code,"monitor_exit":0,"wrapper_exit":0,"peak_rss_bytes":1000000,"active_ns":13,"timed_out":False,"command":command,"stdout":"fixture.stdout","stderr":"fixture.stderr"}
         with tempfile.TemporaryDirectory() as tmp:
             binary=Path(tmp)/"fake-binary"; binary.write_bytes(b"registered executable")
             campaign=M.Campaign(Path(tmp),M.artifact(binary),stub)
-            campaign.run()
+            self.assertEqual(campaign.run(),0)
             for threads in M.THREADS:
                 calls_t=[c for c in calls if c[1]==threads]
                 self.assertEqual(calls_t[0][:3],("special",threads,"prepare"))
@@ -111,9 +115,87 @@ class ReviewRegressionTests(unittest.TestCase):
                 previous=Path(flags["--protocol"]).parent/"verification.json" if phase=="sweep" else Path(flags["--campaign"])
                 M.write_new(dest/"summary.json",{"phase":phase,"usage":M.empty_usage(),"prior":M.artifact(previous),"inputs":{},"artifacts":{},"failure":None,"finalization_failure":None})
                 if phase=="profile":(dest/"phase-times.jsonl").write_text("{}\n")
+            elif phase=="report" and "--out" in flags:
+                dest=Path(flags["--out"]);dest.mkdir()
+                for name in M.REPORT_FILES: (dest/name).write_text("{}\n")
             hook(key,phase,flags,row,remaining)
             return row
         return M.Campaign(Path(tmp),M.artifact(binary),stub),calls,binary
+
+    def test_preparation_failures_have_final_roster_outcome(self):
+        for key in ("ortho-2-threads-1", "special-2-threads-1"):
+            for failure in ("exit1", "exit4", "missing", "spawn"):
+                with self.subTest(key=key, failure=failure), tempfile.TemporaryDirectory() as tmp:
+                    def fail_prepare(current,phase,flags,row,remaining):
+                        if current==key and phase=="prepare":
+                            if failure=="missing": (Path(flags["--out"])/"manifest.json").unlink()
+                            elif failure=="spawn": raise OSError("injected prepare spawn error")
+                            else: row["actual_child_exit"] = 1 if failure=="exit1" else 4
+                    campaign,calls,_=self.drive_stub(tmp,fail_prepare)
+                    self.assertEqual(campaign.run(),1)
+                    outcome=json.loads((Path(tmp)/"outcome.json").read_text())
+                    self.assertFalse(outcome["success"])
+                    self.assertEqual(outcome["exit_code"],1)
+                    self.assertEqual(len(outcome["slots"]),10)
+                    failed=[slot for slot in outcome["slots"] if not slot["complete"]]
+                    self.assertEqual(len(failed),1)
+                    self.assertFalse(failed[0]["preparation"]["complete"])
+                    self.assertFalse(failed[0]["report"]["attempted"])
+                    self.assertEqual(sum(c[1]=="report" for c in calls),9)
+                    self.assertTrue(any(c[:2]==("ortho-3-threads-4","report") for c in calls))
+
+    def test_report_operational_failures_do_not_skip_independent_slots(self):
+        for failure in ("exit1", "exit4", "timeout", "monitor", "wrapper", "rss", "missing", "spawn"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                field,value={"exit1":("actual_child_exit",1), "exit4":("actual_child_exit",4),
+                             "timeout":("timed_out",True), "monitor":("monitor_exit",1),
+                             "wrapper":("wrapper_exit",1), "rss":("peak_rss_bytes",None)}.get(failure,(None,None))
+                def fail_report(key,phase,flags,row,remaining):
+                    if phase=="report":
+                        if failure=="missing": (Path(flags["--out"])/"summary.json").unlink()
+                        elif failure=="spawn": raise OSError("injected report spawn error")
+                        else:
+                            row[field]=value
+                campaign,calls,_=self.drive_stub(tmp,fail_report)
+                self.assertEqual(campaign.run(),1)
+                self.assertEqual(sum(c[1]=="report" for c in calls),10)
+                outcome=json.loads((Path(tmp)/"outcome.json").read_text())
+                self.assertFalse(outcome["success"])
+                for slot in outcome["slots"]:
+                    self.assertTrue(slot["preparation"]["complete"])
+                    self.assertTrue(slot["report"]["attempted"])
+                    self.assertFalse(slot["report"]["complete"])
+                    if failure not in ("spawn", "missing"):
+                        self.assertEqual(slot["report"]["process"][field],value)
+
+    def test_complete_scientific_failure_reports_are_successful_orchestration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            def fail_science(key,phase,flags,row,remaining):
+                if phase=="sweep": row["actual_child_exit"]=3
+            campaign,calls,_=self.drive_stub(tmp,fail_science)
+            self.assertEqual(campaign.run(),0)
+            outcome=json.loads((Path(tmp)/"outcome.json").read_text())
+            self.assertTrue(outcome["success"])
+            self.assertTrue(outcome["scientific_status_separate"])
+            self.assertEqual(sum(c[1]=="report" for c in calls),10)
+            for slot in outcome["slots"]:
+                self.assertTrue(slot["complete"])
+                self.assertEqual(set(slot["report"]["artifacts"]),set(M.REPORT_FILES))
+                self.assertTrue(any(row["actual_child_exit"]==3 for row in slot["processes"]))
+
+    def test_main_returns_aggregate_exit_and_releases_lease(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); target=root/"target/b05-build"
+            binary=target/"release/examples/spme_convergence"
+            binary.parent.mkdir(parents=True);binary.write_bytes(b"fixture executable")
+            protocol=root/"docs/scientific-hardening/B05-SPME-PROTOCOL.md"
+            protocol.parent.mkdir(parents=True);protocol.write_text("fixture protocol")
+            with mock.patch.object(M,"ROOT",root), mock.patch.object(M.sys,"platform","darwin"), \
+                 mock.patch.object(M,"source_inventory",return_value={}), mock.patch.object(M.subprocess,"run"), \
+                 mock.patch.object(M,"Campaign") as campaign:
+                campaign.return_value.run.return_value=1
+                self.assertEqual(M.main(["--out",str(root/"campaign")]),1)
+            self.assertFalse((target/"spme-calibration.lease").exists())
 
     def test_exhausted_timeout_reports_and_continues(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -177,6 +259,55 @@ class ReviewRegressionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"artifact.*changed"):
                 M.failed_receipt(prepared,out,"verify",None,{"actual_child_exit":1,"timed_out":False},1,saved)
             self.assertFalse((out/"process-failure.json").exists())
+
+    @unittest.skipUnless(os.environ.get("MODENA_B05_REPORT_BINARY"),"requires explicit report-only helper executable")
+    def test_real_report_elapsed_includes_profile_and_checked_parent(self):
+        binary=os.environ["MODENA_B05_REPORT_BINARY"]
+        for parent_ns, expected, invalid in ((340,340,None), (300,320,None),
+                                            (2**64-1,None,"overflow"), (340,None,"identity")):
+            with self.subTest(parent_ns=parent_ns,invalid=invalid), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);prepared=root/"prepared"
+                subprocess.run([binary,"prepare","--out",str(prepared),"--family","special","--replicas","2","--threads","1","--reference-extended"],check=True,capture_output=True)
+                epoch=M.digest(prepared/"manifest.json")
+                usage=M.empty_usage();usage["candidate"]["reference"]["elapsed_ns"]=100
+                confirm=root/"confirm.json"
+                receipt={"schema":"modena-spme-phase-v1","phase":"confirm","prepared":str(prepared),"manifest_sha256":epoch,"prior":None,"inputs":{},"artifacts":{},"usage":usage,"failure":None,"finalization_failure":None}
+                M.write_new(confirm,receipt)
+                profile=root/"profile";profile.mkdir();data=profile/"phase-times.jsonl"
+                snapshots=json.loads((prepared/"snapshots.json").read_text())
+                representative=next(s["id"] for s in snapshots if s["role"]=="Selection")
+                # Synthetic successful schedule/receipt: no measured phase timings
+                # or physical proofs are created by this report-only control.
+                with data.open("w") as stream:
+                    for i in range(106):
+                        sample={"stage":"cold" if i==0 else "warmup" if i<=5 else "batch",
+                                "batch":None if i<=5 else (i-6)//20,
+                                "call":0 if i==0 else i-1 if i<=5 else (i-6)%20,
+                                "record":{"candidate_id":126,"snapshot_id":representative,"threads":1,
+                                          "cold":i==0,"calls":1,"phases_ns":[[0]*12]}}
+                        stream.write(json.dumps(sample)+"\n")
+                usage["candidate"]["reference"]["elapsed_ns"]=320;usage["profile_calls"]=106
+                receipt.update(phase="profile",prior=M.artifact(confirm),artifacts={"profiles":M.artifact(data)})
+                profile_receipt=profile/"summary.json";M.write_new(profile_receipt,receipt)
+                rows=[]
+                for phase,elapsed in (("prepare",9999),("verify",1),("sweep",1),("confirm",1),("profile",parent_ns-3),("report",9999)):
+                    rows.append({"phase":phase,"actual_child_exit":0,"monitor_exit":0,"wrapper_exit":0,"peak_rss_bytes":1000,"active_ns":elapsed,"timed_out":False,"command":[],"stdout":"fixture.stdout","stderr":"fixture.stderr"})
+                if invalid=="overflow": rows[1]["active_ns"]+=1
+                memory=root/"memory.json"
+                M.write_new(memory,{"schema":"modena-spme-memory-v1","manifest_sha256":"other" if invalid=="identity" else epoch,"children":rows})
+                result=subprocess.run([binary,"report","--campaign",str(confirm),"--expected-sha256",M.digest(confirm),"--profiles",str(data),"--profiles-sha256",M.digest(data),"--profile-receipt-sha256",M.digest(profile_receipt),"--memory",str(memory),"--memory-sha256",M.digest(memory),"--out",str(root/"report")],capture_output=True,text=True)
+                if invalid:
+                    self.assertNotEqual(result.returncode,0)
+                    self.assertIn(invalid,result.stderr)
+                    self.assertFalse((root/"report/summary.json").exists())
+                else:
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    summary=json.loads((root/"report/summary.json").read_text())
+                    diagnostics=json.loads((root/"report/diagnostics.json").read_text())
+                    self.assertEqual(summary["provenance"]["family_elapsed_ns"],expected)
+                    self.assertEqual(len(summary["phase_records"]),106)
+                    self.assertEqual(diagnostics["internal_elapsed_ns"],320)
+                    self.assertEqual(diagnostics["parent_active_ns"],parent_ns)
 
     @unittest.skipUnless(os.environ.get("MODENA_B05_REPORT_BINARY"),"requires explicit report-only helper executable")
     def test_real_report_torn_journal_with_and_without_finalized_summary(self):

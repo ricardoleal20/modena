@@ -23,6 +23,8 @@ ACTIVE_PHASES = {"verify", "sweep", "confirm", "profile"}
 WALL_NS = 1_800_000_000_000
 REPORT_NS = 120_000_000_000  # Bounded noncompute rendering; never charged to family work.
 RSS_CAP = 536_870_912
+REPORT_FILES = ("summary.json", "diagnostics.json", "ordinary-costs.csv",
+                "errors.csv", "targets.csv", "cost-error.svg", "held-out-errors.csv")
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -300,6 +302,37 @@ class Campaign:
     def usable(row):
         return row["actual_child_exit"] in (0, 4) and row["monitor_exit"] == 0 and row["wrapper_exit"] == 0 and not row["timed_out"] and rss_accepted(row["peak_rss_bytes"])
 
+    @classmethod
+    def operationally_complete(cls, row):
+        # Target exit 4 is meaningful only for scientific phases.
+        return row is not None and row["actual_child_exit"] == 0 and cls.usable(row)
+
+    def prepare_slot(self, key):
+        slot = self.completion[key]
+        try:
+            prepared, row = self.prepare(key)
+            missing = [name for name in ("manifest.json", "protocol.json", "snapshots.json")
+                       if not (prepared / name).is_file()]
+            slot["preparation"] = {"process": row, "missing_files": missing,
+                                   "complete": self.operationally_complete(row) and not missing}
+            return prepared, row
+        except OSError as error:
+            slot["preparation"] = {"complete": False, "error": str(error)}
+            return None, None
+
+    def render_slot(self, key, prepared, receipt, profiles=None):
+        slot = self.completion[key]
+        try:
+            row = self.render(key, prepared, receipt, profiles)
+            report = prepared.parent / "report"
+            missing = [name for name in REPORT_FILES if not (report / name).is_file()]
+            retained = {name: artifact(report / name) for name in REPORT_FILES if name not in missing}
+            slot["report"] = {"attempted": True, "process": row, "artifacts": retained,
+                              "missing_files": missing,
+                              "complete": self.operationally_complete(row) and not missing}
+        except OSError as error:
+            slot["report"] = {"attempted": True, "complete": False, "error": str(error)}
+
     def recover(self, key, prepared, out, phase, previous, row, finalized=None):
         checked_artifact(self.prepared_artifacts[key])
         path = failed_receipt(prepared, out, phase, previous, row, self.active.get(key, 0), finalized)
@@ -343,64 +376,96 @@ class Campaign:
         return self.call(key, "report", argv)
 
     def run(self):
+        self.completion = {(family, replicas, threads): {
+            "family": family, "replicas": replicas, "threads": threads,
+            "preparation": {"complete": False, "reason": "not attempted"},
+            "report": {"attempted": False, "complete": False, "reason": "no report"}}
+            for threads in THREADS for family, replicas in FAMILIES}
+        fatal = None
+        try:
+            self.run_roster()
+        except Exception as error:
+            # Integrity violations still abort; never refresh a changed proof.
+            fatal = f"{type(error).__name__}: {error}"
+            raise
+        finally:
+            slots = []
+            for key, slot in self.completion.items():
+                slot["processes"] = self.rows.get(key, [])
+                slot["complete"] = slot["preparation"]["complete"] and slot["report"]["complete"]
+                slots.append(slot)
+            success = fatal is None and all(slot["complete"] for slot in slots)
+            write_new(self.out / "outcome.json", {
+                "schema": "modena-spme-launcher-outcome-v1", "success": success,
+                "exit_code": 0 if success else 1, "fatal_error": fatal,
+                "scientific_status_separate": True, "slots": slots})
+        return 0 if success else 1
+
+    def run_roster(self):
         for threads in THREADS:
             special_key = ("special", 2, threads)
-            special_prepared, preparation = self.prepare(special_key)
+            special_prepared, preparation = self.prepare_slot(special_key)
             special = None
-            if self.usable(preparation):
-                special, special_row = self.verify(special_key, special_prepared)
-            else:
-                special_row = preparation
+            special_row = preparation
+            if self.completion[special_key]["preparation"]["complete"]:
+                try:
+                    special, special_row = self.verify(special_key, special_prepared)
+                except OSError as error:
+                    self.completion[special_key]["error"] = str(error)
             cubic64 = None
             for family, replicas in FAMILIES:
                 key = (family, replicas, threads)
-                if key == special_key:
-                    prepared, receipt, row = special_prepared, special, special_row
-                else:
-                    prepared, row = self.prepare(key)
-                    if not self.usable(row):
+                try:
+                    if key == special_key:
+                        prepared, receipt, row = special_prepared, special, special_row
+                    else:
+                        prepared, row = self.prepare_slot(key)
+                        if not self.completion[key]["preparation"]["complete"]:
+                            continue
+                        if special is None or not self.usable(special_row) or (family == "cubic" and replicas == 3 and cubic64 is None):
+                            row = dict(row, actual_child_exit=None)
+                            receipt = self.recover(key, prepared, prepared / "verification", "verify", None, row)
+                        else:
+                            receipt, row = self.verify(key, prepared, special, cubic64 if family == "cubic" and replicas == 3 else None)
+                    if receipt is None:
                         continue
-                    if special is None or not self.usable(special_row) or (family == "cubic" and replicas == 3 and cubic64 is None):
-                        row = dict(row, actual_child_exit=None)
-                        receipt = self.recover(key, prepared, prepared / "verification", "verify", None, row)
-                    else:
-                        receipt, row = self.verify(key, prepared, special, cubic64 if family == "cubic" and replicas == 3 else None)
-                if receipt is None:
-                    continue
-                if family == "cubic" and replicas == 2 and self.usable(row):
-                    cubic64 = receipt
-                if not self.usable(row):
-                    self.render(key, prepared, receipt)
-                    continue
-                profiles = None
-                for phase in ("sweep", "confirm", "profile"):
-                    out = prepared.parent / phase
-                    checked_artifact(receipt)
-                    if self.active.get(key, 0) >= WALL_NS:
-                        # No process was admitted: do not invent an exit code or
-                        # add a nonexistent child to memory.json.
-                        not_started = {"actual_child_exit": None, "timed_out": False,
-                                       "reason": "family active deadline exhausted before admission"}
-                        receipt = self.recover(key, prepared, out, phase, receipt, not_started)
-                        break
-                    if phase == "sweep":
-                        argv = ["--protocol", prepared / "protocol.json", "--snapshots", prepared / "snapshots.json", "--verification-sha256", receipt["sha256"]]
-                    else:
-                        argv = ["--campaign", receipt["path"], "--expected-sha256", receipt["sha256"]]
-                    row = self.call(key, phase, [*argv, "--out", out, "--elapsed-ns", self.active.get(key, 0)])
-                    summary_path = out / "summary.json"
-                    summary = retain_output(summary_path, prepared.parent / f"process-{phase}") if summary_path.exists() else None
-                    profile_data = None
-                    if phase == "profile" and (out / "phase-times.jsonl").exists():
-                        profile_data = retain_output(out / "phase-times.jsonl", prepared.parent / "process-profile", "profile-data")
-                    if not self.usable(row) or summary is None or (phase == "profile" and profile_data is None):
-                        receipt = self.recover(key, prepared, out, phase, receipt, row, summary)
-                        break
-                    if phase == "profile":
-                        profiles = (profile_data, summary)
-                    else:
-                        receipt = summary
-                self.render(key, prepared, receipt, profiles)
+                    if family == "cubic" and replicas == 2 and self.usable(row):
+                        cubic64 = receipt
+                    if not self.usable(row):
+                        self.render_slot(key, prepared, receipt)
+                        continue
+                    profiles = None
+                    for phase in ("sweep", "confirm", "profile"):
+                        out = prepared.parent / phase
+                        checked_artifact(receipt)
+                        if self.active.get(key, 0) >= WALL_NS:
+                            # No process was admitted: do not invent an exit code or
+                            # add a nonexistent child to memory.json.
+                            not_started = {"actual_child_exit": None, "timed_out": False,
+                                           "reason": "family active deadline exhausted before admission"}
+                            receipt = self.recover(key, prepared, out, phase, receipt, not_started)
+                            break
+                        if phase == "sweep":
+                            argv = ["--protocol", prepared / "protocol.json", "--snapshots", prepared / "snapshots.json", "--verification-sha256", receipt["sha256"]]
+                        else:
+                            argv = ["--campaign", receipt["path"], "--expected-sha256", receipt["sha256"]]
+                        row = self.call(key, phase, [*argv, "--out", out, "--elapsed-ns", self.active.get(key, 0)])
+                        summary_path = out / "summary.json"
+                        summary = retain_output(summary_path, prepared.parent / f"process-{phase}") if summary_path.exists() else None
+                        profile_data = None
+                        if phase == "profile" and (out / "phase-times.jsonl").exists():
+                            profile_data = retain_output(out / "phase-times.jsonl", prepared.parent / "process-profile", "profile-data")
+                        if not self.usable(row) or summary is None or (phase == "profile" and profile_data is None):
+                            receipt = self.recover(key, prepared, out, phase, receipt, row, summary)
+                            break
+                        if phase == "profile":
+                            profiles = (profile_data, summary)
+                        else:
+                            receipt = summary
+                    self.render_slot(key, prepared, receipt, profiles)
+                except OSError as error:
+                    self.completion[key]["error"] = str(error)
+
 
 
 def main(argv=None):
@@ -436,11 +501,11 @@ def main(argv=None):
     fd = os.open(lease, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
         os.write(fd, str(os.getpid()).encode()); os.fsync(fd)
-        Campaign(args.out, registered_binary, registered_sources=frozen_sources).run()
+        result = Campaign(args.out, registered_binary, registered_sources=frozen_sources).run()
     finally:
         os.close(fd)
         lease.unlink()
-    return 0
+    return result
 
 
 if __name__ == "__main__":

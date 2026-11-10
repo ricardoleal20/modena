@@ -199,11 +199,13 @@ pub fn accepted_memory(m: &Memory, epoch: &str) -> bool {
                 && matches!(c.actual_child_exit, Some(0 | 4))
                 && c.peak_rss_bytes.is_some_and(|n| n > 0 && n <= 536_870_912)
         })
-        && m.children
-            .iter()
-            .filter(|c| ["verify", "sweep", "confirm", "profile"].contains(&c.phase.as_str()))
-            .try_fold(0_u64, |sum, c| sum.checked_add(c.active_ns))
-            .is_some_and(|sum| sum < 1_800_000_000_000)
+        && parent_active_ns(m).is_some_and(|sum| sum < 1_800_000_000_000)
+}
+fn parent_active_ns(m: &Memory) -> Option<u64> {
+    m.children
+        .iter()
+        .filter(|c| ["verify", "sweep", "confirm", "profile"].contains(&c.phase.as_str()))
+        .try_fold(0_u64, |sum, c| sum.checked_add(c.active_ns))
 }
 fn chain(r: &Receipt, rows: &mut Vec<Receipt>) -> Result<(), CalibrationFailure> {
     if let Some(p) = &r.prior {
@@ -223,8 +225,19 @@ pub fn run(args: &cli::Arguments) -> Result<(), CalibrationFailure> {
     let memory_path = args.path("--memory")?;
     journal::check_hash(memory_path, args.value("--memory-sha256")?)?;
     let memory: Memory = journal::read_json(memory_path)?;
+    if memory.schema != "modena-spme-memory-v1" || memory.manifest_sha256 != receipt.manifest_sha256
+    {
+        return Err(invalid("memory receipt identity mismatch"));
+    }
+    let parent_elapsed =
+        parent_active_ns(&memory).ok_or_else(|| invalid("parent active elapsed overflow"))?;
     let mut phases = Vec::new();
     chain(&receipt, &mut phases)?;
+    let mut internal_elapsed = phases
+        .iter()
+        .map(|r| r.usage.candidate.reference.elapsed_ns)
+        .max()
+        .unwrap_or(0);
     let grid = candidate_grid(&p, snapshots[0].cell)?;
     let mut candidates = BTreeMap::<usize, CandidateReport>::new();
     let mut decisions: Vec<TargetDecision> = p
@@ -377,6 +390,7 @@ pub fn run(args: &cli::Arguments) -> Result<(), CalibrationFailure> {
         {
             return Err(invalid("profile confirmation chain mismatch"));
         }
+        internal_elapsed = internal_elapsed.max(pr.usage.candidate.reference.elapsed_ns);
         let mut schedules = BTreeMap::<usize, Vec<profile::ProfileSample>>::new();
         for line in BufReader::new(std::fs::File::open(path).map_err(io)?).lines() {
             let s: profile::ProfileSample =
@@ -486,7 +500,7 @@ pub fn run(args: &cli::Arguments) -> Result<(), CalibrationFailure> {
             features: vec![],
             command: std::env::args().collect(),
             utc_started: "see launcher registration.json".into(),
-            family_elapsed_ns: receipt.usage.candidate.reference.elapsed_ns,
+            family_elapsed_ns: internal_elapsed.max(parent_elapsed),
             measured_peak_rss_bytes: memory
                 .children
                 .iter()
@@ -506,7 +520,7 @@ pub fn run(args: &cli::Arguments) -> Result<(), CalibrationFailure> {
     super::write_new(
         &out.join("diagnostics.json"),
         &json_bytes(
-            &serde_json::json!({"phases":phases,"translation_variation":variation,"full_scope_measured":full,"memory":memory_path,"scientific_status_separate":true}),
+            &serde_json::json!({"phases":phases,"translation_variation":variation,"full_scope_measured":full,"memory":memory_path,"scientific_status_separate":true,"internal_elapsed_ns":internal_elapsed,"parent_active_ns":parent_elapsed}),
         )?,
     )?;
     super::write_new(&out.join("ordinary-costs.csv"), ordinary.as_bytes())?;

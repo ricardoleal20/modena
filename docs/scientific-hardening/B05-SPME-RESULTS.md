@@ -10,8 +10,19 @@ The [protocol](B05-SPME-PROTOCOL.md) was unchanged. Execution used commit
 `9a25e2914beb0d477a8f296aec15299aa61e0700`, Apple M3 Pro, macOS Darwin 25.6.0,
 Rust/Cargo 1.97.1, default features and the release example. The launcher ran
 once, sequentially, from 10:52:04 to 11:28:37 UTC, with the six-level
-`--reference-extended` preset and threads `1 4`. Its exit 0 means the roster and
-failure reports completed; it does not mean the scientific targets passed.
+`--reference-extended` preset and threads `1 4`. Independent inspection confirmed
+all ten reports completed with successful report children, monitors and wrappers.
+The historical launcher exit 0 alone did not enforce report completion; it also
+did not mean the scientific targets passed.
+
+These are historical measurements at `9a25e29`, documented at `a17cf2f`. The
+subsequent final review fixes enforce and retain the cubic replication comparison,
+aggregate preparation/report completion into `outcome.json` with a nonzero launcher
+exit on operational failure, and correct new reports' elapsed provenance. The
+registered execution source identity has changed. Frozen receipts and the retained
+binary remain immutable evidence for the measured source only; any execution of
+the fixed source requires fresh preparation and registration. No new campaign or
+stronger scientific acceptance is claimed by these engineering fixes.
 
 | Family | Threads | Tooling outcome | Target `1e-3` | Target `1e-4` |
 | --- | ---: | --- | --- | --- |
@@ -28,7 +39,11 @@ failure reports completed; it does not mean the scientific targets passed.
 
 All ten physical verifications passed. Special3 retained 1,509 passing controls
 at each thread count; cubic64/216 retained their own converged crystal and
-Madelung sign/normalization checks. Completed selection references used six
+Madelung sign/normalization checks. The historical cubic replication comparison
+was neither enforced nor separately retained by the CLI. Its retained per-pair
+energies, `-1.5886950860301647` and `-1.588695086030165` at both thread counts,
+differ by `2.220446049250313e-16`, below `1e-9/2.2`; the later review confirmed
+this from the immutable individual checks. Completed selection references used six
 levels, two cross-kappa checks and all seven translations. The independent
 oracle was all-image real-space/full-positive-and-negative-k Ewald.
 
@@ -60,12 +75,14 @@ stayed below 256 MiB and RSS below 512 MiB. No active-family timeout occurred;
 the largest authoritative elapsed value was 375.680 s against 1,800 s.
 Projected work failures remain failures despite these unused time/memory budgets.
 
-The known elapsed-report limitation remains: ortho64 canonical
+The historical reports retain their elapsed-report limitation: ortho64 canonical
 `provenance.family_elapsed_ns` stops at confirmation (311.970/311.375 s).
 Final internal receipts report 326.451/325.703 s; the authoritative parent sums
 of verify/sweep/confirm/profile are 332.070/331.268 s at one/four threads.
 Use the conservative maximum of parent active sum and final internal elapsed;
-the canonical field alone omits later profiling and parent overhead.
+the historical canonical field alone omits later profiling and parent overhead.
+Newly generated reports from the fixed source use that conservative maximum and
+retain both components in diagnostics; no frozen report has been rewritten.
 
 Raw records are retained outside Git in
 [`task8-frozen-20261110-v1`](../../target/b05-evidence/task8-frozen-20261110-v1/).

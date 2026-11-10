@@ -96,6 +96,30 @@ fn record_failure(r: &mut Receipt, f: CalibrationFailure) {
         r.finalization_failure = Some(f);
     }
 }
+fn retain_madelung_replication(
+    r: &mut Receipt,
+    out: &Path,
+    j: &mut Journal,
+    check: &physical::PhysicalCheck,
+) -> Result<(), CalibrationFailure> {
+    // Preserve the physical cause even if either durable recording fails. Try
+    // both sinks so a failed artifact write can still leave the raw journal row.
+    if !check.passed {
+        record_failure(
+            r,
+            CalibrationFailure::ReferencePrecisionLimited(
+                "Madelung finite-cell replication".into(),
+            ),
+        );
+    }
+    if let Err(f) = persist(r, out, "madelung-replication", check) {
+        record_failure(r, f);
+    }
+    if let Err(f) = j.record("madelung-replication", check) {
+        record_failure(r, f);
+    }
+    r.require_success()
+}
 fn complete(
     r: &mut Receipt,
     out: &Path,
@@ -220,7 +244,7 @@ fn verify(args: &cli::Arguments) -> Result<(), CalibrationFailure> {
                     let left = physical::MadelungOutcome::load_checked(path, hash)?;
                     b.external_owned_heap_bytes += left.owned_heap_bytes()?;
                     let left_receipt = Receipt::load(path, hash)?;
-                    physical::compare_madelung_replication(
+                    let check = physical::compare_madelung_replication(
                         &left,
                         &left_receipt.prepared,
                         &current,
@@ -233,6 +257,7 @@ fn verify(args: &cli::Arguments) -> Result<(), CalibrationFailure> {
                             sha256: hash.into(),
                         },
                     );
+                    retain_madelung_replication(&mut r, &out, &mut j, &check)?;
                 }
             }
         }
@@ -827,6 +852,107 @@ pub fn registered_special_smoke() -> Result<(), CalibrationFailure> {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+    #[test]
+    fn replication_gate_retains_passing_boundary_and_failed_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        let prepared = tmp.path().join("prepared");
+        let p = frozen_protocol("cubic", 3, 1, true).unwrap();
+        prepare(&prepared, p.clone()).unwrap();
+        let b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+        // Inject only the post-proof comparison boundary. Both per-pair values
+        // satisfy the much looser individual sanity gate; no oracle is run.
+        let expected = -1.747558775 / (p.a / 2.);
+        let tolerance = 1e-9 / p.a;
+        let mut boundary = expected + tolerance;
+        if boundary - expected > tolerance {
+            boundary = boundary.next_down();
+        }
+        assert!(boundary.next_up() - expected > tolerance);
+        for (name, right, passed) in [
+            ("boundary", boundary, true),
+            ("failed", expected + 2. * tolerance, false),
+        ] {
+            assert!((right - expected).abs() <= 2e-5 / p.a);
+            let out = tmp.path().join(name);
+            std::fs::create_dir(&out).unwrap();
+            let mut r = fresh_receipt("verify", &prepared, &b, None).unwrap();
+            let input_path = out.join("input.json");
+            let input = fresh_receipt("verify", &prepared, &b, None)
+                .unwrap()
+                .write_new(&input_path)
+                .unwrap();
+            r.inputs.insert("madelung64".into(), input);
+            let mut j =
+                Journal::create(&out.join("events.jsonl"), r.manifest_sha256.clone()).unwrap();
+            let check = physical::madelung_replication_check(expected, right);
+            assert_eq!(check.passed, passed);
+            let result = retain_madelung_replication(&mut r, &out, &mut j, &check);
+            assert_eq!(result.is_ok(), passed);
+            let summary = out.join("summary.json");
+            let completed = complete(&mut r, &out, &summary, &b, 0, 0, result);
+            assert_eq!(completed.is_ok(), passed);
+            if !passed {
+                assert_eq!(completed.unwrap_err().exit_code(), 3);
+            }
+            let retained = Receipt::load(&summary, &sha256(&summary).unwrap()).unwrap();
+            assert_eq!(retained.require_success().is_ok(), passed);
+            assert!(retained.inputs.contains_key("madelung64"));
+            assert!(retained.finalization_failure.is_none());
+            let artifact = retained.artifact("madelung-replication").unwrap();
+            let raw: physical::PhysicalCheck = journal::read_json(&artifact.path).unwrap();
+            assert_eq!(
+                (raw.actual, raw.expected, raw.tolerance, raw.passed),
+                (expected, right, tolerance, passed)
+            );
+            let events = retained.artifact("events").unwrap();
+            let rows =
+                journal::read_events(&events.path, &events.sha256, &retained.manifest_sha256)
+                    .unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].kind, "madelung-replication");
+            assert_eq!(rows[0].data, serde_json::to_value(&check).unwrap());
+        }
+        assert_eq!(b.reference.calls, 0);
+    }
+    #[test]
+    fn replication_primary_survives_artifact_finalization_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let prepared = tmp.path().join("prepared");
+        let p = frozen_protocol("cubic", 3, 1, true).unwrap();
+        prepare(&prepared, p.clone()).unwrap();
+        let b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+        let mut r = fresh_receipt("verify", &prepared, &b, None).unwrap();
+        let mut j =
+            Journal::create(&tmp.path().join("events.jsonl"), r.manifest_sha256.clone()).unwrap();
+        let check = physical::madelung_replication_check(-1.588695086, -1.588695084);
+        // A preexisting artifact must never be overwritten; the synced journal
+        // still retains the failed numerical check and both error causes survive.
+        let collision = tmp.path().join("madelung-replication.json");
+        super::super::write_new(&collision, b"immutable").unwrap();
+        let result = retain_madelung_replication(&mut r, tmp.path(), &mut j, &check);
+        assert_eq!(result.as_ref().unwrap_err().exit_code(), 3);
+        let summary = tmp.path().join("summary.json");
+        assert_eq!(
+            complete(&mut r, tmp.path(), &summary, &b, 0, 0, result)
+                .unwrap_err()
+                .exit_code(),
+            3
+        );
+        let retained = Receipt::load(&summary, &sha256(&summary).unwrap()).unwrap();
+        assert!(matches!(
+            retained.failure,
+            Some(CalibrationFailure::ReferencePrecisionLimited(_))
+        ));
+        assert!(matches!(
+            retained.finalization_failure,
+            Some(CalibrationFailure::Io(_))
+        ));
+        assert_eq!(std::fs::read(&collision).unwrap(), b"immutable");
+        let events = retained.artifact("events").unwrap();
+        let rows =
+            journal::read_events(&events.path, &events.sha256, &retained.manifest_sha256).unwrap();
+        assert_eq!(rows[0].data, serde_json::to_value(&check).unwrap());
+    }
     #[test]
     fn phase_primary_and_finalization_failures_remain_inspectable() {
         let p = frozen_protocol("special", 2, 1, true).unwrap();

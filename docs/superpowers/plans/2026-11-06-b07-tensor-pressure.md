@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Adopted 2026-11-10 on reviewed integrated main `d6cd33ca3418b1617ab71fa2cf7416a24d27f405`; preparation itself performed no implementation or measurements. Current user explicitly authorizes B07 implementation, PR and merge. Historical preparation source is retained below.
-- Source epoch inspected: B04 `7ea653641c813bc2f01476805db2990e0de4677a`; provisional until final reviewed B04/B05 synchronization. Future branch `ricardo/b07-tensor-pressure`.
+- Historical preparation inspected B04 `7ea653641c813bc2f01476805db2990e0de4677a`; current adoption uses final integrated main `d6cd33ca3418b1617ab71fa2cf7416a24d27f405` on `ricardo/b07-tensor-pressure`.
 - Preserve scalar `Virial {w}`, `ForceModel::compute`, legacy `Energies`, conservative force caches, thermostat RNG sequence, B02 scratch and B03 packed paths.
 - No new Rust dependency; production SPME remains orthorhombic and analytic order4. No inferred isotropic tensor or W/3 anisotropic controller path.
 - Exact B05 twelve profile fields and existing compute_profiled remain; final B05 synchronization precedes all implementation.
@@ -27,10 +27,10 @@
 
 ## Controller adoption (not an implementation task)
 
-- [ ] Wait for final reviewed B04 and B05 handoff before touching code. Read their final plan/protocol, `AGENTS.md`, RTK, relevant git status/diffs; record source hashes and ownership in spec §1. Do not move B04/B05 HEAD or edit their active checkout.
-- [ ] Create/reuse the B07 isolated worktree on the integrated reviewed base, branch `ricardo/b07-tensor-pressure`. Copy these two drafts to their future repository paths. Record source epoch, compiler/profile/features, and exact B05 twelve field names. Adoption does not claim scientific validation.
-- [ ] Review the explicit migrations (Barostat::apply Result, RunSpec optional field, RunEvent variant), Nyquist mathematical extension, cost caps, and test/reference domain. User already authorized sequential owner+review; begin Task1 after adoption without another optional permission gate.
-- [ ] Use read-only inventory commands:
+- [x] Wait for final reviewed B04 and B05 handoff before touching code. Read their final plan/protocol, `AGENTS.md`, RTK, relevant git status/diffs; record source hashes and ownership in spec §1. Do not move B04/B05 HEAD or edit their active checkout.
+- [x] Create/reuse the B07 isolated worktree on the integrated reviewed base, branch `ricardo/b07-tensor-pressure`. Copy these two drafts to their future repository paths. Record source epoch, compiler/profile/features, and exact B05 twelve field names. Adoption does not claim scientific validation.
+- [x] Review the explicit migrations (Barostat::apply Result, RunSpec optional field, RunEvent variant), Nyquist mathematical extension, cost caps, and test/reference domain. User already authorized sequential owner+review; begin Task1 after adoption without another optional permission gate.
+- [x] Use read-only inventory commands:
 
 ```sh
 rtk git status --short

@@ -11,9 +11,9 @@ Future branch: `ricardo/b07-tensor-pressure` (explicit user override).
 
 Implements B07 in `docs/research/2026-11-05-core-improvements/phase3_analysis/ACCEPTANCE-BACKLOG.md:46`.
 The source inspection used `/Users/ricardoleal20/.codex/worktrees/modena-b04/modena`, HEAD `7ea653641c813bc2f01476805db2990e0de4677a`.
-B04/B05 are still owned by other work. This epoch is provisional until the controller synchronizes final reviewed B04/B05,
-records the exact source hashes, and adopts this spec and plan. Do not edit their active checkout or wait idly for them during preparation.
-B05's future `compute_profiled` interface is read from its protocol, not asserted to exist at this HEAD.
+At that historical preparation epoch B04/B05 were still owned by other work, and this draft was provisional.
+The 2026-11-10 adoption above supersedes that dependency: final B04/B05 are integrated, their owners have released the source,
+and the exact current hashes are recorded. B05's actual `compute_profiled` interface is present and checked on the adopted base.
 
 The approved architectural direction is complete force tensors, actual constraint impulses, physically distinct endpoint/interval pressure,
 and actual analytic, equilibrium-distribution, timestep and independently matched external gates. All cases in this specification are mandatory;
@@ -548,7 +548,7 @@ and energy shifts on pair snapshots before dynamics; inability to match them blo
 
 External trajectory roster: rotor and water NVE hω=.08,.04,.02,.01,Tω8 (8 jobs); interacting32 waters NVE h=.01,.005,.0025,.00125,T=2
 (4 jobs); interacting NVT h=.01,.005, four seeds2001..2004, burn20,measure100 (8 jobs), plus at most4 preflight/convergence reference jobs.
-Reference NVT uses LAMMPS `fix rigid/nvt` with molecule IDs, target1, damping1 and documented default chain length3 (explicitly set when supported). It replaces fix nve/rattle for these NVT jobs; do not apply both integrators. Its ensemble comparison is independent of MODENA BAOAB, so compare distributions and dt limits rather than random sequences or finite-step trajectories. Two of the four preflight jobs validate this reference on32 free rotors and32 free waters at h=.005,burn50,measure1000,seed2001, no COM removal, against χ² kinetic and ideal pressure targets using frozen block analysis/practical tolerances. The other two preflight jobs perform all frozen snapshot reciprocal/table checks, reusing the process for the finite tolerance ladder. If this pinned reference cannot satisfy its free-gas gates or support its declared thermostat settings, fail the dependent NVT gate instead of swapping schemes. Independent Python dense projector/RATTLE code may cross-check splitting but is not required and does not replace the external gate.
+Reference NVT uses LAMMPS `fix rigid/nvt` with molecule IDs, target1, damping1 and explicitly configured chain length3 (`tparam 3 1 3`). The installed pinned-version documentation has default10; explicit configuration preserves this protocol's required3. It replaces fix nve/rattle for these NVT jobs; do not apply both integrators. Its ensemble comparison is independent of MODENA BAOAB, so compare distributions and dt limits rather than random sequences or finite-step trajectories. Two of the four preflight jobs validate this reference on32 free rotors and32 free waters at h=.005,burn50,measure1000,seed2001, no COM removal, against χ² kinetic and ideal pressure targets using frozen block analysis/practical tolerances. The other two preflight jobs perform all frozen snapshot reciprocal/table checks, reusing the process for the finite tolerance ladder. If this pinned reference cannot satisfy its free-gas gates or support its declared thermostat settings, fail the dependent NVT gate instead of swapping schemes. Independent Python dense projector/RATTLE code may cross-check splitting but is not required and does not replace the external gate.
 
 Matched gates: identical-snapshot U/F/conservative tensor<=2e-6 scaled; analytic free rotor/water endpoints as §9; common-window continuum
 mean all six total pressures difference<=3 combinedSE and1% of max(kT*M/V,abs(reference diagonal)); shear uses ideal pressure scale, not

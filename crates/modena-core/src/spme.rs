@@ -302,7 +302,7 @@ impl SpmeForceModel {
         );
         observer.finish(Phase::RealSpace, started);
         let started = observer.start();
-        let (u_excl, w_excl) = crate::ewald::exclusion_correction(
+        let (u_excl, w_excl, _) = crate::ewald::exclusion_correction(
             self.kappa,
             &system.box_size,
             &system.positions,

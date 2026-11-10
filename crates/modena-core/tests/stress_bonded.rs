@@ -379,7 +379,15 @@ fn concrete_composite_combines_pair_bonded_and_long_range_once() {
         let (forwarded, forwarded_f) = evaluate(&long_range, &source);
         assert_eq!(forwarded, underlying);
         assert_eq!(forwarded_f, uf);
-        assert!(matches!(forwarded.tensor, TensorAvailability::Missing(_)));
+        match &long_range {
+            LongRangeForceModel::Ewald(_) => {
+                let tensor = complete(&forwarded.tensor);
+                near(tensor.trace(), forwarded.scalar_virial, 5e-12);
+            }
+            LongRangeForceModel::Spme(_) => {
+                assert!(matches!(forwarded.tensor, TensorAvailability::Missing(_)))
+            }
+        }
         let expected = p.clone().combine(b.clone()).combine(underlying);
         let combined = CompositeForceModel {
             pair: PairForceModel::new(Harmonic),

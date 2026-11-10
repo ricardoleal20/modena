@@ -934,3 +934,74 @@ fn relative_interpreter_is_resolved_against_config_base_without_changing_identit
     assert_eq!(relative.metadata().provider, absolute.metadata().provider);
     assert_eq!(relative.system().forces, absolute.system().forces);
 }
+
+#[test]
+fn trait_evaluation_retains_all_stress_components_and_requests_once_per_addition() {
+    use modena_core::stress::TensorAvailability;
+    let body = VALID.replace(
+        "[[0.1,0.0,0.0],[0.0,0.2,0.0],[0.0,0.0,0.3]]",
+        "[[1.0,0.4,0.5],[0.4,2.0,0.6],[0.5,0.6,3.0]]",
+    );
+    let (dir, p) = fixture(&body);
+    let path = std::path::Path::new(&p);
+    let script = std::fs::read_to_string(path).unwrap();
+    let counter = dir.path().join("requests");
+    std::fs::write(
+        path,
+        script.replace(
+            "else:\n",
+            &format!(
+                "else:\n open({:?},'a').write('evaluate\\n')\n",
+                counter.to_str().unwrap()
+            ),
+        ),
+    )
+    .unwrap();
+    let model = AseEmtForceModel::new(
+        spec(&p),
+        UnitFactors::new(1., modena_core::external::EV_TO_KCAL_MOL / 2., 1.),
+    )
+    .unwrap();
+    let mut s = system();
+    s.box_size = SimBox::cubic(2.);
+    s.velocities.fill(17.);
+    let initial = s.forces.clone();
+    for call in 1..=2 {
+        let e = ForceModel::evaluate(&model, &mut s, &mut NeighborList::new(1.)).unwrap();
+        assert_eq!(
+            e.tensor,
+            TensorAvailability::Complete(modena_core::stress::SymTensor6([
+                -16., -32., -48., -6.4, -8., -9.6
+            ]))
+        );
+        assert_eq!(e.scalar_virial, -96.);
+        assert_eq!(e.energy, 4.);
+        assert_eq!(
+            std::fs::read_to_string(&counter).unwrap().lines().count(),
+            call
+        );
+        for (k, &initial_force) in initial.iter().enumerate() {
+            assert_eq!(
+                s.forces[k],
+                initial_force + call as f64 * 2. * (k + 1) as f64
+            );
+        }
+    }
+}
+
+#[test]
+fn trait_evaluation_rejects_required_missing_nonfinite_and_asymmetric_stress_atomically() {
+    for body in [
+        VALID.replace("'stress_ev_per_angstrom3'", "'missing_stress'"),
+        VALID.replace("[0.1,0.0,0.0]", "[0.1,float('inf'),0.0]"),
+        VALID.replace("[0.1,0.0,0.0]", "[0.1,0.4,0.0]"),
+        VALID.replace("[0.1,0.0,0.0]", "[0.1,0.0]"),
+    ] {
+        let (_dir, p) = fixture(&body);
+        let m = AseEmtForceModel::new(spec(&p), UnitFactors::new(1., 1., 1.)).unwrap();
+        let mut s = system();
+        let before = s.forces.clone();
+        assert!(ForceModel::evaluate(&m, &mut s, &mut NeighborList::new(1.)).is_err());
+        assert_eq!(s.forces, before);
+    }
+}

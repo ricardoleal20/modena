@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex};
 use crate::error::{ModenaError, Result};
 use crate::force_model::{ForceModel, Virial};
 use crate::neighbor::NeighborList;
+use crate::stress::{ModelEvaluation, SymTensor6, TensorAvailability};
 use crate::system::System;
 use crate::vec3::Vec3;
 
@@ -165,7 +166,7 @@ impl EwaldForceModel {
             u_real += qprod * libm::erfc(kappa * r) / r;
         }
         // Excluded-pair erf correction (energy only here).
-        let (u_excl, _) = exclusion_correction(
+        let (u_excl, _, _) = exclusion_correction(
             kappa,
             &system.box_size,
             &system.positions,
@@ -291,10 +292,11 @@ pub(crate) fn exclusion_correction(
     real_cutoff: f64,
     pairs: impl Iterator<Item = crate::neighbor::PairScale>,
     forces: &mut [f64],
-) -> (f64, f64) {
+) -> (f64, f64, SymTensor6) {
     let kappa2 = kappa * kappa;
     let mut u = 0.0;
     let mut w = 0.0;
+    let mut tensor = SymTensor6::ZERO;
     for pair in pairs {
         let (i, j) = (pair.i, pair.j);
         let removed = 1.0 - pair.coulomb;
@@ -317,6 +319,7 @@ pub(crate) fn exclusion_correction(
         };
         u += -qprod * erf_kr / r;
         let coef = qprod * (TWO_OVER_SQRT_PI * kappa * exp_kr2 / r2 - erf_kr / (r2 * r));
+        tensor = tensor.plus(SymTensor6::dyad(d, d * coef));
         for k in 0..3 {
             let fv = d.0[k] * coef;
             if !forces.is_empty() {
@@ -326,7 +329,7 @@ pub(crate) fn exclusion_correction(
             w += d.0[k] * fv;
         }
     }
-    (u, w)
+    (u, w, tensor)
 }
 
 impl ForceModel for EwaldForceModel {
@@ -342,6 +345,24 @@ impl ForceModel for EwaldForceModel {
         virial: &mut Virial,
         neighbors: &mut NeighborList,
     ) -> Result<f64> {
+        let evaluation = self.evaluate_pass(system, neighbors)?;
+        virial.w += evaluation.scalar_virial;
+        Ok(evaluation.energy)
+    }
+    fn evaluate(
+        &self,
+        system: &mut System,
+        neighbors: &mut NeighborList,
+    ) -> Result<ModelEvaluation> {
+        self.evaluate_pass(system, neighbors)
+    }
+}
+impl EwaldForceModel {
+    fn evaluate_pass(
+        &self,
+        system: &mut System,
+        neighbors: &mut NeighborList,
+    ) -> Result<ModelEvaluation> {
         neighbors.build(system);
         let policy = CoulombPolicy::new(&self.pair_scales, neighbors.scales(), system.n())?;
         let v = system.box_size.volume();
@@ -350,12 +371,13 @@ impl ForceModel for EwaldForceModel {
         }
         let n = system.n();
         if n == 0 {
-            return Ok(0.0);
+            return Ok(ModelEvaluation::zero());
         }
         // Local force accumulator (added into system.forces at the end).
         let mut forces = vec![0.0f64; 3 * n];
         let mut w_virial = 0.0f64;
         let mut pe = 0.0f64;
+        let mut tensor = SymTensor6::ZERO;
 
         let kappa = self.kappa;
         let kappa2 = kappa * kappa;
@@ -382,6 +404,7 @@ impl ForceModel for EwaldForceModel {
                 pe += qprod * erfc_kr / r;
                 // F_i = d · q_i q_j [ (2κ/√π) e^{−κ²r²}/r² + erfc(κr)/r³ ].
                 let coef = qprod * (TWO_OVER_SQRT_PI * kappa * exp_kr2 / r2 + erfc_kr / (r2 * r));
+                tensor = tensor.plus(SymTensor6::dyad(d, d * coef));
                 for k in 0..3 {
                     let fv = d.0[k] * coef;
                     forces[3 * i + k] += fv;
@@ -392,7 +415,7 @@ impl ForceModel for EwaldForceModel {
         }
 
         // --- Excluded-pair erf correction (their reciprocal part). ---
-        let (u_excl, w_excl) = exclusion_correction(
+        let (u_excl, w_excl, s_excl) = exclusion_correction(
             kappa,
             &box_size,
             &system.positions,
@@ -403,6 +426,7 @@ impl ForceModel for EwaldForceModel {
         );
         pe += u_excl;
         w_virial += w_excl;
+        tensor = tensor.plus(s_excl);
 
         // --- Reciprocal-space sum (half-space, phases reused). ---
         // F_i = −(4π/V) q_i (B cos_i − A sin_i) w_k · k,  w_k = e^{−k²/4κ²}/k²,
@@ -439,6 +463,7 @@ impl ForceModel for EwaldForceModel {
                 // Energy: (2π/V) w (A² + B²), ×2 for the ±k pair.
                 let uk = 2.0 * two_pi_over_v * w * (a * a + b * b);
                 pe += uk;
+                tensor = tensor.plus(reciprocal_mode_tensor(uk, kv.k, kappa));
                 // Under isotropic strain phases stay fixed, V scales as λ³
                 // and k² as λ^-2: -dU/dλ = U(1-k²/(2κ²)).
                 w_virial += uk * (1.0 - k2 / (2.0 * kappa2));
@@ -460,14 +485,24 @@ impl ForceModel for EwaldForceModel {
         let u_bg = self.background_energy(system, v);
         pe += u_bg;
         w_virial += 3.0 * u_bg;
+        tensor = tensor.plus(SymTensor6([u_bg, u_bg, u_bg, 0., 0., 0.]));
 
         // Accumulate into the system (caller zeroed forces + virial once).
         for (dst, &src) in system.forces.iter_mut().zip(forces.iter()).take(3 * n) {
             *dst += src;
         }
-        virial.w += w_virial;
-        Ok(pe)
+        Ok(ModelEvaluation {
+            energy: pe,
+            scalar_virial: w_virial,
+            tensor: TensorAvailability::Complete(tensor),
+        })
     }
+}
+
+/// Fixed-kappa affine derivative of one mode, including its existing weight.
+fn reciprocal_mode_tensor(u: f64, k: Vec3, kappa: f64) -> SymTensor6 {
+    let a = 2.0 / k.norm2() + 1.0 / (2.0 * kappa * kappa);
+    SymTensor6([u, u, u, 0., 0., 0.]).plus(SymTensor6::dyad(k, k).scaled(-u * a))
 }
 
 /// One reciprocal-space vector.
@@ -526,6 +561,22 @@ fn generate_kvecs(box_size: &crate::system::SimBox, kcut: f64) -> Vec<KVec> {
 mod tests {
     use super::*;
     use crate::system::SimBox;
+
+    #[test]
+    fn reciprocal_mode_has_exact_trace_and_oblique_shear() {
+        let s = reciprocal_mode_tensor(2.0, Vec3::new(1., 2., 3.), 0.5);
+        for (a, b) in s.0.into_iter().zip([
+            -16. / 7.,
+            -106. / 7.,
+            -256. / 7.,
+            -60. / 7.,
+            -90. / 7.,
+            -180. / 7.,
+        ]) {
+            assert!((a - b).abs() <= 2e-14, "{a} != {b}");
+        }
+        assert!((s.trace() + 54.).abs() <= 2e-14);
+    }
 
     /// Two opposite charges in a large box: the real-space Ewald force at small
     /// κ must approach the bare Coulomb force `q_i q_j / r²` (erfc(κr)→1, the

@@ -546,3 +546,60 @@ fn persistent_setup_cancellation_stops_at_existing_safe_boundaries_and_reaps() {
         }
     }
 }
+
+#[test]
+fn persistent_trait_tensor_requests_once_and_invalid_stress_terminates_session() {
+    use modena_core::stress::{SymTensor6, TensorAvailability};
+    for body in [
+        "pass",
+        "del response['evaluation']['stress_ev_per_angstrom3']",
+        "response['evaluation']['stress_ev_per_angstrom3'][0][1]=float('inf')",
+        "response['evaluation']['stress_ev_per_angstrom3'][0][1]=0.4",
+    ] {
+        let (dir, p) = fixture(body);
+        let m = model(&p);
+        let mut s = system();
+        let before = s.forces.clone();
+        for call in 1..=2 {
+            let result = ForceModel::evaluate(&m, &mut s, &mut NeighborList::new(1.));
+            if body == "pass" {
+                let e = result.unwrap();
+                let c = modena_core::external::EV_TO_KCAL_MOL;
+                let expected = SymTensor6([-6.4 * c, -12.8 * c, -19.2 * c, 0., 0., 0.]);
+                let TensorAvailability::Complete(t) = e.tensor else {
+                    panic!("missing provider tensor")
+                };
+                for (a, b) in t.0.into_iter().zip(expected.0) {
+                    assert!((a - b).abs() < 1e-12);
+                }
+                assert_eq!(
+                    std::fs::read_to_string(dir.path().join("requests"))
+                        .unwrap()
+                        .lines()
+                        .filter(|x| *x == "evaluate")
+                        .count(),
+                    call
+                );
+                for (k, &initial_force) in before.iter().enumerate() {
+                    assert!(
+                        (s.forces[k] - initial_force - call as f64 * c * (k + 1) as f64).abs()
+                            < 1e-12
+                    );
+                }
+            } else {
+                assert!(result.is_err());
+                assert_eq!(s.forces, before);
+                assert_eq!(
+                    std::fs::read_to_string(dir.path().join("requests"))
+                        .unwrap()
+                        .lines()
+                        .filter(|x| *x == "evaluate")
+                        .count(),
+                    1
+                );
+            }
+        }
+        drop(m);
+        assert_reaped(dir.path());
+    }
+}

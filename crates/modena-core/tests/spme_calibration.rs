@@ -1541,3 +1541,667 @@ fn ladder_convenience_returns_failed_record_and_rejects_invalid_setup() {
         Err(CalibrationFailure::InvalidInput(_))
     ));
 }
+
+#[test]
+fn actual_mesh_deduplication_preserves_aliases() {
+    let p = protocol();
+    let rows = candidate_grid(&p, [4.4; 3]).unwrap();
+    assert_eq!(rows.iter().map(|r| r.aliases.len()).sum::<usize>(), 126);
+    let mut keys = std::collections::BTreeSet::new();
+    for row in &rows {
+        assert!(keys.insert((
+            row.parameters.kappa.to_bits(),
+            row.parameters.real_cutoff.to_bits(),
+            row.actual_mesh
+        )));
+        assert!(row.timing.is_none() && row.rows.is_empty());
+        for alias in &row.aliases {
+            let b = modena_core::system::SimBox::from_array([4.4; 3]);
+            assert_eq!(row.actual_mesh, modena_core::spme::mesh_for_box(&b, *alias));
+        }
+    }
+    // Small cells force several raw kcut values onto the same production mesh.
+    let tiny = candidate_grid(&p, [0.25; 3]).unwrap();
+    assert!(tiny.len() < 126);
+    assert!(tiny.iter().any(|r| r.aliases.len() > 1));
+    assert!(candidate_grid(&p, [f64::MAX; 3]).is_err());
+}
+
+#[test]
+fn one_shift_failure_rejects_candidate() {
+    let p = protocol();
+    let s = fixture();
+    let mut c = candidate_grid(&p, s.cell).unwrap().remove(0);
+    let good = metrics(
+        &eval(vec![[1., 0., 0.]]),
+        &eval(vec![[1., 0., 0.]]),
+        1,
+        1e-8,
+    )
+    .unwrap();
+    c.rows = (0..7)
+        .map(|shift_index| MetricRow {
+            snapshot_id: s.id.clone(),
+            shift_index,
+            metrics: good.clone(),
+            passing_targets: p.targets.clone(),
+            status: Status::Passed,
+        })
+        .collect();
+    c.status = Status::Passed;
+    assert_eq!(
+        feasible_targets(&c, &[s.id.as_str()], &p).unwrap(),
+        p.targets
+    );
+    c.rows[6].metrics.w_per_atom_abs = 1.;
+    c.rows[6].passing_targets.clear();
+    c.rows[6].status = Status::Failed;
+    assert!(feasible_targets(&c, &[s.id.as_str()], &p)
+        .unwrap()
+        .is_empty());
+    c.rows.pop();
+    assert!(feasible_targets(&c, &[s.id.as_str()], &p).is_err());
+}
+
+#[test]
+fn relative_undefined_does_not_certify_target() {
+    let p = protocol();
+    let m = metrics(&eval(vec![[0.; 3]]), &eval(vec![[0.; 3]]), 1, 1e-8).unwrap();
+    assert_eq!(m.force_rms_rel, None);
+    assert!(!passes_target(&m, 1e-3, &p, true).unwrap());
+}
+
+#[test]
+fn different_families_do_not_share_denominators() {
+    let a = metrics(
+        &eval(vec![[1., 0., 0.]]),
+        &eval(vec![[1.001, 0., 0.]]),
+        1,
+        1e-8,
+    )
+    .unwrap();
+    let b = metrics(
+        &eval(vec![[0.01, 0., 0.]]),
+        &eval(vec![[0.011, 0., 0.]]),
+        1,
+        1e-8,
+    )
+    .unwrap();
+    assert!((a.force_rms_rel.unwrap() - 0.001).abs() < 1e-14);
+    assert!((b.force_rms_rel.unwrap() - 0.1).abs() < 1e-14);
+}
+
+#[test]
+fn allocator_arithmetic_and_rollback_are_checked() {
+    use calibration::allocator::HeapCounter;
+    let counter = HeapCounter::new(64);
+    assert!(counter.reserve(32));
+    assert!(counter.reserve(32));
+    assert!(!counter.reserve(1));
+    assert_eq!(counter.live(), 64);
+    counter.release(32);
+    assert_eq!(counter.live(), 32);
+    assert!(!counter.reserve(usize::MAX));
+    counter.release(32);
+    assert_eq!(counter.live(), 0);
+    assert_eq!(counter.peak(), 64);
+    assert!(!counter.release(1));
+    assert_eq!(counter.live(), 0);
+}
+
+#[test]
+fn allocator_child_probe() {
+    let Ok(mode) = std::env::var("MODENA_B05_ALLOCATOR_PROBE") else {
+        return;
+    };
+    use calibration::allocator::{self, NoAllocationGuard};
+    match mode.as_str() {
+        "cap" => {
+            let n = allocator::PROCESS_HEAP_CAP + 1;
+            std::hint::black_box(vec![0_u8; std::hint::black_box(n)]);
+        }
+        "alloc" => {
+            let guard = NoAllocationGuard::enter().unwrap();
+            assert!(NoAllocationGuard::enter().is_none());
+            std::hint::black_box(vec![1_u8; std::hint::black_box(128)]);
+            drop(guard);
+        }
+        "dealloc" => {
+            let value = vec![1_u8; 128];
+            let guard = NoAllocationGuard::enter().unwrap();
+            drop(std::hint::black_box(value));
+            drop(guard);
+        }
+        "realloc" => {
+            let mut value = Vec::<u8>::with_capacity(1);
+            value.push(1);
+            let guard = NoAllocationGuard::enter().unwrap();
+            value.reserve(std::hint::black_box(128));
+            drop(guard);
+        }
+        "warm1" | "warm4" => {
+            let threads = if mode == "warm1" { 1 } else { 4 };
+            let (mut protocol, s) = special_selection(true, true);
+            protocol.threads = threads;
+            let params = Parameters {
+                kspace_cutoff: 32. / 2.2,
+                ..special_parameters()
+            };
+            let mut evaluator = SpmeEvaluator::with_protocol(&s, params, &protocol).unwrap();
+            for _ in 0..5 {
+                std::hint::black_box(evaluator.compute_without_output_copy().unwrap());
+            }
+            let guard = NoAllocationGuard::enter().unwrap();
+            for _ in 0..3 {
+                // No error formatting, cloning, clocks or returned force allocation.
+                match evaluator.compute_without_output_copy() {
+                    Ok(value) => {
+                        std::hint::black_box(value);
+                    }
+                    Err(_) => std::process::exit(89),
+                }
+            }
+            drop(guard);
+        }
+        _ => panic!("unknown child mode"),
+    }
+}
+
+#[test]
+fn allocator_rejection_is_isolated_and_typed() {
+    use calibration::allocator::{HEAP_EXIT, HEAP_MARKER, TIMING_EXIT, TIMING_MARKER};
+    for (mode, exit, marker) in [
+        ("cap", HEAP_EXIT, HEAP_MARKER),
+        ("alloc", TIMING_EXIT, TIMING_MARKER),
+        ("dealloc", TIMING_EXIT, TIMING_MARKER),
+        ("realloc", TIMING_EXIT, TIMING_MARKER),
+    ] {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "allocator_child_probe",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("MODENA_B05_ALLOCATOR_PROBE", mode)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(exit), "{mode}: {:?}", result);
+        assert!(
+            result.stderr.windows(marker.len()).any(|w| w == marker),
+            "{mode}"
+        );
+    }
+}
+
+fn special_selection(charged: bool, scaled: bool) -> (Protocol, Snapshot) {
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    let snapshots = materialize(&p).unwrap();
+    let s = snapshots
+        .into_iter()
+        .find(|s| {
+            s.role == FixtureRole::Selection
+                && (s.charges.iter().sum::<f64>().abs() > 0.1) == charged
+                && (s.scales.len() == 2) == scaled
+                && (scaled || s.scales.is_empty())
+        })
+        .unwrap();
+    (p, s)
+}
+fn special_parameters() -> Parameters {
+    Parameters {
+        kappa: 1.6 / 2.2,
+        real_cutoff: 0.4 * 9.,
+        kspace_cutoff: 24. / 2.2,
+    }
+}
+#[test]
+fn scales_are_applied_once() {
+    let (_, bare) = special_selection(true, false);
+    let (_, scaled) = special_selection(true, true);
+    let p = special_parameters();
+    let b = evaluate_spme(&bare, p.clone()).unwrap();
+    let c = evaluate_spme(&scaled, p).unwrap();
+    let mut expected = b.clone();
+    for scale in &scaled.scales {
+        let d: [f64; 3] = std::array::from_fn(|axis| {
+            let x = bare.positions[scale.i][axis] - bare.positions[scale.j][axis];
+            x - bare.cell[axis] * (x / bare.cell[axis]).round()
+        });
+        let r = d.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let q = (1. - scale.coulomb) * bare.charges[scale.i] * bare.charges[scale.j];
+        expected.energy -= q / r;
+        expected.strain_w -= q / r;
+        for (axis, x) in d.iter().enumerate() {
+            expected.forces[scale.i][axis] -= q * x / r.powi(3);
+            expected.forces[scale.j][axis] += q * x / r.powi(3);
+        }
+    }
+    let m = metrics(&expected, &c, 3, 1e-8).unwrap();
+    assert!(
+        m.force_rms_abs < 1e-12 && m.energy_per_atom_abs < 1e-12 && m.w_per_atom_abs < 1e-12,
+        "{m:?}"
+    );
+}
+#[test]
+fn existing_explicit_model_parameters_unchanged() {
+    let (_, s) = special_selection(false, true);
+    let params = special_parameters();
+    let mut evaluator = SpmeEvaluator::new(&s, params.clone()).unwrap();
+    assert_eq!(evaluator.parameters(), params);
+    let first = evaluator.evaluate().unwrap();
+    let second = evaluator.evaluate().unwrap();
+    assert_eq!(first, second); // no stale force/W accumulation
+    assert_eq!(evaluator.parameters(), params);
+    let model = modena_core::spme::SpmeForceModel::new(
+        params.kappa,
+        params.real_cutoff,
+        params.kspace_cutoff,
+    )
+    .unwrap();
+    assert_eq!(
+        [model.kappa, model.real_cutoff, model.kspace_cutoff],
+        [params.kappa, params.real_cutoff, params.kspace_cutoff]
+    );
+}
+#[test]
+fn mesh_lifecycle_uses_existing_cache_keys() {
+    let (_, s) = special_selection(true, true);
+    let p = special_parameters();
+    let mut e = SpmeEvaluator::new(&s, p.clone()).unwrap();
+    let original = e.evaluate().unwrap();
+    assert_eq!(e.neighbor_rebuilds(), 1);
+    assert_eq!(e.evaluate().unwrap(), original);
+    assert_eq!(e.neighbor_rebuilds(), 1);
+    for factor in [1.001, 1.2, 1.] {
+        let mut changed = s.clone();
+        changed.cell = s.cell.map(|x| x * factor);
+        for pos in &mut changed.positions {
+            for x in pos {
+                *x *= factor;
+            }
+        }
+        e.set_snapshot(&changed).unwrap();
+        let cached = e.evaluate().unwrap();
+        let fresh = evaluate_spme(&changed, p.clone()).unwrap();
+        assert_eq!(cached, fresh);
+        assert_eq!(
+            e.actual_mesh(),
+            modena_core::spme::mesh_for_box(
+                &modena_core::system::SimBox::from_array(changed.cell),
+                p.kspace_cutoff
+            )
+        );
+    }
+    assert_eq!(e.neighbor_rebuilds(), 4);
+    assert_eq!(e.evaluate().unwrap(), original);
+}
+
+#[test]
+fn candidate_fixed_mesh_force_and_isotropic_strain_derivatives() {
+    let (_, s) = special_selection(true, true);
+    let p = special_parameters();
+    let central = evaluate_spme(&s, p.clone()).unwrap();
+    let mesh = modena_core::spme::mesh_for_box(
+        &modena_core::system::SimBox::from_array(s.cell),
+        p.kspace_cutoff,
+    );
+    let membership = |s: &Snapshot| -> Vec<(usize, usize)> {
+        let mut pairs = vec![];
+        for i in 0..s.positions.len() {
+            for j in 0..i {
+                let r2 = (0..3)
+                    .map(|axis| {
+                        let d = s.positions[i][axis] - s.positions[j][axis];
+                        let d = d - s.cell[axis] * (d / s.cell[axis]).round();
+                        d * d
+                    })
+                    .sum::<f64>();
+                if r2 < p.real_cutoff * p.real_cutoff {
+                    pairs.push((j, i));
+                }
+            }
+        }
+        pairs
+    };
+    let central_pairs = membership(&s);
+    for h in [1e-5, 5e-6] {
+        for atom in 0..3 {
+            for axis in 0..3 {
+                let mut plus = s.clone();
+                let mut minus = s.clone();
+                plus.positions[atom][axis] += h;
+                minus.positions[atom][axis] -= h;
+                assert_eq!(membership(&plus), central_pairs);
+                assert_eq!(membership(&minus), central_pairs);
+                let ep = evaluate_spme(&plus, p.clone()).unwrap().energy;
+                let em = evaluate_spme(&minus, p.clone()).unwrap().energy;
+                assert!((-(ep - em) / (2. * h) - central.forces[atom][axis]).abs() < 2e-8);
+            }
+        }
+        let mut energies = vec![];
+        for lambda in [1. + h, 1. - h] {
+            let mut perturbed = s.clone();
+            perturbed.cell = s.cell.map(|x| x * lambda);
+            for pos in &mut perturbed.positions {
+                for x in pos {
+                    *x *= lambda;
+                }
+            }
+            assert_eq!(membership(&perturbed), central_pairs);
+            assert_eq!(
+                modena_core::spme::mesh_for_box(
+                    &modena_core::system::SimBox::from_array(perturbed.cell),
+                    p.kspace_cutoff
+                ),
+                mesh,
+                "MeshBoundary cannot certify production W"
+            );
+            energies.push(evaluate_spme(&perturbed, p.clone()).unwrap().energy);
+        }
+        assert!((-(energies[0] - energies[1]) / (2. * h) - central.strain_w).abs() < 2e-8);
+    }
+}
+
+#[test]
+fn warmed_production_guard_retains_serial_success_and_parallel_rejection() {
+    for (mode, threads) in [("warm1", "1"), ("warm4", "4")] {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "allocator_child_probe",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("MODENA_B05_ALLOCATOR_PROBE", mode)
+            .env("RAYON_NUM_THREADS", threads)
+            .output()
+            .unwrap();
+        if mode == "warm1" {
+            assert!(result.status.success(), "{mode}: {result:?}");
+        } else {
+            assert_eq!(
+                result.status.code(),
+                Some(calibration::allocator::TIMING_EXIT),
+                "{result:?}"
+            );
+            assert!(result
+                .stderr
+                .windows(calibration::allocator::TIMING_MARKER.len())
+                .any(|w| w == calibration::allocator::TIMING_MARKER));
+            println!("WARM4_INVALID {}", String::from_utf8_lossy(&result.stderr));
+        }
+    }
+}
+#[test]
+fn actual_selection_candidate_retains_all_shifts_and_reference_certificates() {
+    let prepared = if let Some(dir) = std::env::var_os("MODENA_B05_TASK4_PREPARED") {
+        std::path::PathBuf::from(dir)
+    } else {
+        let dir = std::env::temp_dir().join(format!(
+            "modena-b05-task4-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        prepare(&dir, frozen_protocol("special", 2, 1, true).unwrap()).unwrap();
+        dir
+    };
+    let (p, snapshots, _) = validate_prepared(&prepared).unwrap();
+    assert_eq!(p.family, "special-3");
+    assert_eq!(p.reference_ladder.len(), 6);
+    let mut reference_budget = ReferenceBudget::new(&p.limits);
+    let mut references = Vec::new();
+    for s in snapshots
+        .iter()
+        .filter(|s| s.role == FixtureRole::Selection)
+    {
+        // Charge OTHER snapshots, protocol and the retained outer/results vector;
+        // current snapshot and protocol are charged by the reference runner itself.
+        let others = snapshots
+            .iter()
+            .filter(|other| other.id != s.id)
+            .map(snapshot_test_heap)
+            .sum::<u64>();
+        reference_budget.owned_heap_baseline = others
+            + (snapshots.capacity() * std::mem::size_of::<Snapshot>()) as u64
+            + (references.capacity() * std::mem::size_of::<ReferenceOutcome>()) as u64
+            + references
+                .iter()
+                .map(|r: &ReferenceOutcome| r.owned_heap_bytes().unwrap())
+                .sum::<u64>();
+        let outcome = converged_reference_with_budget(s, &p, &mut reference_budget).unwrap();
+        if let Some(root) = std::env::var_os("MODENA_B05_TASK4_OUTPUT") {
+            let root = std::path::PathBuf::from(root);
+            std::fs::create_dir_all(&root).unwrap();
+            let path = root.join(format!("reference-{}.json", s.id));
+            std::fs::write(path, serde_json::to_vec_pretty(&outcome).unwrap()).unwrap();
+        }
+        assert!(
+            outcome.record.chosen_level.is_some(),
+            "{}: {:?}",
+            s.id,
+            outcome.record.status
+        );
+        references.push(outcome);
+    }
+    reference_budget.owned_heap_baseline = 0;
+    let mut budget = CandidateBudget::new(&p.limits, reference_budget);
+    let mut certificates = vec![];
+    let candidate = candidate_grid(&p, snapshots[0].cell)
+        .unwrap()
+        .into_iter()
+        .find(|c| {
+            c.parameters.kappa == 1.6 / 2.2
+                && c.parameters.real_cutoff == 0.4 * 9.
+                && c.parameters.kspace_cutoff == 24. / 2.2
+        })
+        .unwrap();
+    let external = (snapshots.capacity() * std::mem::size_of::<Snapshot>()) as u64
+        + snapshots.iter().map(snapshot_test_heap).sum::<u64>()
+        + (p.schema.capacity()
+            + p.fixture_set.capacity()
+            + p.family.capacity()
+            + p.targets.capacity() * 8
+            + p.kappa_a.capacity() * 8
+            + p.cutoff_lmin.capacity() * 8
+            + p.kcut_a.capacity() * 8
+            + p.reference_ladder.capacity() * 16
+            + p.translations.capacity() * 24
+            + candidate.family.capacity()
+            + candidate.aliases.capacity() * 8
+            + prepared.capacity()) as u64;
+    budget.external_owned_heap_bytes = external;
+    let calls_before = budget.reference.calls;
+    let outcome = evaluate_prepared_candidate(
+        &prepared,
+        &candidate,
+        &references,
+        &mut budget,
+        &mut certificates,
+    )
+    .unwrap();
+    assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+    let selection = snapshots
+        .iter()
+        .filter(|s| s.role == FixtureRole::Selection)
+        .count();
+    assert_eq!(outcome.raw.len(), selection * 7);
+    assert_eq!(outcome.report.rows.len(), selection * 7);
+    assert_eq!(outcome.translation_variation.len(), selection);
+    assert_eq!(certificates.len(), selection);
+    assert!(certificates
+        .iter()
+        .all(|c| c.status == Status::Passed && c.shifts.len() == 6));
+    assert_eq!(budget.reference.calls, calls_before + 6 * selection as u64);
+    assert_eq!(budget.accuracy_calls, 7 * selection as u64);
+    assert!(outcome.report.timing.is_none());
+    for s in snapshots
+        .iter()
+        .filter(|s| s.role == FixtureRole::Selection)
+    {
+        let r = references
+            .iter()
+            .find(|r| r.record.snapshot_id == s.id)
+            .unwrap();
+        let re = &r.record.levels[r.record.chosen_level.unwrap()].evaluation;
+        for shift in 0..7 {
+            let row = outcome
+                .report
+                .rows
+                .iter()
+                .find(|row| row.snapshot_id == s.id && row.shift_index == shift)
+                .unwrap();
+            let raw = outcome
+                .raw
+                .iter()
+                .find(|row| row.snapshot_id == s.id && row.shift_index == shift)
+                .unwrap();
+            assert_eq!(
+                row.metrics,
+                metrics(re, &raw.evaluation, 3, 1e-8 / (p.a * p.a)).unwrap()
+            );
+        }
+    }
+    let before = budget.reference.calls;
+    budget.external_owned_heap_bytes = external + outcome.owned_heap_bytes().unwrap();
+    let repeat = evaluate_prepared_candidate(
+        &prepared,
+        &candidate,
+        &references,
+        &mut budget,
+        &mut certificates,
+    )
+    .unwrap();
+    assert!(repeat.failure.is_none());
+    assert_eq!(budget.reference.calls, before);
+    assert_eq!(repeat.report.rows, outcome.report.rows);
+    let mut observed = 0;
+    let stopped = evaluate_prepared_candidate_with_observer(
+        &prepared,
+        &candidate,
+        &references,
+        &mut budget,
+        &mut certificates,
+        |event| {
+            if let CandidateEvent::CandidateRow { row, raw, .. } = event {
+                assert_eq!(row.shift_index, raw.shift_index);
+                observed += 1;
+                if observed == 3 {
+                    return Err(CalibrationFailure::Io("journal stop control".into()));
+                }
+            }
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(observed, 3);
+    assert_eq!(stopped.raw.len(), 3);
+    assert_eq!(stopped.report.rows.len(), 3);
+    assert!(matches!(stopped.failure, Some(CalibrationFailure::Io(_))));
+    assert_eq!(budget.reference.calls, before);
+    budget.external_owned_heap_bytes +=
+        repeat.owned_heap_bytes().unwrap() + stopped.owned_heap_bytes().unwrap();
+    let old = budget.accuracy_calls;
+    budget.accuracy_calls = p.limits.max_accuracy_calls;
+    let capped = evaluate_prepared_candidate(
+        &prepared,
+        &candidate,
+        &references,
+        &mut budget,
+        &mut certificates,
+    )
+    .unwrap();
+    assert_eq!(capped.report.status, Status::BudgetExceeded);
+    assert!(capped.raw.is_empty());
+    budget.accuracy_calls = old;
+    let mut wrong = references.clone();
+    wrong[0].record.snapshot_sha256 = "0".repeat(64);
+    budget.external_owned_heap_bytes +=
+        repeat.owned_heap_bytes().unwrap() + capped.owned_heap_bytes().unwrap();
+    let rejected = evaluate_prepared_candidate(
+        &prepared,
+        &candidate,
+        &wrong,
+        &mut budget,
+        &mut certificates,
+    )
+    .unwrap();
+    assert!(rejected.failure.is_some());
+    assert!(rejected.raw.is_empty());
+    if let Some(root) = std::env::var_os("MODENA_B05_TASK4_OUTPUT") {
+        let root = std::path::PathBuf::from(root);
+        std::fs::create_dir_all(&root).unwrap();
+        for (name, value) in [
+            (
+                "references.json",
+                serde_json::to_value(&references).unwrap(),
+            ),
+            ("candidate.json", serde_json::to_value(&outcome).unwrap()),
+            (
+                "certificates.json",
+                serde_json::to_value(&certificates).unwrap(),
+            ),
+            (
+                "budget-failure.json",
+                serde_json::to_value(&capped).unwrap(),
+            ),
+        ] {
+            std::fs::write(root.join(name), serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        }
+    }
+    println!(
+        "TASK4 rows={} refs={} calls={} status={:?} heap={} peak={} counters={:?}",
+        outcome.raw.len(),
+        references.len(),
+        budget.reference.calls,
+        outcome.report.status,
+        outcome.usage.process_requested_rust_heap_bytes,
+        outcome.usage.peak_process_requested_rust_heap_bytes,
+        outcome.usage.reference.work
+    );
+}
+fn snapshot_test_heap(s: &Snapshot) -> u64 {
+    (s.positions.capacity() * std::mem::size_of::<[f64; 3]>()
+        + s.charges.capacity() * 8
+        + s.scales.capacity() * std::mem::size_of::<Scale>()
+        + s.id.capacity()
+        + s.family.capacity()
+        + s.units.capacity()) as u64
+}
+#[test]
+fn full_sweep_preflight_keeps_caps_and_confirmation_roster() {
+    let p = protocol();
+    let snapshots = materialize(&p).unwrap();
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    b.accuracy_calls = p.limits.max_accuracy_calls;
+    assert!(matches!(
+        preflight_selection_sweep(&p, &snapshots, &b),
+        Err(CalibrationFailure::BudgetExceeded(_))
+    ));
+    let mut p = protocol();
+    p.limits.max_real_terms_per_family = 1;
+    let b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    assert!(matches!(
+        preflight_selection_sweep(&p, &materialize(&p).unwrap(), &b),
+        Err(CalibrationFailure::BudgetExceeded(_))
+    ));
+}
+
+#[test]
+fn timing_guard_rejects_an_inflight_callback_before_clocks() {
+    use calibration::allocator::CallbackState;
+    let state = CallbackState::new();
+    assert!(state.enter_callback());
+    assert!(!state.begin_guard());
+    state.leave_callback();
+    assert!(state.begin_guard());
+    assert!(!state.begin_guard()); // no nested guard can clear an active guard
+    assert!(!state.enter_callback());
+    state.leave_callback();
+    state.end_guard();
+    assert!(state.begin_guard());
+    state.end_guard();
+}

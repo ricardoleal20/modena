@@ -6,9 +6,20 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+pub mod allocator;
+mod candidates;
+mod evaluator;
 mod fixtures;
 mod metrics;
 mod reference;
+#[allow(unused_imports)]
+pub use candidates::{
+    candidate_grid, evaluate_prepared_candidate, evaluate_prepared_candidate_with_observer,
+    feasible_targets, preflight_selection_sweep, CandidateBudget, CandidateEvent, CandidateOutcome,
+    TranslationCertificate,
+};
+#[allow(unused_imports)]
+pub use evaluator::{evaluate_spme, SpmeEvaluator};
 #[allow(unused_imports)]
 // Public pure APIs are also used by the integration test and later phases.
 pub use fixtures::{frozen_protocol, materialize, validate_frozen, validate_snapshot};

@@ -1,0 +1,6 @@
+{
+  "provenance": "Historical Task7a V2 time-wrapper output; parser fixture only, not current-source evidence",
+  "source_sha256": "f6a58fa95ba64b2aa2b441db864e248463226f99302a21d44edb16ea1a4fc8a7",
+  "stderr": "            41304064  maximum resident set size\n",
+  "peak_rss_bytes": 41304064
+}

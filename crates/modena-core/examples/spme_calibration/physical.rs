@@ -20,14 +20,17 @@ fn mul(a: u64, b: u64) -> Result<u64, CalibrationFailure> {
 fn failed(s: impl Into<String>) -> CalibrationFailure {
     CalibrationFailure::ReferencePrecisionLimited(s.into())
 }
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Membership {
     pub real: Vec<(usize, usize, [i32; 3])>,
     pub reciprocal: Vec<[i32; 3]>,
 }
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PhysicalRecord {
     pub label: String,
+    #[serde(with = "super::reference::ReferenceOriginWire")]
     pub origin: ReferenceOrigin,
     pub snapshot: Snapshot,
     pub settings: ReferenceSettings,
@@ -36,7 +39,8 @@ pub struct PhysicalRecord {
     pub membership: Option<Membership>,
     pub usage: CandidateUsage,
 }
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PhysicalCheck {
     pub label: String,
     pub actual: f64,
@@ -61,7 +65,106 @@ pub struct PhysicalOutcome {
     auxiliary_calls: u64,
     completed: bool,
 }
+#[derive(serde::Deserialize)]
+#[serde(remote = "PhysicalOutcome", deny_unknown_fields)]
+struct PhysicalOutcomeWire {
+    manifest_sha256: String,
+    protocol_sha256: String,
+    specification_sha256: String,
+    source_sha256: std::collections::BTreeMap<String, String>,
+    family: String,
+    threads: usize,
+    records: Vec<PhysicalRecord>,
+    checks: Vec<PhysicalCheck>,
+    failure: Option<CalibrationFailure>,
+    finalization_failure: Option<CalibrationFailure>,
+    usage: CandidateUsage,
+    auxiliary_calls: u64,
+    completed: bool,
+}
 impl PhysicalOutcome {
+    pub(super) fn load_checked(
+        receipt_path: &Path,
+        expected: &str,
+        target_prepared: &Path,
+    ) -> Result<Self, CalibrationFailure> {
+        let receipt = super::journal::Receipt::load(receipt_path, expected)?;
+        receipt.require_success()?;
+        if receipt.phase != "verify" {
+            return Err(invalid("special proof must originate in verification"));
+        }
+        let artifact = receipt.artifact("physical")?;
+        let file = std::fs::File::open(&artifact.path).map_err(io)?;
+        let mut de = serde_json::Deserializer::from_reader(file);
+        let proof =
+            PhysicalOutcomeWire::deserialize(&mut de).map_err(|e| invalid(e.to_string()))?;
+        de.end().map_err(|e| invalid(e.to_string()))?;
+        let (p, _, m) = validate_prepared(&receipt.prepared)?;
+        if proof.manifest_sha256 != receipt.manifest_sha256
+            || proof.protocol_sha256 != m.protocol_sha256
+            || p.family != "special-3"
+            || proof.usage.reference.elapsed_ns > receipt.usage.candidate.reference.elapsed_ns
+            || proof.usage.reference.calls != receipt.usage.candidate.reference.calls
+            || proof.usage.accuracy_calls != receipt.usage.candidate.accuracy_calls
+            || proof.usage.reference.work != receipt.usage.candidate.reference.work
+            || proof.usage.candidate_real_pair_upper_bound
+                != receipt.usage.candidate.candidate_real_pair_upper_bound
+        {
+            return Err(invalid("special proof receipt identity/usage mismatch"));
+        }
+        proof.validate_success()?;
+        for record in &proof.records {
+            if record.origin.manifest_sha256 != receipt.manifest_sha256
+                || record.origin.protocol_sha256 != m.protocol_sha256
+                || record.origin.threads != p.threads
+                || m.fixture_sha256.get(&record.origin.snapshot_id)
+                    != Some(&record.origin.snapshot_sha256)
+            {
+                return Err(invalid("special record origin mismatch"));
+            }
+        }
+        proof.validate_for(target_prepared)?;
+        Ok(proof)
+    }
+    fn validate_success(&self) -> Result<(), CalibrationFailure> {
+        if !self.completed
+            || self.failure.is_some()
+            || self.finalization_failure.is_some()
+            || self.records.len() != 507
+            || self.auxiliary_calls != 172
+            || self.records.iter().filter(|r| r.audit.is_some()).count() != 331
+            || self
+                .records
+                .iter()
+                .filter(|r| r.label == "secondary core Ewald")
+                .count()
+                != 4
+            || self.checks.len() != 1509
+            || self.checks.iter().any(|c| {
+                !c.passed
+                    || !c.actual.is_finite()
+                    || !c.expected.is_finite()
+                    || !c.tolerance.is_finite()
+                    || c.tolerance < 0.
+                    || (c.actual - c.expected).abs() > c.tolerance
+            })
+        {
+            return Err(invalid(
+                "special receipt lacks complete successful controls",
+            ));
+        }
+        for atom in 0..3 {
+            for axis in 0..3 {
+                for h in [1e-5 * A, 0.5e-5 * A] {
+                    let label = format!("force atom{atom} axis{axis} h{h:.17e}");
+                    if self.checks.iter().filter(|c| c.label == label).count() != 4 {
+                        return Err(invalid("special force control roster"));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
     pub fn records(&self) -> &[PhysicalRecord] {
         &self.records
     }
@@ -78,10 +181,7 @@ impl PhysicalOutcome {
         &self.usage
     }
     pub fn passed(&self) -> bool {
-        self.completed
-            && self.failure.is_none()
-            && self.finalization_failure.is_none()
-            && self.checks.iter().all(|c| c.passed)
+        self.validate_success().is_ok()
     }
     /// Cross-family oracle proof checks sources and thread identity; it does not
     /// transfer/reset the special family's continuing usage into an ionic family.
@@ -731,7 +831,49 @@ pub struct MadelungOutcome {
     finalization_failure: Option<CalibrationFailure>,
     usage: CandidateUsage,
 }
+#[derive(serde::Deserialize)]
+#[serde(remote = "MadelungOutcome", deny_unknown_fields)]
+struct MadelungOutcomeWire {
+    manifest_sha256: String,
+    source_sha256: std::collections::BTreeMap<String, String>,
+    specification_sha256: String,
+    threads: usize,
+    replicas: u32,
+    reference: ReferenceOutcome,
+    sanity: Option<PhysicalCheck>,
+    failure: Option<CalibrationFailure>,
+    finalization_failure: Option<CalibrationFailure>,
+    usage: CandidateUsage,
+}
 impl MadelungOutcome {
+    pub(super) fn load_checked(
+        receipt_path: &Path,
+        expected: &str,
+    ) -> Result<Self, CalibrationFailure> {
+        let receipt = super::journal::Receipt::load(receipt_path, expected)?;
+        receipt.require_success()?;
+        if receipt.phase != "verify" {
+            return Err(invalid("Madelung verification phase"));
+        }
+        let artifact = receipt.artifact("madelung")?;
+        let file = std::fs::File::open(&artifact.path).map_err(io)?;
+        let mut de = serde_json::Deserializer::from_reader(file);
+        let proof =
+            MadelungOutcomeWire::deserialize(&mut de).map_err(|e| invalid(e.to_string()))?;
+        de.end().map_err(|e| invalid(e.to_string()))?;
+        let (p, _, m) = validate_prepared(&receipt.prepared)?;
+        if proof.manifest_sha256 != receipt.manifest_sha256
+            || proof.source_sha256 != m.source_sha256
+            || proof.specification_sha256 != m.specification_sha256
+            || proof.threads != p.threads
+            || proof.replicas != p.replicas
+            || p.family != format!("cubic-{}", if p.replicas == 2 { 64 } else { 216 })
+        {
+            return Err(invalid("Madelung receipt identity mismatch"));
+        }
+        proof.validate_success()?;
+        Ok(proof)
+    }
     pub fn reference(&self) -> &ReferenceOutcome {
         &self.reference
     }

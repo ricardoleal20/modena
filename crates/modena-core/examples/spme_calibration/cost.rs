@@ -19,6 +19,12 @@ struct ReferenceWire {
     records: Vec<ReferenceOutcome>,
 }
 impl PreparedReferences {
+    pub(super) fn owned_heap_bytes(&self) -> Result<u64, CalibrationFailure> {
+        self.records.iter().try_fold(
+            bytes(&self.records) + self.prepared_manifest_sha256.capacity() as u64,
+            |n, r| heap_sum([n, r.owned_heap_bytes()?]),
+        )
+    }
     pub fn records(&self) -> &[ReferenceOutcome] {
         &self.records
     }
@@ -132,6 +138,26 @@ impl PreparedReferences {
         );
         b.external_owned_heap_bytes = original;
         result
+    }
+    pub(super) fn evaluate_baseline<F>(
+        &self,
+        prepared: &Path,
+        b: &mut CandidateBudget,
+        certificates: &mut Vec<TranslationCertificate>,
+        observer: F,
+    ) -> Result<CandidateOutcome, CalibrationFailure>
+    where
+        F: FnMut(CandidateEvent<'_>) -> Result<(), CalibrationFailure>,
+    {
+        self.validate(prepared, b)?;
+        candidates::evaluate_baseline_with_observer(
+            prepared,
+            &self.records,
+            b,
+            certificates,
+            self.role.clone(),
+            observer,
+        )
     }
 }
 fn heap_sum(values: impl IntoIterator<Item = u64>) -> Result<u64, CalibrationFailure> {
@@ -288,6 +314,8 @@ pub struct OrdinaryCostOutcome {
     pub batch_total_ns: Vec<u64>,
     pub timing: Option<TimingRecord>,
     pub failure: Option<CalibrationFailure>,
+    #[serde(default)]
+    pub finalization_failure: Option<CalibrationFailure>,
     pub timing_calls: u64,
     pub family_elapsed_ns: u64,
 }
@@ -306,6 +334,7 @@ pub enum CostStage {
 #[derive(serde::Serialize)]
 pub struct CostEvent<'a> {
     pub stage: CostStage,
+    pub usage: candidates::CandidateUsage,
     pub outcome: &'a OrdinaryCostOutcome,
 }
 pub fn measure_ordinary_with_observer<F>(
@@ -332,6 +361,7 @@ where
         batch_total_ns: Vec::with_capacity(5),
         timing: None,
         failure: None,
+        finalization_failure: None,
         timing_calls: timing.calls,
         family_elapsed_ns: 0,
     };
@@ -389,7 +419,10 @@ where
         out.timing = None;
     }
     if let Err(f) = cost_event(CostStage::Complete, &mut out, timing, b, &mut observer) {
-        out.failure = Some(f);
+        if out.failure.is_none() {
+            out.failure = Some(f.clone());
+        }
+        out.finalization_failure = Some(f);
         out.timing = None;
     }
     Ok(out)
@@ -409,6 +442,7 @@ where
         .map_err(|_| CalibrationFailure::BudgetExceeded("family elapsed overflow".into()))?;
     observer(CostEvent {
         stage,
+        usage: b.usage(),
         outcome: out,
     })
 }
@@ -536,6 +570,13 @@ fn rows_heap(rows: &Vec<MetricRow>) -> Result<u64, CalibrationFailure> {
         )?,
     ])
 }
+pub(super) fn reports_owned_heap(
+    reports: &Vec<CandidateReport>,
+) -> Result<u64, CalibrationFailure> {
+    reports
+        .iter()
+        .try_fold(bytes(reports), |sum, c| heap_sum([sum, report_heap(c)?]))
+}
 fn report_heap(c: &CandidateReport) -> Result<u64, CalibrationFailure> {
     heap_sum([
         c.family.capacity() as u64,
@@ -593,6 +634,60 @@ pub struct ConfirmationOutcome {
 }
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ConfirmationWire {
+    decisions: Vec<TargetDecision>,
+    references: Option<ReferenceWire>,
+    candidates: Vec<CandidateOutcome>,
+    failure: Option<CalibrationFailure>,
+}
+impl ConfirmationOutcome {
+    pub(super) fn owned_heap_bytes(&self) -> Result<u64, CalibrationFailure> {
+        let mut n = heap_sum([
+            decisions_heap(&self.decisions)?,
+            bytes(&self.candidates),
+            self.references
+                .as_ref()
+                .map(|r| r.owned_heap_bytes())
+                .transpose()?
+                .unwrap_or(0),
+        ])?;
+        for o in &self.candidates {
+            n = heap_sum([n, o.owned_heap_bytes()?])?;
+        }
+        if let Some(f) = &self.failure {
+            n = heap_sum([n, candidates::failure_bytes(f)])?;
+        }
+        Ok(n)
+    }
+    pub(super) fn load_checked(
+        prepared: &Path,
+        path: &Path,
+        expected: &str,
+        b: &mut CandidateBudget,
+    ) -> Result<Self, CalibrationFailure> {
+        super::journal::check_hash(path, expected)?;
+        let wire: ConfirmationWire = super::journal::read_json(path)?;
+        let references = wire.references.map(|r| PreparedReferences {
+            prepared_manifest_sha256: r.prepared_manifest_sha256,
+            role: r.role,
+            records: r.records,
+        });
+        if let Some(r) = &references {
+            if r.role != FixtureRole::Confirmation {
+                return Err(invalid("confirmation reference role"));
+            }
+            r.validate(prepared, b)?;
+        }
+        Ok(Self {
+            decisions: wire.decisions,
+            references,
+            candidates: wire.candidates,
+            failure: wire.failure,
+        })
+    }
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FrozenWire {
     protocol: Protocol,
     prepared_manifest_sha256: String,
@@ -600,6 +695,14 @@ struct FrozenWire {
     decisions: Vec<TargetDecision>,
 }
 impl FrozenSelection {
+    pub(super) fn owned_heap_bytes(&self) -> Result<u64, CalibrationFailure> {
+        heap_sum([
+            candidates::protocol_bytes(&self.protocol),
+            self.prepared_manifest_sha256.capacity() as u64,
+            reports_owned_heap(&self.candidates)?,
+            decisions_heap(&self.decisions)?,
+        ])
+    }
     pub fn write_new(&self, path: &Path) -> Result<String, CalibrationFailure> {
         super::write_new(path, &json_bytes(self)?)?;
         sha256(path)
@@ -678,10 +781,24 @@ impl FrozenSelection {
         prepared: &Path,
         b: &mut CandidateBudget,
         certificates: &mut Vec<TranslationCertificate>,
-        mut observer: F,
+        observer: F,
     ) -> Result<ConfirmationOutcome, CalibrationFailure>
     where
         F: FnMut(CandidateEvent<'_>) -> Result<(), CalibrationFailure>,
+    {
+        self.confirm_with_observers(prepared, b, certificates, observer, |_| Ok(()))
+    }
+    pub fn confirm_with_observers<F, R>(
+        &self,
+        prepared: &Path,
+        b: &mut CandidateBudget,
+        certificates: &mut Vec<TranslationCertificate>,
+        mut observer: F,
+        mut reference_observer: R,
+    ) -> Result<ConfirmationOutcome, CalibrationFailure>
+    where
+        F: FnMut(CandidateEvent<'_>) -> Result<(), CalibrationFailure>,
+        R: FnMut(ReferenceEvent<'_>) -> Result<(), CalibrationFailure>,
     {
         let (p, s, _) = validate_prepared(prepared)?;
         if self.prepared_manifest_sha256 != sha256(&prepared.join("manifest.json"))? {
@@ -730,7 +847,12 @@ impl FrozenSelection {
                     .iter()
                     .try_fold(0, |sum, c| heap_sum([sum, c.owned_heap_bytes()?]))?,
             ])?;
-            out.references = Some(generate_references(prepared, FixtureRole::Confirmation, b)?);
+            out.references = Some(generate_references_with_observer(
+                prepared,
+                FixtureRole::Confirmation,
+                b,
+                &mut reference_observer,
+            )?);
             let refs = out
                 .references
                 .as_ref()
@@ -842,7 +964,10 @@ impl FrozenSelection {
             .iter()
             .find(|c| c.report.id == id)
             .ok_or_else(|| invalid("confirmed candidate outcome missing"))?;
-        if confirmation.failure.is_some() || confirmation.report.rows != d.confirmation_rows {
+        if confirmation.failure.is_some()
+            || confirmation.finalization_failure.is_some()
+            || confirmation.report.rows != d.confirmation_rows
+        {
             return Err(invalid("confirmation decision/raw outcome mismatch"));
         }
         let snapshots = materialize(p)?;

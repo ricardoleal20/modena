@@ -190,6 +190,8 @@ pub struct CandidateUsage {
 pub struct CandidateOutcome {
     pub report: CandidateReport,
     pub raw: Vec<RawCandidateEvaluation>,
+    #[serde(default)]
+    pub finalization_failure: Option<CalibrationFailure>,
     pub translation_variation: Vec<TranslationVariation>,
     pub failure: Option<CalibrationFailure>,
     pub usage: CandidateUsage,
@@ -264,7 +266,7 @@ pub(super) fn protocol_bytes(p: &Protocol) -> u64 {
         + bytes(&p.reference_ladder)
         + bytes(&p.translations)
 }
-fn failure_bytes(f: &CalibrationFailure) -> u64 {
+pub(super) fn failure_bytes(f: &CalibrationFailure) -> u64 {
     match f {
         CalibrationFailure::InvalidInput(s)
         | CalibrationFailure::UnsupportedDomain(s)
@@ -300,7 +302,7 @@ impl CandidateOutcome {
         for v in &self.translation_variation {
             total = add(total, v.snapshot_id.capacity() as u64)?;
         }
-        if let Some(f) = &self.failure {
+        for f in self.failure.iter().chain(&self.finalization_failure) {
             total = add(total, failure_bytes(f))?;
         }
         Ok(total)
@@ -446,15 +448,19 @@ pub fn preflight_selection_sweep(
         .first()
         .ok_or_else(|| invalid("empty selection roster"))?;
     let grid = candidate_grid(p, first.cell)?;
-    let grid_count = grid.len() as u64;
-    let winner_count = p.targets.len().min(grid.len()) as u64;
+    // Baseline126 is explicit and nonselectable; it shares accuracy/cost machinery.
+    let grid_count = add(grid.len() as u64, 1)?;
+    let winner_count = add(p.targets.len().min(grid.len()) as u64, 1)?;
     let shifts = p.translations.len() as u64;
     let nonzero_shifts = shifts
         .checked_sub(1)
         .ok_or_else(|| cap("translation roster empty"))?;
     let accuracy_calls = add(
-        mul(mul(grid_count, selection.len() as u64)?, shifts)?,
-        mul(mul(winner_count, confirmation.len() as u64)?, shifts)?,
+        42,
+        add(
+            mul(mul(grid_count, selection.len() as u64)?, shifts)?,
+            mul(mul(winner_count, confirmation.len() as u64)?, shifts)?,
+        )?,
     )?;
     if add(b.accuracy_calls, accuracy_calls)? > p.limits.max_accuracy_calls {
         return Err(cap("projected whole campaign accuracy call cap"));
@@ -472,7 +478,7 @@ pub fn preflight_selection_sweep(
     let meshes: std::collections::BTreeSet<_> = grid.iter().map(|c| c.actual_mesh).collect();
     // Each confirmation snapshot is distinct from every selection snapshot.
     // Winner IDs can share a mesh; at most target_count distinct meshes remain.
-    let confirmation_meshes = p.targets.len().min(meshes.len()) as u64;
+    let confirmation_meshes = (p.targets.len() + 1).min(meshes.len()) as u64;
     let final_level = p
         .reference_ladder
         .last()
@@ -566,7 +572,10 @@ pub fn preflight_selection_sweep(
     }
     // Ordinary costs use the first fixed selection snapshot, as in the cost
     // sweep. Profile calls remain a separately bounded diagnostic phase.
-    work.real_terms = add(work.real_terms, mul(timing_calls, pair_upper(first)?)?)?;
+    work.real_terms = add(
+        work.real_terms,
+        mul(add(timing_calls, 42 + 3 * 106)?, pair_upper(first)?)?,
+    )?;
     if work.real_terms > p.limits.max_real_terms_per_family
         || work.atom_k_terms > p.limits.max_atom_k_terms_per_family
     {
@@ -587,6 +596,13 @@ pub fn preflight_selection_sweep(
 /// already committed events. I/O errors stop the evaluator and preserve its partial outcome.
 #[derive(serde::Serialize)]
 pub enum CandidateEvent<'a> {
+    Admitted {
+        candidate_id: usize,
+        snapshot_id: &'a str,
+        shift_index: usize,
+        reference: bool,
+        reserved: CandidateUsage,
+    },
     ReferenceShift {
         certificate: &'a TranslationCertificate,
         shift: &'a ShiftReference,
@@ -648,6 +664,80 @@ pub(super) fn evaluate_prepared_role_with_observer<F>(
     b: &mut CandidateBudget,
     certificates: &mut Vec<TranslationCertificate>,
     role: FixtureRole,
+    observer: F,
+) -> Result<CandidateOutcome, CalibrationFailure>
+where
+    F: FnMut(CandidateEvent<'_>) -> Result<(), CalibrationFailure>,
+{
+    evaluate_role(
+        prepared,
+        candidate,
+        references,
+        b,
+        certificates,
+        role,
+        false,
+        observer,
+    )
+}
+
+pub(super) fn baseline_report(
+    p: &Protocol,
+    cell: [f64; 3],
+) -> Result<CandidateReport, CalibrationFailure> {
+    let parameters = Parameters {
+        kappa: 1. / p.a,
+        real_cutoff: 0.4 * cell.into_iter().fold(f64::INFINITY, f64::min),
+        kspace_cutoff: 12. / p.a,
+    };
+    Ok(CandidateReport {
+        id: 126,
+        family: p.family.clone(),
+        actual_mesh: checked_mesh(cell, parameters.kspace_cutoff, &p.limits)?,
+        parameters,
+        aliases: vec![],
+        rows: vec![],
+        timing: None,
+        status: Status::Pending,
+    })
+}
+pub(super) fn evaluate_baseline_with_observer<F>(
+    prepared: &Path,
+    references: &Vec<ReferenceOutcome>,
+    b: &mut CandidateBudget,
+    certificates: &mut Vec<TranslationCertificate>,
+    role: FixtureRole,
+    observer: F,
+) -> Result<CandidateOutcome, CalibrationFailure>
+where
+    F: FnMut(CandidateEvent<'_>) -> Result<(), CalibrationFailure>,
+{
+    let (p, snapshots, _) = validate_prepared(prepared)?;
+    let s = snapshots
+        .iter()
+        .find(|s| s.role == role)
+        .ok_or_else(|| invalid("baseline snapshot roster"))?;
+    let candidate = baseline_report(&p, s.cell)?;
+    evaluate_role(
+        prepared,
+        &candidate,
+        references,
+        b,
+        certificates,
+        role,
+        true,
+        observer,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn evaluate_role<F>(
+    prepared: &Path,
+    candidate: &CandidateReport,
+    references: &Vec<ReferenceOutcome>,
+    b: &mut CandidateBudget,
+    certificates: &mut Vec<TranslationCertificate>,
+    role: FixtureRole,
+    baseline: bool,
     mut observer: F,
 ) -> Result<CandidateOutcome, CalibrationFailure>
 where
@@ -670,12 +760,16 @@ where
         .find(|s| s.role == role)
         .ok_or_else(|| invalid("selection snapshots"))?;
     let grid = candidate_grid(&p, first.cell)?;
-    if !grid.iter().any(|c| {
-        c.id == candidate.id
-            && c.family == candidate.family
-            && c.parameters == candidate.parameters
-            && c.actual_mesh == candidate.actual_mesh
-            && c.aliases == candidate.aliases
+    if !(if baseline {
+        candidate == &baseline_report(&p, first.cell)?
+    } else {
+        grid.iter().any(|c| {
+            c.id == candidate.id
+                && c.family == candidate.family
+                && c.parameters == candidate.parameters
+                && c.actual_mesh == candidate.actual_mesh
+                && c.aliases == candidate.aliases
+        })
     }) || !candidate.rows.is_empty()
         || candidate.timing.is_some()
     {
@@ -687,6 +781,7 @@ where
     let mut out = CandidateOutcome {
         report: candidate.clone(),
         raw: vec![],
+        finalization_failure: None,
         translation_variation: vec![],
         failure: None,
         usage: b.usage(),
@@ -870,6 +965,20 @@ where
                         baseline = add(baseline, c.owned_heap_bytes()?)?;
                     }
                     b.reference.owned_heap_baseline = baseline;
+                    let mut reserved = b.usage();
+                    let upper = reference_upper(&translated, &level.settings)?;
+                    reserved.reference.calls = add(reserved.reference.calls, 1)?;
+                    reserved.reference.work.real_terms =
+                        add(reserved.reference.work.real_terms, upper.real_terms)?;
+                    reserved.reference.work.atom_k_terms =
+                        add(reserved.reference.work.atom_k_terms, upper.atom_k_terms)?;
+                    observer(CandidateEvent::Admitted {
+                        candidate_id: candidate.id,
+                        snapshot_id: &s.id,
+                        shift_index,
+                        reference: true,
+                        reserved,
+                    })?;
                     let attempt = reference_with_budget(
                         &translated,
                         level.settings.clone(),
@@ -921,6 +1030,18 @@ where
             }
         }
         b.reference.owned_heap_baseline = original_baseline;
+        let mut reserved = b.usage();
+        reserved.accuracy_calls = add(reserved.accuracy_calls, 1)?;
+        let n = first.charges.len() as u64;
+        reserved.candidate_real_pair_upper_bound =
+            add(reserved.candidate_real_pair_upper_bound, mul(n, n - 1)? / 2)?;
+        observer(CandidateEvent::Admitted {
+            candidate_id: candidate.id,
+            snapshot_id: &first.id,
+            shift_index: 0,
+            reference: false,
+            reserved,
+        })?;
         let mut evaluator = SpmeEvaluator::with_protocol(first, candidate.parameters.clone(), &p)?;
         for s in snapshots.iter().filter(|s| s.role == role) {
             let r = references
@@ -944,6 +1065,13 @@ where
                 let n = s.charges.len() as u64;
                 let pairs = mul(n, n - 1)? / 2;
                 b.candidate_real_pair_upper_bound = add(b.candidate_real_pair_upper_bound, pairs)?;
+                observer(CandidateEvent::Admitted {
+                    candidate_id: candidate.id,
+                    snapshot_id: &s.id,
+                    shift_index,
+                    reference: false,
+                    reserved: b.usage(),
+                })?;
                 let evaluation = evaluator.evaluate()?;
                 out.raw.push(RawCandidateEvaluation {
                     snapshot_id: s.id.clone(),
@@ -1049,7 +1177,10 @@ where
     }
     out.usage = b.usage();
     if let Err(f) = observer(CandidateEvent::Complete { outcome: &out }) {
-        out.failure = Some(f);
+        if out.failure.is_none() {
+            out.failure = Some(f.clone());
+        }
+        out.finalization_failure = Some(f);
         out.report.status = Status::Failed;
     }
     Ok(out)

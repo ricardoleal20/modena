@@ -2396,9 +2396,13 @@ fn ordinary_batch_child_probe() {
     let duration = e.ordinary_batch(20).unwrap();
     assert!(duration > 0);
     assert_eq!(e.neighbor_rebuilds(), before);
-    let raw = e.evaluate().unwrap();
+    let raw_forces = e.post_batch_forces();
     let expected = evaluate_spme(&s, special_parameters()).unwrap();
-    evaluations_close(&raw, &expected, 1e-12);
+    for (actual, expected) in raw_forces.chunks_exact(3).zip(&expected.forces) {
+        for axis in 0..3 {
+            assert!((actual[axis] - expected[axis]).abs() < 1e-12);
+        }
+    }
     assert!(e.ordinary_batch(0).is_err());
 }
 #[test]
@@ -2578,11 +2582,12 @@ fn complete_family_projection_covers_all_reference_and_candidate_work() {
     let projected = preflight_selection_sweep(&p, &snapshots, &b).unwrap();
     // Six level rectangular atom-k bounds:15204,26004,40692,72444,93144,134844.
     // Two final cross-kappa calls add2*134844 =>652020 per snapshot.
-    //16 snapshot ladders + selection(8*7*6) and holdout(8*2*6) shift references.
-    assert_eq!(projected.atom_k_terms, 68_684_928);
+    //16 snapshot ladders + selection(8*7*6) and holdout(8*3*6) shift references.
+    // Third heldout mesh is explicit baseline; selection baseline mesh reuses kcut12.
+    assert_eq!(projected.atom_k_terms, 75_157_440);
     // Real ladder+cross upper24498/snapshot, final shift upper3969.
-    // Candidate pairs:3 * (7*(126*8+2*8) +107*126).
-    assert_eq!(projected.real_terms, 2_168_526);
+    // Candidate pairs:3 * (7*(127*8+3*8) +107*127 +42+318).
+    assert_eq!(projected.real_terms, 2_360_775);
 }
 
 #[test]
@@ -2596,8 +2601,8 @@ fn complete_family_projection_preserves_continuing_pair_work_and_checked_counts(
         atom_k_terms: 70,
     };
     let projected = preflight_selection_sweep(&p, &snapshots, &b).unwrap();
-    assert_eq!(projected.real_terms, 2_169_810);
-    assert_eq!(projected.atom_k_terms, 68_684_998);
+    assert_eq!(projected.real_terms, 2_362_059);
+    assert_eq!(projected.atom_k_terms, 75_157_510);
     b.candidate_real_pair_upper_bound = p.limits.max_real_terms_per_family - 1;
     assert!(matches!(
         preflight_selection_sweep(&p, &snapshots, &b),
@@ -3007,4 +3012,216 @@ fn physical_madelung_retains_nested_and_outer_finalization_failures() {
         serde_json::to_value(&nested).unwrap()
     );
     assert_eq!(out.reference().finalization_failure.as_ref(), Some(&nested));
+}
+
+#[test]
+fn task7b_cli_is_strict() {
+    use calibration::cli::Arguments;
+    for args in ["", "cost-smoke", "prepare --out x", "report --campaign x --out y --wat x", "prepare --out x --out y --family special --replicas 2 --threads 1", "prepare --out x --family special --replicas 2 --threads 1 --reference-extended --reference-extended"] {
+        assert!(Arguments::parse(args.split_whitespace().map(str::to_owned).collect()).is_err(), "{args}");
+    }
+    assert!(Arguments::parse(
+        "prepare --out x --family special --replicas 2 --threads 1 --reference-extended"
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect()
+    )
+    .is_ok());
+}
+#[test]
+fn task7b_journal_is_durable_and_source_bound() {
+    let dir = std::env::temp_dir().join(format!("task7b-journal-{}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    let path = dir.join("events.jsonl");
+    let mut journal = calibration::journal::Journal::create(&path, "epoch".into()).unwrap();
+    journal
+        .record("admitted", &serde_json::json!({"calls": 7}))
+        .unwrap();
+    let first = std::fs::read_to_string(&path).unwrap();
+    assert!(first.contains("admitted"));
+    journal
+        .record("completed", &serde_json::json!({"calls": 6}))
+        .unwrap();
+    drop(journal);
+    assert!(calibration::journal::Journal::create(&path, "epoch".into()).is_err());
+    let hash = sha256(&path).unwrap();
+    let events = calibration::journal::read_events(&path, &hash, "epoch").unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(calibration::journal::read_events(&path, &hash, "different").is_err());
+    assert!(calibration::journal::read_events(&path, &"0".repeat(64), "epoch").is_err());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn selected_fragment_roundtrips_explicit_schema() {
+    let p = protocol();
+    let s = fixture();
+    let mut c = cost_candidate(7, 100);
+    c.parameters = Parameters {
+        kappa: 0.7272727272727273,
+        real_cutoff: 3.5200000000000005,
+        kspace_cutoff: 10.909090909090908,
+    };
+    let mut d = select(&[c.clone()], &[s.id.as_str()], 1e-3, &p).unwrap();
+    finish_confirmation(&mut d, &c, &[s.id.as_str()], &p).unwrap();
+    let fragment = selected_fragment(&d, &c, &p).unwrap().unwrap();
+    calibration::campaign::validate_fragment_schema(&fragment, &c.parameters).unwrap();
+    assert!(calibration::campaign::validate_fragment_schema(
+        &fragment.replace("method = \"spme\"", "method = \"ewald\""),
+        &c.parameters
+    )
+    .is_err());
+}
+#[test]
+fn svg_and_csv_are_deterministic() {
+    let mut a = cost_candidate(7, 100);
+    let b = cost_candidate(8, 101);
+    a.family = "bad<&\"family".into();
+    a.rows[0].snapshot_id = "fixture,\"<&".into();
+    let (csv, _) = calibration::report::tables(&[a.clone(), b.clone()], &[]);
+    assert_eq!(
+        calibration::report::tables(&[b.clone(), a.clone()], &[]).0,
+        csv
+    );
+    assert!(csv.contains("\"fixture,\"\"<&\""));
+    let svg = calibration::report::svg(&[a.clone(), b.clone()], &[], "label<&");
+    assert_eq!(svg, calibration::report::svg(&[b, a], &[], "label<&"));
+    assert!(svg.contains("label&lt;&amp;"));
+    assert!(!svg.contains("bad<&"));
+}
+#[test]
+fn partial_failure_rows_survive_report() {
+    let mut c = cost_candidate(7, 100);
+    c.rows.truncate(2);
+    c.status = Status::BudgetExceeded;
+    c.timing = None;
+    let d = TargetDecision {
+        target: 1e-4,
+        selected_id: Some(7),
+        selection_status: Status::Passed,
+        confirmation_rows: vec![],
+        confirmation_status: Status::ConfirmationFailed,
+    };
+    let (rows, targets) =
+        calibration::report::tables(std::slice::from_ref(&c), std::slice::from_ref(&d));
+    assert_eq!(rows.lines().count(), 3);
+    assert!(targets.contains("ConfirmationFailed"));
+    assert!(calibration::report::svg(&[c], &[d], "failed").contains("held-out ConfirmationFailed"));
+}
+#[test]
+fn rss_over_cap_blocks_full_scope() {
+    let child = |phase| serde_json::json!({"phase":phase,"actual_child_exit":4,"monitor_exit":0,"wrapper_exit":0,"peak_rss_bytes":536870912u64,"active_ns":1,"timed_out":false,"command":[],"stdout":"x","stderr":"y"});
+    let mut value = serde_json::json!({"schema":"modena-spme-memory-v1","manifest_sha256":"epoch","children":[child("verify"),child("sweep"),child("confirm"),child("profile")]});
+    assert!(calibration::report::accepted_memory(
+        &serde_json::from_value(value.clone()).unwrap(),
+        "epoch"
+    ));
+    value["children"][0]["peak_rss_bytes"] = serde_json::json!(536870913u64);
+    assert!(!calibration::report::accepted_memory(
+        &serde_json::from_value(value.clone()).unwrap(),
+        "epoch"
+    ));
+    value["children"][0]["peak_rss_bytes"] = serde_json::Value::Null;
+    assert!(!calibration::report::accepted_memory(
+        &serde_json::from_value(value).unwrap(),
+        "epoch"
+    ));
+}
+#[test]
+fn source_or_snapshot_change_invalidates_phase() {
+    let dir = std::env::temp_dir().join(format!("task7b-epoch-{}", std::process::id()));
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    prepare(&dir, p.clone()).unwrap();
+    let b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    let receipt = calibration::journal::Receipt {
+        schema: "modena-spme-phase-v1".into(),
+        phase: "verify".into(),
+        prepared: dir.clone(),
+        manifest_sha256: sha256(&dir.join("manifest.json")).unwrap(),
+        prior: None,
+        inputs: Default::default(),
+        artifacts: Default::default(),
+        usage: calibration::journal::Usage::capture(&b, 3, 5),
+        failure: None,
+        finalization_failure: None,
+    };
+    let path = dir.join("receipt.json");
+    let authority = receipt.write_new(&path).unwrap();
+    assert!(calibration::journal::Receipt::load(&path, &authority.sha256).is_ok());
+    assert!(calibration::journal::Receipt::load(&path, &"0".repeat(64)).is_err());
+    let original = std::fs::read(dir.join("snapshots.json")).unwrap();
+    std::fs::write(dir.join("snapshots.json"), b"{}").unwrap();
+    assert!(calibration::journal::Receipt::load(&path, &authority.sha256).is_err());
+    std::fs::write(dir.join("snapshots.json"), original).unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+    manifest["source_sha256"]["bench/spme_calibration_campaign.py"] =
+        serde_json::json!("0".repeat(64));
+    std::fs::write(
+        dir.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    assert!(validate_prepared(&dir).is_err());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn output_directory_is_not_overwritten() {
+    let dir = std::env::temp_dir().join(format!("task7b-new-{}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("sentinel"), b"old").unwrap();
+    assert!(prepare(&dir, frozen_protocol("special", 2, 1, true).unwrap()).is_err());
+    assert_eq!(std::fs::read(dir.join("sentinel")).unwrap(), b"old");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn task7b_usage_resume_preserves_all_counters() {
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    b.accuracy_calls = 4;
+    b.candidate_real_pair_upper_bound = 12;
+    b.reference.calls = 503;
+    b.reference.work.real_terms = 100;
+    b.reference.work.atom_k_terms = 200;
+    let u = calibration::journal::Usage::capture(&b, 107, 106);
+    let restored = u.resume(&p, 123456789).unwrap();
+    assert_eq!(restored.accuracy_calls, 4);
+    assert_eq!(restored.reference.calls, 503);
+    assert_eq!(restored.reference.work.real_terms, 100);
+    assert_eq!(restored.candidate_real_pair_upper_bound, 12);
+    assert!(restored.reference.elapsed().as_nanos() >= 123456789);
+    assert_eq!(u.timing_calls, 107);
+    assert_eq!(u.profile_calls, 106);
+    assert!(u.resume(&p, 1_800_000_000_000).is_err());
+}
+
+#[test]
+#[ignore = "preregistered current-source special3 diagnostic; not a campaign or winner"]
+fn task7b_registered_special_smoke() {
+    calibration::campaign::registered_special_smoke().unwrap();
+}
+#[test]
+fn missing_hash_utility_fails_before_compute() {
+    if std::env::var_os("MODENA_B05_MISSING_HASH_CHILD").is_some() {
+        let dir = std::env::temp_dir().join(format!("task7b-nohash-{}", std::process::id()));
+        let error = prepare(&dir, frozen_protocol("special", 2, 1, true).unwrap()).unwrap_err();
+        assert!(matches!(error, CalibrationFailure::Io(_)));
+        assert!(!dir.exists());
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "missing_hash_utility_fails_before_compute"])
+        .env("MODENA_B05_MISSING_HASH_CHILD", "1")
+        .env("PATH", "/nonexistent-modena-hash-utility")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+#[test]
+fn task7b_malformed_json_is_invalid_input() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("broken.json");
+    std::fs::write(&path, b"{ not JSON").unwrap();
+    let result: Result<Protocol, _> = calibration::journal::read_json(&path);
+    assert_eq!(result.unwrap_err().exit_code(), 2);
 }

@@ -137,6 +137,10 @@ impl SpmeEvaluator {
     /// Ordinary persistent production cost, including force/W initialization and
     /// the normal neighbor-cache check. Guard admission/drop and output checking
     /// are outside both clock reads. No profiling, result copies or budget calls.
+    #[cfg(test)]
+    pub fn post_batch_forces(&self) -> &[f64] {
+        &self.system.forces
+    }
     pub fn ordinary_batch(&mut self, calls: usize) -> Result<u64, CalibrationFailure> {
         if calls == 0 {
             return Err(invalid("ordinary batch requires nonzero calls"));

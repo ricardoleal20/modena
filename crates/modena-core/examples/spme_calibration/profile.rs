@@ -36,6 +36,9 @@ pub struct ValidatedProfileModel {
     prepared_manifest_sha256: String,
 }
 impl ValidatedProfileModel {
+    pub(super) fn owned_heap_bytes(&self) -> u64 {
+        self.prepared_manifest_sha256.capacity() as u64 + candidates::snapshot_bytes(&self.snapshot)
+    }
     pub fn candidate_id(&self) -> usize {
         self.candidate_id
     }

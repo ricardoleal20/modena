@@ -768,6 +768,15 @@ pub struct ReferenceOrigin {
     pub(super) snapshot_id: String,
     pub(super) threads: usize,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(remote = "ReferenceOrigin", deny_unknown_fields)]
+pub(super) struct ReferenceOriginWire {
+    manifest_sha256: String,
+    protocol_sha256: String,
+    snapshot_sha256: String,
+    snapshot_id: String,
+    threads: usize,
+}
 impl ReferenceOrigin {
     pub(super) fn prepared(dir: &std::path::Path, id: &str) -> Result<Self, CalibrationFailure> {
         let (p, _, m) = super::validate_prepared(dir)?;

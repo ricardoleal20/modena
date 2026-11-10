@@ -7,13 +7,17 @@ use std::{
     process::Command,
 };
 pub mod allocator;
+pub mod campaign;
 mod candidates;
+pub mod cli;
 mod cost;
 mod evaluator;
 mod fixtures;
+pub mod journal;
 mod metrics;
 pub mod physical;
 pub mod profile;
+pub mod report;
 mod selection;
 #[allow(unused_imports)]
 pub use cost::{
@@ -620,11 +624,11 @@ pub struct PreparedManifest {
     pub fixture_sha256: BTreeMap<String, String>,
     pub source_sha256: BTreeMap<String, String>,
 }
-pub fn source_root() -> PathBuf {
+pub fn source_root() -> Result<PathBuf, CalibrationFailure> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
-        .expect("repository root")
+        .map_err(io)
 }
 /// Host prerequisite: direct shasum argv, never a shell and never RTK.
 pub fn sha256(path: &Path) -> Result<String, CalibrationFailure> {
@@ -663,7 +667,8 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), CalibrationFailure> {
         .write(true)
         .open(path)
         .map_err(io)?;
-    f.write_all(bytes).map_err(io)
+    f.write_all(bytes).map_err(io)?;
+    f.sync_all().map_err(io)
 }
 fn source_hashes() -> Result<BTreeMap<String, String>, CalibrationFailure> {
     fn gather(root: &Path, dir: &Path, paths: &mut Vec<String>) -> Result<(), CalibrationFailure> {
@@ -683,8 +688,9 @@ fn source_hashes() -> Result<BTreeMap<String, String>, CalibrationFailure> {
         }
         Ok(())
     }
-    let root = source_root();
+    let root = source_root()?;
     let mut paths = vec![
+        "bench/spme_calibration_campaign.py".into(),
         "Cargo.toml".into(),
         "Cargo.lock".into(),
         "crates/modena-core/Cargo.toml".into(),
@@ -708,10 +714,10 @@ pub fn prepare(out: &Path, protocol: Protocol) -> Result<PreparedManifest, Calib
     validate_frozen(&protocol, &snapshots)?;
     // Resolve all external prerequisites before creating the output directory.
     let sources = source_hashes()?;
-    let spec = sha256(&source_root().join("docs/scientific-hardening/B05-SPME-PROTOCOL.md"))?;
+    let spec = sha256(&source_root()?.join("docs/scientific-hardening/B05-SPME-PROTOCOL.md"))?;
     let git = Command::new("git")
         .args(["rev-parse", "HEAD"])
-        .current_dir(source_root())
+        .current_dir(source_root()?)
         .output()
         .map_err(io)?;
     if !git.status.success() {
@@ -749,21 +755,24 @@ pub fn validate_prepared(
     dir: &Path,
 ) -> Result<(Protocol, Vec<Snapshot>, PreparedManifest), CalibrationFailure> {
     let read = |p: &str| std::fs::read(dir.join(p)).map_err(io);
-    let m: PreparedManifest = serde_json::from_slice(&read("manifest.json")?).map_err(io)?;
+    let m: PreparedManifest =
+        serde_json::from_slice(&read("manifest.json")?).map_err(|e| invalid(e.to_string()))?;
     if m.schema != SCHEMA
         || m.status != Status::Prepared
         || m.protocol_sha256 != sha256(&dir.join("protocol.json"))?
         || m.snapshots_sha256 != sha256(&dir.join("snapshots.json"))?
         || m.source_sha256 != source_hashes()?
         || m.specification_sha256
-            != sha256(&source_root().join("docs/scientific-hardening/B05-SPME-PROTOCOL.md"))?
+            != sha256(&source_root()?.join("docs/scientific-hardening/B05-SPME-PROTOCOL.md"))?
     {
         return Err(invalid(
             "prepared protocol/snapshot/source/specification hash mismatch",
         ));
     }
-    let p: Protocol = serde_json::from_slice(&read("protocol.json")?).map_err(io)?;
-    let s: Vec<Snapshot> = serde_json::from_slice(&read("snapshots.json")?).map_err(io)?;
+    let p: Protocol =
+        serde_json::from_slice(&read("protocol.json")?).map_err(|e| invalid(e.to_string()))?;
+    let s: Vec<Snapshot> =
+        serde_json::from_slice(&read("snapshots.json")?).map_err(|e| invalid(e.to_string()))?;
     validate_frozen(&p, &s)?;
     if m.fixture_sha256.len() != s.len() {
         return Err(invalid("fixture hash count"));

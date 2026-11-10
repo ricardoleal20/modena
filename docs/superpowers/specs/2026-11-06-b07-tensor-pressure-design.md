@@ -507,8 +507,9 @@ Forced rotor uses external harmonic trap U=.05*Σ|q_i-(5,6,7)|², exact F=-.1*(q
 Pair fixture harmonic U=r²/2 with d=(1,2,3), expected S=[-1,-4,-9,-2,-3,-6], W=-14 and U=7. Bond/angle/dihedral fixtures are oblique,
 nonplanar where required, and include an angle whose trace is zero but shear nonzero. Electrostatics cube edges(8,9,10), fractional positions
 (.13,.27,.39),(.61,.44,.73),(.32,.81,.58), charges(1,-.7,.2), κ=.8,rc3.5, fixed direct modes radius8; scale(0,1)=.4 and exclusion(1,2)=0.
-One additional excluded pair beyond rc uses positions(.1,.1,.1),(.6,.4,.3) and fixed image branch. No cutoff seams in FD. Ewald reciprocal
+One additional excluded pair beyond rc uses positions(.1,.1,.1),(.59,.4,.3) and fixed image branch. The original second x=.6 is retained only as a rejected exact-half-cell tie negative control; the replacement was fixed by pure geometry proof before its FD energies. No cutoff seams in FD. Ewald reciprocal
 modes fixed under strain; scalar background standalone U_bg=-πQ²/(2Vκ²) has tensor U_bg I, independently tested with net charge.
+Supplementary triclinic direct-Ewald cell columns are (8,0,0),(.8,9,0),(.3,.1,10). This was the first all-branch/all-48-membership-valid cell in a predeclared eight-candidate geometry-only roster; earlier crossing cells and protocol revisions are retained. The choice preceded accepted derivatives and changes no kappa, rc, kcut, charges, modes, eps or tolerance.
 
 Work caps: deterministic matrix<=60s CPU/test binary and<=512MiB RSS; total standard suite<=10min one worker. Scientific campaign<=2h wall,
 <=4 CPU workers (sequential jobs), <=512MiB Rust RSS / <=1GiB LAMMPS RSS, <=5GiB raw artifacts. ≤64 interacting waters, ≤32 ideal molecules,

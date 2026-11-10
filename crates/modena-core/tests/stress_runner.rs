@@ -315,3 +315,115 @@ fn pressure_output_path_failure_and_output_disabled_mode() {
         .unwrap();
     assert!(!dir.path().join("legacy.csv").exists());
 }
+
+#[test]
+fn pressure_output_collision_precedes_all_output_creation() {
+    for (other, alias) in [
+        ("log_file", "same.out"),
+        ("trajectory_file", "nested/../same.out"),
+        ("restart_file", "./same.out"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = InputConfig::from_str(REAL).unwrap();
+        cfg.run.log_file = Some("untouched.csv".into());
+        cfg.run.trajectory_file = Some("untouched.xyz".into());
+        cfg.run.pressure_jsonl = Some(alias.into());
+        match other {
+            "log_file" => cfg.run.log_file = Some("same.out".into()),
+            "trajectory_file" => cfg.run.trajectory_file = Some("same.out".into()),
+            _ => cfg.run.restart_file = Some("same.out".into()),
+        }
+        Simulation::from_config_without_outputs(&cfg, dir.path()).unwrap();
+        let err = Simulation::from_config(&cfg, dir.path())
+            .err()
+            .expect("aliased output accepted");
+        assert!(
+            matches!(err,modena_core::ModenaError::Config(ref reason) if reason.contains("pressure_jsonl") && reason.contains(other)),
+            "{err}"
+        );
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn pressure_output_collision_preserves_restore_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = InputConfig::from_str(REAL).unwrap();
+    let checkpoint = dir.path().join("good.chk");
+    Simulation::from_config_without_outputs(&cfg, dir.path())
+        .unwrap()
+        .write_checkpoint(&checkpoint)
+        .unwrap();
+    let intact = fs::read(&checkpoint).unwrap();
+    cfg.run.restore_file = Some("good.chk".into());
+    cfg.run.pressure_jsonl = Some(checkpoint.to_str().unwrap().into());
+    Simulation::from_config_without_outputs(&cfg, dir.path()).unwrap();
+    let rejected = Simulation::from_config(&cfg, dir.path()).err();
+    assert_eq!(
+        fs::read(&checkpoint).unwrap().len(),
+        intact.len(),
+        "good checkpoint truncated"
+    );
+    assert_eq!(fs::read(&checkpoint).unwrap(), intact);
+    assert!(
+        matches!(rejected,Some(modena_core::ModenaError::Config(reason)) if reason.contains("restore_file"))
+    );
+    assert!(!dir.path().join("legacy.csv").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn pressure_output_collision_rejects_filesystem_aliases() {
+    use std::os::unix::fs::symlink;
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("keep"), b"original").unwrap();
+    fs::hard_link(dir.path().join("keep"), dir.path().join("hard")).unwrap();
+    symlink("keep", dir.path().join("soft")).unwrap();
+    symlink(".", dir.path().join("aliasdir")).unwrap();
+    symlink("uncreated", dir.path().join("dangling")).unwrap();
+    for (pressure, log) in [
+        ("hard", "keep"),
+        ("soft", "keep"),
+        ("aliasdir/sub/../new", "new"),
+        ("dangling", "uncreated"),
+    ] {
+        let mut cfg = InputConfig::from_str(REAL).unwrap();
+        cfg.run.pressure_jsonl = Some(pressure.into());
+        cfg.run.log_file = Some(log.into());
+        let err = Simulation::from_config(&cfg, dir.path())
+            .err()
+            .expect("aliased output accepted");
+        assert!(
+            matches!(err,modena_core::ModenaError::Config(ref reason) if reason.contains("log_file")),
+            "{err}"
+        );
+        assert_eq!(fs::read(dir.path().join("keep")).unwrap(), b"original");
+        assert!(!dir.path().join("new").exists());
+        assert!(!dir.path().join("uncreated").exists());
+        assert!(!dir.path().join("sub").exists());
+    }
+}
+
+#[test]
+fn pressure_output_collision_detects_new_case_alias_on_insensitive_volume() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("VolumeCase"), b"volume probe").unwrap();
+    if !dir.path().join("volumecase").exists() {
+        println!("case-sensitive test volume");
+        return;
+    }
+    let mut cfg = InputConfig::from_str(REAL).unwrap();
+    cfg.run.pressure_jsonl = Some("Sample.jsonl".into());
+    cfg.run.log_file = Some("sample.jsonl".into());
+    cfg.run.trajectory_file = Some("untouched.xyz".into());
+    let err = Simulation::from_config(&cfg, dir.path())
+        .err()
+        .expect("new case alias accepted");
+    assert!(
+        matches!(err,modena_core::ModenaError::Config(ref reason) if reason.contains("log_file")),
+        "{err}"
+    );
+    assert!(!dir.path().join("Sample.jsonl").exists());
+    assert!(!dir.path().join("untouched.xyz").exists());
+    println!("case-insensitive test volume; new case alias rejected and owned empty probe removed");
+}

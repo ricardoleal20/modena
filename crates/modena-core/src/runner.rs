@@ -2,9 +2,9 @@
 //! time-stepping loop, and streams trajectory/energy output.
 
 use std::collections::HashSet;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rand::rngs::StdRng;
@@ -520,18 +520,7 @@ impl Simulation {
         check_setup_stop(stop)?;
         let endpoint = endpoint_pressure(&system, &current_model, constraints.as_ref())?;
         let pressure_writer = if outputs {
-            config
-                .run
-                .pressure_jsonl
-                .as_ref()
-                .map(|name| -> Result<_> {
-                    let path = base_dir.join(name);
-                    if let Some(parent) = path.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    Ok(BufWriter::new(File::create(path)?))
-                })
-                .transpose()?
+            open_pressure_output(&config.run, base_dir)?
         } else {
             None
         };
@@ -1799,6 +1788,181 @@ fn build_thermostat(
     }
 }
 
+/// Check file identities before any writer truncates its destination. Opening a
+/// new pressure file exclusively also lets the filesystem resolve aliases for
+/// names that did not exist at preflight (including case-only differences).
+fn open_pressure_output(run: &RunSpec, base: &Path) -> Result<Option<BufWriter<File>>> {
+    let Some(name) = &run.pressure_jsonl else {
+        return Ok(None);
+    };
+    let pressure = configured_destination(&base.join(name))?;
+    let collision = |field| {
+        ModenaError::Config(format!(
+            "run.pressure_jsonl and run.{field} resolve to the same file"
+        ))
+    };
+    let mut others = Vec::new();
+    for (field, name) in [
+        ("log_file", &run.log_file),
+        ("trajectory_file", &run.trajectory_file),
+        ("restart_file", &run.restart_file),
+        ("restore_file", &run.restore_file),
+    ] {
+        let Some(name) = name else { continue };
+        let other = configured_destination(&base.join(name))?;
+        if pressure == other {
+            return Err(collision(field));
+        }
+        others.push((field, other));
+    }
+    if let Some(parent) = pressure.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let (file, created) = match File::create_new(&pressure) {
+        Ok(file) => (file, true),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            (OpenOptions::new().write(true).open(&pressure)?, false)
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let verified = (|| -> Result<()> {
+        for (field, other) in others {
+            if path_matches_file(&other, &file)? {
+                return Err(collision(field));
+            }
+        }
+        file.set_len(0)?;
+        Ok(())
+    })();
+    if let Err(error) = verified {
+        // Unlink only the new, still-owned regular directory entry. In
+        // particular never unlink a caller's preexisting symlink.
+        if created
+            && std::fs::symlink_metadata(&pressure).is_ok_and(|m| m.is_file())
+            && path_matches_file(&pressure, &file)?
+        {
+            std::fs::remove_file(&pressure)?;
+        }
+        return Err(error);
+    }
+    Ok(Some(BufWriter::new(file)))
+}
+
+#[cfg(unix)]
+fn path_matches_file(path: &Path, file: &File) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let other = match path.metadata() {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    let opened = file.metadata()?;
+    Ok(opened.dev() == other.dev() && opened.ino() == other.ino())
+}
+
+#[cfg(windows)]
+fn path_matches_file(path: &Path, file: &File) -> std::io::Result<bool> {
+    use std::ffi::c_void;
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+
+    // FILE_ID_INFO from GetFileInformationByHandleEx, available on Windows 8+.
+    // The volume and 128-bit file ID identify both named aliases and hard links.
+    #[repr(C)]
+    #[derive(Default, PartialEq)]
+    struct FileId {
+        volume: u64,
+        id: [u8; 16],
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetFileInformationByHandleEx(
+            file: *mut c_void,
+            class: i32,
+            info: *mut FileId,
+            size: u32,
+        ) -> i32;
+    }
+    fn identity(file: &File) -> std::io::Result<FileId> {
+        let mut info = FileId::default();
+        // SAFETY: file owns a live handle for this call. Class 18 writes
+        // exactly FILE_ID_INFO to the valid, correctly sized output buffer.
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                18,
+                &mut info,
+                std::mem::size_of::<FileId>() as u32,
+            )
+        };
+        if ok == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(info)
+        }
+    }
+    // Only file attributes are needed, including for write-only output paths.
+    let other = match OpenOptions::new().access_mode(0).open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    Ok(identity(file)? == identity(&other)?)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn path_matches_file(path: &Path, _file: &File) -> std::io::Result<bool> {
+    if path.try_exists()? {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "this platform cannot verify output file identity",
+        ));
+    }
+    Ok(false)
+}
+
+// Keep unresolved components of new output paths, resolving existing directory
+// symlinks before interpreting "..". A dangling file symlink may name another
+// configured stream whose writer will create the target later.
+fn configured_destination(path: &Path) -> std::io::Result<PathBuf> {
+    use std::io::{Error, ErrorKind};
+    use std::path::Component;
+    let mut path = std::path::absolute(path)?;
+    for _ in 0..=40 {
+        let mut resolved = PathBuf::new();
+        let mut components = path.components();
+        let mut redirect = None;
+        while let Some(part) = components.next() {
+            if part == Component::ParentDir {
+                resolved.pop();
+                continue;
+            }
+            resolved.push(part);
+            if !matches!(part, Component::Normal(_)) {
+                continue;
+            }
+            match resolved.canonicalize() {
+                Ok(existing) => resolved = existing,
+                Err(error) if error.kind() == ErrorKind::NotFound => {
+                    if let Ok(target) = std::fs::read_link(&resolved) {
+                        resolved.pop();
+                        redirect = Some(resolved.join(target).join(components.as_path()));
+                        break;
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        match redirect {
+            Some(target) => path = target,
+            None => return Ok(resolved),
+        }
+    }
+    Err(Error::new(
+        ErrorKind::InvalidInput,
+        "too many symlinks in configured output path",
+    ))
+}
+
 fn open_trajectory(run: &RunSpec, base_dir: &Path) -> Result<Option<TrajectoryWriter>> {
     match &run.trajectory_file {
         Some(f) => {
@@ -2050,6 +2214,62 @@ log_every = 1
         assert_eq!(q, sim.system.positions);
         assert_eq!(calls.lock().unwrap().len(), 6);
         assert!(sim.pressure_observation().is_none());
+    }
+
+    #[test]
+    fn identity_mc_proposal_preserves_interval_cache_and_controller_draws() {
+        use rand::RngExt;
+        const WIDTH: f64 = 1e-18;
+        const SEED: u64 = 310;
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = InputConfig::from_str(ONE_STEP).unwrap();
+        let mut sim = Simulation::from_config(&cfg, dir.path()).unwrap();
+        let mut fixed = Simulation::from_config(&cfg, dir.path()).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        install(&mut sim, Box::new(CountingTensor(calls.clone())));
+        install(
+            &mut fixed,
+            Box::new(CountingTensor(Arc::new(Mutex::new(Vec::new())))),
+        );
+        let controller = || {
+            MonteCarloBarostat::new(1., 1., WIDTH, SEED)
+                .with_interval(2)
+                .unwrap()
+        };
+        sim.barostat = Box::new(controller());
+        let mut expected_rng = chacha20::ChaCha12Rng::seed_from_u64(SEED);
+        let mut accepted = 0;
+        for step in 1..=6 {
+            sim.run().unwrap();
+            fixed.run().unwrap();
+            if step % 2 == 0 {
+                let delta = expected_rng.random_range(-WIDTH..WIDTH);
+                assert_eq!((delta / 3.).exp(), 1.);
+                let log_draw = expected_rng.random::<f64>().ln();
+                let log_ratio = (sim.system.n() + 1) as f64 * delta;
+                accepted += usize::from(log_ratio >= 0. || log_draw < log_ratio);
+            }
+            assert_eq!(calls.lock().unwrap().len(), step + 1);
+            assert_eq!(sim.interval_pressure(), fixed.interval_pressure());
+            assert!(sim.interval_pressure().unwrap().scalar.is_some());
+            assert_eq!(sim.system.positions, fixed.system.positions);
+            assert_eq!(sim.system.forces, fixed.system.forces);
+            let state = sim.barostat.checkpoint_state().unwrap();
+            assert_eq!(state["attempted"], step / 2);
+            assert_eq!(state["elapsed_steps"], step);
+            assert_eq!(state["accepted"], accepted);
+            assert_eq!(
+                state["rng"],
+                crate::thermostat::checkpoint_rng(&expected_rng).unwrap()
+            );
+            if step == 3 {
+                let mut resumed = controller();
+                resumed.restore_state(&state).unwrap();
+                sim.barostat = Box::new(resumed);
+            }
+        }
+        assert_eq!(accepted, 3);
+        println!("identity MC steps=6, calls={}, attempts=3 accepted={accepted}, RNG final word {}, restored after step 3", calls.lock().unwrap().len(), expected_rng.get_word_pos());
     }
 
     #[test]

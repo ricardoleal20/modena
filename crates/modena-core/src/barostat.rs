@@ -529,7 +529,8 @@ impl Barostat for MonteCarloBarostat {
             .checked_add(1)
             .ok_or_else(|| state_error("MC attempt count overflow"))?;
         let delta = self.propose(system);
-        let trial = (|| -> Result<ModelEvaluation> {
+        let unchanged = old.box_size == system.box_size && old.positions == system.positions;
+        let trial = (|| -> Result<Option<ModelEvaluation>> {
             if !system.box_size.volume().is_finite()
                 || system.box_size.volume() <= 0.0
                 || system.positions.iter().any(|x| !x.is_finite())
@@ -537,6 +538,11 @@ impl Barostat for MonteCarloBarostat {
                 return Err(ModenaError::Physics(
                     "MC proposal produced nonfinite geometry".into(),
                 ));
+            }
+            // Tiny proposals can round to the original geometry. The ordinary
+            // acceptance draw still advances the Markov chain on that state.
+            if unchanged {
+                return Ok(None);
             }
             neighbors.force_rebuild(system);
             system.zero_forces();
@@ -550,7 +556,7 @@ impl Barostat for MonteCarloBarostat {
                     "MC trial produced nonfinite forces/energy".into(),
                 ));
             }
-            Ok(trial)
+            Ok(Some(trial))
         })();
         let accepted = trial.as_ref().is_ok_and(|trial| {
             self.accepts(
@@ -558,7 +564,9 @@ impl Barostat for MonteCarloBarostat {
                 old.box_size.volume(),
                 system.box_size.volume(),
                 old_pe,
-                trial.energy,
+                trial
+                    .as_ref()
+                    .map_or(old_pe, |evaluation| evaluation.energy),
                 delta,
             )
         });
@@ -567,10 +575,12 @@ impl Barostat for MonteCarloBarostat {
                 .accepted
                 .checked_add(1)
                 .ok_or_else(|| state_error("MC acceptance count overflow"))?;
-            trial.map(Some)
+            trial
         } else {
-            *system = old;
-            neighbors.force_rebuild(system);
+            if !unchanged {
+                *system = old;
+                neighbors.force_rebuild(system);
+            }
             trial.map(|_| None)
         }
     }

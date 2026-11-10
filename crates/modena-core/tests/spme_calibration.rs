@@ -2226,11 +2226,9 @@ fn candidate_two_pass_whole_sweep_projection_rejects_insufficient_budget() {
         .iter()
         .filter(|s| s.role == FixtureRole::Selection)
         .count() as u64;
-    assert_eq!(
-        projected.atom_k_terms,
-        6 * distinct_meshes * selection * per_shift
-    );
-    // Between the old one-pass projection and the required two-pass reservation.
+    // The complete bound also includes ladders, confirmation and candidate work.
+    assert!(projected.atom_k_terms >= 6 * distinct_meshes * selection * per_shift);
+    // Reducing the complete bound cannot silently omit its two-pass work.
     p.limits.max_atom_k_terms_per_family = projected.atom_k_terms * 3 / 4;
     let b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
     assert!(matches!(
@@ -2570,4 +2568,56 @@ fn ordinary_cost_observer_preserves_completed_batches() {
         .output()
         .unwrap();
     assert!(result.status.success(), "{result:?}");
+}
+
+#[test]
+fn complete_family_projection_covers_all_reference_and_candidate_work() {
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    let snapshots = materialize(&p).unwrap();
+    let b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    let projected = preflight_selection_sweep(&p, &snapshots, &b).unwrap();
+    // Six level rectangular atom-k bounds:15204,26004,40692,72444,93144,134844.
+    // Two final cross-kappa calls add2*134844 =>652020 per snapshot.
+    //16 snapshot ladders + selection(8*7*6) and holdout(8*2*6) shift references.
+    assert_eq!(projected.atom_k_terms, 68_684_928);
+    // Real ladder+cross upper24498/snapshot, final shift upper3969.
+    // Candidate pairs:3 * (7*(126*8+2*8) +107*126).
+    assert_eq!(projected.real_terms, 2_168_526);
+}
+
+#[test]
+fn complete_family_projection_preserves_continuing_pair_work_and_checked_counts() {
+    let p = frozen_protocol("special", 2, 1, true).unwrap();
+    let snapshots = materialize(&p).unwrap();
+    let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+    b.candidate_real_pair_upper_bound = 1234;
+    b.reference.work = WorkCounts {
+        real_terms: 50,
+        atom_k_terms: 70,
+    };
+    let projected = preflight_selection_sweep(&p, &snapshots, &b).unwrap();
+    assert_eq!(projected.real_terms, 2_169_810);
+    assert_eq!(projected.atom_k_terms, 68_684_998);
+    b.candidate_real_pair_upper_bound = p.limits.max_real_terms_per_family - 1;
+    assert!(matches!(
+        preflight_selection_sweep(&p, &snapshots, &b),
+        Err(CalibrationFailure::BudgetExceeded(_))
+    ));
+    for field in 0..5 {
+        let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+        match field {
+            0 => b.candidate_real_pair_upper_bound = u64::MAX,
+            1 => b.reference.work.real_terms = u64::MAX,
+            2 => b.reference.work.atom_k_terms = u64::MAX,
+            3 => b.reference.calls = u64::MAX,
+            _ => b.accuracy_calls = u64::MAX,
+        }
+        assert!(
+            matches!(
+                preflight_selection_sweep(&p, &snapshots, &b),
+                Err(CalibrationFailure::BudgetExceeded(_))
+            ),
+            "overflow field {field}"
+        );
+    }
 }

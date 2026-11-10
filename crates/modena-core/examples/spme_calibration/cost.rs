@@ -191,9 +191,21 @@ pub fn begin_selection(
     prepared: &Path,
     b: &mut CandidateBudget,
 ) -> Result<PreparedReferences, CalibrationFailure> {
+    begin_selection_with_generator(prepared, b, |prepared, b| {
+        generate_references(prepared, FixtureRole::Selection, b)
+    })
+}
+fn begin_selection_with_generator<F>(
+    prepared: &Path,
+    b: &mut CandidateBudget,
+    generate: F,
+) -> Result<PreparedReferences, CalibrationFailure>
+where
+    F: FnOnce(&Path, &mut CandidateBudget) -> Result<PreparedReferences, CalibrationFailure>,
+{
     let (p, s, _) = validate_prepared(prepared)?;
     preflight_selection_sweep(&p, &s, b)?;
-    generate_references(prepared, FixtureRole::Selection, b)
+    generate(prepared, b)
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -869,4 +881,47 @@ pub fn cost_smoke(prepared: &Path, out: &Path) -> Result<(), CalibrationFailure>
     };
     super::write_new(&out.join("ordinary-diagnostic.json"), &json_bytes(&record)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod projection_admission_tests {
+    use super::*;
+    #[test]
+    fn complete_projection_rejects_before_begin_selection_generates_references() {
+        let mut p = frozen_protocol("special", 2, 1, true).unwrap();
+        // The old selection-certificate-only bound is45,307,584atom-k visits;
+        // complete reference ladders+confirmation require68,684,928.
+        p.limits.max_atom_k_terms_per_family = 50_000_000;
+        let dir =
+            std::env::temp_dir().join(format!("b05-task5-fix1-projection-{}", std::process::id()));
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        prepare(&dir, p.clone()).unwrap();
+        let mut b = CandidateBudget::new(&p.limits, ReferenceBudget::new(&p.limits));
+        let mut generated = 0;
+        // Pure admission seam: replacing reference generation prevents the RED
+        // from doing physics when the incomplete preflight incorrectly admits it.
+        let result = begin_selection_with_generator(&dir, &mut b, |_, _| {
+            generated += 1;
+            Ok(PreparedReferences {
+                prepared_manifest_sha256: String::new(),
+                role: FixtureRole::Selection,
+                records: vec![],
+            })
+        });
+        assert!(matches!(result, Err(CalibrationFailure::BudgetExceeded(_))));
+        assert_eq!(generated, 0);
+        assert_eq!(b.reference.calls, 0);
+        assert_eq!(b.accuracy_calls, 0);
+        assert_eq!(
+            b.reference.work,
+            WorkCounts {
+                real_terms: 0,
+                atom_k_terms: 0
+            }
+        );
+        assert_eq!(b.candidate_real_pair_upper_bound, 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

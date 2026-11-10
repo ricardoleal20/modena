@@ -420,8 +420,11 @@ fn reference_upper(
         atom_k_terms: mul(mul(2, n)?, vectors - 1)?,
     })
 }
-/// Whole selection+worst-case confirmation call preflight and distinct-mesh
-/// selection invariance work preflight. Invoke before a full-grid sweep.
+/// Complete conservative selection/cost/confirmation projection, added to ALL
+/// continuing work. Before winners exist, every grid row may need timing and up
+/// to one distinct candidate/mesh per target may require confirmation. No failed
+/// or shared winner is assumed. Exact selection mesh aliases alone are deduped.
+/// This may reject a campaign whose eventual feasible subset would cost less.
 pub fn preflight_selection_sweep(
     p: &Protocol,
     snapshots: &[Snapshot],
@@ -432,41 +435,140 @@ pub fn preflight_selection_sweep(
         .iter()
         .filter(|s| s.role == FixtureRole::Selection)
         .collect();
+    let confirmation: Vec<_> = snapshots
+        .iter()
+        .filter(|s| s.role == FixtureRole::Confirmation)
+        .collect();
     let first = selection
         .first()
         .ok_or_else(|| invalid("empty selection roster"))?;
     let grid = candidate_grid(p, first.cell)?;
-    let count = snapshots
-        .iter()
-        .filter(|s| s.role != FixtureRole::RegressionOnly)
-        .count() as u64;
-    let calls = mul(mul(grid.len() as u64, count)?, 7)?;
-    if add(b.accuracy_calls, calls)? > p.limits.max_accuracy_calls {
+    let grid_count = grid.len() as u64;
+    let winner_count = p.targets.len().min(grid.len()) as u64;
+    let shifts = p.translations.len() as u64;
+    let nonzero_shifts = shifts
+        .checked_sub(1)
+        .ok_or_else(|| cap("translation roster empty"))?;
+    let accuracy_calls = add(
+        mul(mul(grid_count, selection.len() as u64)?, shifts)?,
+        mul(mul(winner_count, confirmation.len() as u64)?, shifts)?,
+    )?;
+    if add(b.accuracy_calls, accuracy_calls)? > p.limits.max_accuracy_calls {
         return Err(cap("projected whole campaign accuracy call cap"));
     }
+    // Cold and rebuild are separate calls; all five warmups and5*20 batches
+    // may be needed for every row before its feasible/target outcome is known.
+    let timing_per_candidate = add(
+        add(2, p.warmups as u64)?,
+        mul(p.batches as u64, p.batch_calls as u64)?,
+    )?;
+    let timing_calls = mul(grid_count, timing_per_candidate)?;
+    if timing_calls > p.limits.max_timing_calls {
+        return Err(cap("projected whole campaign timing call cap"));
+    }
     let meshes: std::collections::BTreeSet<_> = grid.iter().map(|c| c.actual_mesh).collect();
+    // Each confirmation snapshot is distinct from every selection snapshot.
+    // Winner IDs can share a mesh; at most target_count distinct meshes remain.
+    let confirmation_meshes = p.targets.len().min(meshes.len()) as u64;
     let final_level = p
         .reference_ladder
         .last()
         .ok_or_else(|| invalid("reference ladder"))?;
-    let settings = ReferenceSettings {
-        kappa: p.reference_kappa_a / p.a,
-        real_cutoff: final_level[0] * p.a,
-        kspace_cutoff: final_level[1] / p.a,
+    let mut work = WorkCounts {
+        real_terms: add(
+            b.reference.work.real_terms,
+            b.candidate_real_pair_upper_bound,
+        )?,
+        atom_k_terms: b.reference.work.atom_k_terms,
     };
-    let mut work = b.reference.work.clone();
-    for s in selection {
-        let upper = reference_upper(s, &settings)?;
-        check_work([1; 3], &upper, 0, &p.limits)?;
-        let copies = mul(meshes.len() as u64, 6)?;
-        work.real_terms = add(work.real_terms, mul(copies, upper.real_terms)?)?;
-        work.atom_k_terms = add(work.atom_k_terms, mul(copies, upper.atom_k_terms)?)?;
+    let mut reference_calls = b.reference.calls;
+    {
+        let mut project_reference = |s: &Snapshot,
+                                     settings: ReferenceSettings,
+                                     copies: u64|
+         -> Result<(), CalibrationFailure> {
+            let upper = reference_upper(s, &settings)?;
+            check_work([1; 3], &upper, 0, &p.limits)?;
+            work.real_terms = add(work.real_terms, mul(copies, upper.real_terms)?)?;
+            work.atom_k_terms = add(work.atom_k_terms, mul(copies, upper.atom_k_terms)?)?;
+            reference_calls = add(reference_calls, copies)?;
+            Ok(())
+        };
+        for s in selection.iter().chain(&confirmation) {
+            // Every fixed refinement and BOTH final cross-kappa checks happen
+            // before choosing a level; they are not replaced by the final call.
+            for [r, k] in &p.reference_ladder {
+                project_reference(
+                    s,
+                    ReferenceSettings {
+                        kappa: p.reference_kappa_a / p.a,
+                        real_cutoff: r * p.a,
+                        kspace_cutoff: k / p.a,
+                    },
+                    1,
+                )?;
+            }
+            for kappa in p.crosscheck_kappa_a {
+                project_reference(
+                    s,
+                    ReferenceSettings {
+                        kappa: kappa / p.a,
+                        real_cutoff: final_level[0] * p.a,
+                        kspace_cutoff: final_level[1] / p.a,
+                    },
+                    1,
+                )?;
+            }
+            let mesh_count = if s.role == FixtureRole::Selection {
+                meshes.len() as u64
+            } else {
+                confirmation_meshes
+            };
+            project_reference(
+                s,
+                ReferenceSettings {
+                    kappa: p.reference_kappa_a / p.a,
+                    real_cutoff: final_level[0] * p.a,
+                    kspace_cutoff: final_level[1] / p.a,
+                },
+                mul(nonzero_shifts, mesh_count)?,
+            )?;
+        }
     }
+    if reference_calls > p.limits.max_accuracy_calls {
+        return Err(cap("projected whole campaign reference call cap"));
+    }
+    let pair_upper = |s: &Snapshot| -> Result<u64, CalibrationFailure> {
+        let n = s.charges.len() as u64;
+        let pairs = mul(
+            n,
+            n.checked_sub(1)
+                .ok_or_else(|| cap("empty candidate snapshot"))?,
+        )? / 2;
+        if pairs > p.limits.max_real_terms_per_call {
+            return Err(cap("projected candidate per-call pair cap"));
+        }
+        Ok(pairs)
+    };
+    for s in selection.iter().chain(&confirmation) {
+        let candidates = if s.role == FixtureRole::Selection {
+            grid_count
+        } else {
+            winner_count
+        };
+        work.real_terms = add(
+            work.real_terms,
+            mul(mul(candidates, shifts)?, pair_upper(s)?)?,
+        )?;
+    }
+    // Ordinary costs use the first fixed selection snapshot, as in the cost
+    // sweep. Profile calls remain a separately bounded diagnostic phase.
+    work.real_terms = add(work.real_terms, mul(timing_calls, pair_upper(first)?)?)?;
     if work.real_terms > p.limits.max_real_terms_per_family
         || work.atom_k_terms > p.limits.max_atom_k_terms_per_family
     {
         return Err(cap(
-            "projected distinct-mesh oracle invariance family work cap",
+            "projected complete selection/confirmation family work cap",
         ));
     }
     Ok(work)

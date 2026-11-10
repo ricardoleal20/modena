@@ -120,7 +120,9 @@ def cargo_sources(rows):
             files.update((ROOT / "crates/modena-core/src").rglob("*.rs"))
             files.add(manifest)
         elif manifest.is_relative_to(OLD):
-            files.update((OLD / "crates/modena-core/src").rglob("*.rs"))
+            files.update(
+                p for p in (OLD / "crates/modena-core/src").rglob("*") if p.is_file()
+            )
             files.update([manifest, OLD / "Cargo.toml", OLD / "Cargo.lock"])
         else:
             # Registry sources include build scripts, features and data included as bytes.
@@ -160,7 +162,7 @@ def host_identity():
         raise ValueError("cannot identify the macOS dyld shared cache")
     return {
         "dyld_shared_cache_uuid": byte_uuid.raw.hex(),
-        "macos_build": capture(["sw_vers", "-buildVersion"]),
+        "macos_build": capture(["/usr/bin/sw_vers", "-buildVersion"]),
         "machine": platform.machine(),
     }
 
@@ -184,6 +186,24 @@ def inventory(paths):
         for p in sorted(set(map(Path, paths)))
         if p.is_file()
     }
+
+
+def python_runtime_files(executable):
+    """Loaded host interpreter/framework and non-shared-cache extension dependencies."""
+    if executable.resolve() != Path(sys.executable).resolve():
+        raise ValueError("inventory must run under the interpreter being frozen")
+    dyld = ctypes.CDLL(None)
+    name = dyld._dyld_get_image_name
+    name.argtypes = [ctypes.c_uint32]
+    name.restype = ctypes.c_char_p
+    files = {executable.resolve()}
+    for i in range(dyld._dyld_image_count()):
+        path = Path(os.fsdecode(name(i)))
+        if path.is_file():
+            files.add(path.resolve())
+        elif not str(path).startswith(("/usr/lib/", "/System/Library/")):
+            raise ValueError(f"unresolved loaded host library {path}")
+    return files
 
 
 def prepare(out):
@@ -226,7 +246,12 @@ def prepare(out):
     files.update(ROOT.glob("crates/*/Cargo.toml"))
     files.update((ROOT / "bench/b07_validation").glob("*.py"))
     files.update((ROOT / "bench/b07_validation").glob("*.rs"))
-    files.add(ROOT / "docs/scientific-hardening/B07-PRESSURE-VALIDATION.md")
+    prereg = out / "preregistered-protocol.md"
+    shutil.copyfile(
+        ROOT / "docs/scientific-hardening/B07-PRESSURE-VALIDATION.md", prereg
+    )
+    files.add(prereg)
+    files.update(python_runtime_files(Path(sys.executable)))
     files.update(
         x for x in rustc.parent.parent.joinpath("lib").glob("*.dylib") if x.is_file()
     )
@@ -390,6 +415,32 @@ def prepare(out):
         j["steps"] * (32 if j["backend"] != "zero" else 1)
         for j in load(inputs / "roster.json")
     )
+    facts["host_python"] = str(Path(sys.executable).resolve())
+    facts["checksum_utility"] = "/usr/bin/shasum"
+    driver = digest(ROOT / "bench/b07_validation/whole_step.rs")
+    facts["driver_source_sha256"] = driver
+    builds = {}
+    for executable in sorted(bins.iterdir()):
+        source_head = (
+            baseline["source_head"]
+            if executable.name == "whole-step-old"
+            else facts["source_head"]
+        )
+        metadata = {
+            "source_head": source_head,
+            "compiler": facts["compiler"],
+            "build_profile": "release",
+            "features": [],
+            "binary_sha256": digest(executable),
+        }
+        if executable.name.startswith("whole-step-"):
+            metadata.update(
+                driver_source_head=facts["source_head"],
+                driver_sha256=driver,
+                linked_core_source_head=source_head,
+            )
+        builds[str(executable)] = metadata
+    facts["executable_builds"] = builds
     dump(inputs / "settings.json", facts)
     files.update(bins.iterdir())
     files.update(logs.iterdir())
@@ -423,7 +474,10 @@ def prepare(out):
     }
     dump(out / "protocol.json", protocol)
     pin = digest(out / "protocol.json")
-    if capture(["shasum", "-a", "256", out / "protocol.json"]).split()[0] != pin:
+    if (
+        capture(["/usr/bin/shasum", "-a", "256", out / "protocol.json"]).split()[0]
+        != pin
+    ):
         raise ValueError("host SHA256 mismatch")
     dump(out / "internal-pin.json", {"protocol_sha256": pin})
     print(

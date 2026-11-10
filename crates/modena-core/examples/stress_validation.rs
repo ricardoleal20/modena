@@ -20,7 +20,7 @@ fn child(args: &[String]) -> R<i32> {
         return Ok(0);
     }
     let protocol = dir.join("protocol.json");
-    let sum = Command::new("shasum")
+    let sum = Command::new("/usr/bin/shasum")
         .args(["-a", "256"])
         .arg(&protocol)
         .output()
@@ -75,18 +75,59 @@ fn child(args: &[String]) -> R<i32> {
         0
     })
 }
+fn host_python(args: &[String]) -> R<PathBuf> {
+    if args.first().is_some_and(|p| p == "prepare") {
+        return Ok(PathBuf::from("/usr/bin/python3"));
+    }
+    let out = args
+        .windows(2)
+        .find(|a| a[0] == "--out")
+        .ok_or("missing campaign output")?;
+    let dir = Path::new(&out[1]);
+    let settings: serde_json::Value = read(&dir.join("inputs/settings.json"))?;
+    let exe = PathBuf::from(
+        settings["host_python"]
+            .as_str()
+            .ok_or("missing prepared interpreter")?,
+    );
+    if !exe.is_absolute() {
+        return Err("interpreter path is not absolute".into());
+    }
+    let protocol: ValidationProtocol = read(&dir.join("protocol.json"))?;
+    let path = exe.to_str().ok_or("unrepresentable interpreter")?;
+    let expect = protocol
+        .source_sha256
+        .get(path)
+        .ok_or("interpreter absent from source inventory")?;
+    let hash = Command::new("/usr/bin/shasum")
+        .args(["-a", "256", path])
+        .output()
+        .map_err(err)?;
+    if !hash.status.success()
+        || String::from_utf8(hash.stdout)
+            .map_err(err)?
+            .split_whitespace()
+            .next()
+            != Some(expect.as_str())
+    {
+        return Err("pinned interpreter changed".into());
+    }
+    Ok(exe)
+}
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = if args.first().map(String::as_str) == Some("--child") {
         child(&args[1..])
     } else {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        Command::new("python3")
-            .arg(root.join("bench/b07_validation/campaign.py"))
-            .args(&args)
-            .status()
-            .map_err(err)
-            .and_then(|s| s.code().ok_or("host launcher terminated".into()))
+        host_python(&args).and_then(|python| {
+            Command::new(python)
+                .arg(root.join("bench/b07_validation/campaign.py"))
+                .args(&args)
+                .status()
+                .map_err(err)
+                .and_then(|s| s.code().ok_or("host launcher terminated".into()))
+        })
     };
     match result {
         Ok(status) => ExitCode::from(status as u8),

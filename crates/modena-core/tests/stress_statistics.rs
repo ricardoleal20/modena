@@ -136,6 +136,24 @@ fn weighted_fit_retains_shared_seed_uncertainty() {
     assert!((f.se - rows[0].estimate.se).abs() < 1e-13);
     assert!(f.weak_order_resolved && f.drop_paired_se < 1e-13);
     assert!(f.weighted_lack_of_fit < 1e-15);
+    let mut sign_change = rows;
+    for (r, bias) in sign_change.iter_mut().zip([16., 4., -1., -0.25]) {
+        let shift = 2. + bias - r.estimate.mean;
+        r.estimate.mean += shift;
+        for seed_mean in &mut r.seed_means {
+            *seed_mean += shift;
+        }
+    }
+    let incompatible = fit(&sign_change, &dt, 2.).unwrap();
+    assert!(
+        !incompatible.weak_order_resolved,
+        "a resolved sign reversal contradicts the other adjacent ratios"
+    );
+    let record = serde_json::to_value(&incompatible).unwrap();
+    assert_eq!(
+        record["resolved_bias_sign_changes"],
+        serde_json::json!([[0.02, 0.01, 4., -1.]])
+    );
 }
 #[test]
 fn finite_checks_precede_reductions() {

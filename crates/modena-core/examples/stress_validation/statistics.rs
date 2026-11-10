@@ -151,6 +151,8 @@ pub struct Fit {
     pub drop_paired_se: f64,
     pub drop_coarsest_intercept_se: f64,
     pub bias_ratio_orders: Vec<[f64; 3]>,
+    /// [coarse h, fine h, coarse bias, fine bias] for incompatible resolved pairs.
+    pub resolved_bias_sign_changes: Vec<[f64; 4]>,
     pub weak_order_resolved: bool,
 }
 fn regression(rows: &[Inference], dt: &[f64]) -> R<(f64, f64, [f64; 8], f64)> {
@@ -209,10 +211,16 @@ pub fn fit(rows: &[Inference], dt: &[f64], exact: f64) -> R<Fit> {
     let se1 = replica_se(&p1)?;
     let d: Vec<_> = p.iter().zip(p1).map(|(a, b)| a - b).collect();
     let mut orders = vec![];
-    for r in rows.windows(2) {
+    let mut sign_changes = vec![];
+    for (i, r) in rows.windows(2).enumerate() {
         let u = r[0].estimate.mean - exact;
         let v = r[1].estimate.mean - exact;
-        if u * v <= 0. || u.abs() <= 2. * r[0].estimate.se || v.abs() <= 2. * r[1].estimate.se {
+        finite(&[u, v])?;
+        if u.abs() <= 2. * r[0].estimate.se || v.abs() <= 2. * r[1].estimate.se {
+            continue;
+        }
+        if u.is_sign_positive() != v.is_sign_positive() {
+            sign_changes.push([dt[i], dt[i + 1], u, v]);
             continue;
         }
         let power = (u / v).log2();
@@ -231,6 +239,7 @@ pub fn fit(rows: &[Inference], dt: &[f64], exact: f64) -> R<Fit> {
         orders.push(o);
     }
     let resolved = rows.iter().all(|r| r.enough)
+        && sign_changes.is_empty()
         && !orders.is_empty()
         && orders.iter().all(|r| r[1] >= 1. && r[2] <= 3.);
     let ci = [a - T7 * se, a + T7 * se];
@@ -248,6 +257,7 @@ pub fn fit(rows: &[Inference], dt: &[f64], exact: f64) -> R<Fit> {
         drop_paired_se: replica_se(&d)?,
         drop_coarsest_intercept_se: se1,
         bias_ratio_orders: orders,
+        resolved_bias_sign_changes: sign_changes,
         weak_order_resolved: resolved,
     })
 }

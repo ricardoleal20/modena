@@ -86,7 +86,10 @@ def verify(out, both=True):
         raise ValueError("protocol changed")
     verify_files(p["source_sha256"])
     verify_files(p["snapshot_sha256"])
-    if load(out / "inputs/settings.json")["host_identity"] != host_identity():
+    settings = load(out / "inputs/settings.json")
+    if Path(sys.executable).resolve() != Path(settings["host_python"]):
+        raise ValueError("unexpected host reporter/interpreter")
+    if settings["host_identity"] != host_identity():
         raise ValueError("host or shared library cache changed")
     fixtures = [
         load(f)
@@ -154,6 +157,16 @@ def internal_jobs(out):
 
 def jobs(out, x):
     result = internal_jobs(out)
+    expected_external(x)
+    native = x["native_build"]
+    if (
+        not x["external_source_revision"]
+        or not x["external_packages"]
+        or not native.get("compiler")
+        or not native.get("build_profile")
+        or not isinstance(native.get("features"), list)
+    ):
+        raise ValueError("incomplete native build identity")
     for name, j in x["jobs"].items():
         if name in result or not re.fullmatch(r"[A-Za-z0-9_-]+", name):
             raise ValueError("invalid or duplicate job ID")
@@ -287,56 +300,83 @@ def monitor(out, folder):
     env = dict(os.environ, **launch["env"])
     env["B07_PROTOCOL_SHA256"] = launch["protocol_sha256"]
     env["B07_WORK_PATH"] = str(folder / "work.json")
-    env["B07_HOST_PYTHON"] = sys.executable
+    env["B07_HOST_PYTHON"] = load(out / "inputs/settings.json")["host_python"]
     started = utc()
     begin = time.monotonic()
     with (
         (folder / "stdout.log").open("xb") as so,
         (folder / "stderr.log").open("xb") as se,
     ):
-        child = subprocess.Popen(
-            cmd,
-            cwd=launch["cwd"],
-            env=env,
-            stdout=so,
-            stderr=se,
-            start_new_session=True,
-            preexec_fn=caps,  # noqa: PLW1509 -- this dedicated monitor is single-threaded
-        )
-        dump(
-            folder / "started.json",
-            {"pid": child.pid, "utc": started, "monotonic": begin, "role": role},
-        )
-        last_scan = 0.0
+        # Handlers request cleanup without interrupting the fork/started-receipt ownership window.
+        cancelled = []
+
+        def on_signal(sig, _frame):
+            cancelled.append(signal.Signals(sig).name)
+
+        saved = {
+            sig: signal.signal(sig, on_signal)
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+        }
+        child = None
+        reaped = False
         samples = 0
         sampled = 0
         stop = None
-        while True:
-            pid, status, usage = os.wait4(child.pid, os.WNOHANG)
-            if pid:
-                break
-            now = time.monotonic()
-            if lib.proc_pidinfo(child.pid, 4, 0, buf, 96) == 96:
-                rss = int.from_bytes(buf.raw[8:16], "little")
-                sampled = max(sampled, rss)
-                samples += 1
-                if rss > cap:
-                    stop = "RSS cap"
-            if (
-                now >= launch["deadline_monotonic"]
-                or time.time() >= launch["deadline_utc"]
-            ):
-                stop = "wall cap"
-            if now - last_scan >= 0.5:
-                if raw_bytes(out) >= LIMITS["artifact_bytes"]:
-                    stop = "artifact cap"
-                last_scan = now
-            if stop:
-                try:
+        interrupted = None
+        try:
+            child = subprocess.Popen(
+                cmd,
+                cwd=launch["cwd"],
+                env=env,
+                stdout=so,
+                stderr=se,
+                start_new_session=True,
+                preexec_fn=caps,  # noqa: PLW1509 -- dedicated single-threaded monitor
+            )
+            dump(
+                folder / "started.json",
+                {"pid": child.pid, "utc": started, "monotonic": begin, "role": role},
+            )
+            last_scan = 0.0
+            while True:
+                if cancelled:
+                    interrupted = "monitor cancelled: " + cancelled[0]
+                    break
+                pid, status, usage = os.wait4(child.pid, os.WNOHANG)
+                if pid:
+                    reaped = True
+                    break
+                now = time.monotonic()
+                if lib.proc_pidinfo(child.pid, 4, 0, buf, 96) == 96:
+                    rss = int.from_bytes(buf.raw[8:16], "little")
+                    sampled = max(sampled, rss)
+                    samples += 1
+                    if rss > cap:
+                        stop = "RSS cap"
+                if (
+                    now >= launch["deadline_monotonic"]
+                    or time.time() >= launch["deadline_utc"]
+                ):
+                    stop = "wall cap"
+                if now - last_scan >= 0.5:
+                    if raw_bytes(out) >= LIMITS["artifact_bytes"]:
+                        stop = "artifact cap"
+                    last_scan = now
+                if stop:
+                    break
+                time.sleep(0.01)
+        except BaseException as exc:
+            if child is None:
+                raise
+            interrupted = f"monitor error: {type(exc).__name__}: {exc}"
+        finally:
+            if child is not None and not reaped:
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            time.sleep(0.01)
+                _, status, usage = os.wait4(child.pid, 0)
+                reaped = True
+            for sig, handler in saved.items():
+                signal.signal(sig, handler)
         code = os.waitstatus_to_exitcode(status)
         child.returncode = code
     elapsed = time.monotonic() - begin
@@ -344,7 +384,7 @@ def monitor(out, folder):
         stop = "wait4 peak RSS exceeded"
     if launch["name"] == "deterministic" and usage.ru_utime + usage.ru_stime > 60:
         stop = "deterministic CPU cap"
-    if raw_bytes(out) > LIMITS["artifact_bytes"]:
+    if not interrupted and raw_bytes(out) > LIMITS["artifact_bytes"]:
         stop = "artifact cap"
     if (
         time.monotonic() > launch["deadline_monotonic"]
@@ -364,9 +404,11 @@ def monitor(out, folder):
             "rss_samples": samples,
             "sampled_max_rss_bytes": sampled,
             "budget_stop": stop,
+            "interrupted": interrupted,
+            "reaped": reaped,
         },
     )
-    return 2 if stop else code if code >= 0 else 1
+    return 2 if stop else 1 if interrupted else code if code >= 0 else 1
 
 
 def external_spent(out, strict=True):
@@ -395,13 +437,18 @@ def admit_work(out, name):
     projected = 0
     for epoch in epochs(out):
         folder = epoch / "jobs" / name
-        if not folder.exists():
+        if not folder.exists() or (folder / "denied.json").exists():
             continue
         if not (folder / "child.json").exists():
             raise Budget("previous interrupted work unknown")
         child = load(folder / "child.json")
         if name == "ensemble":
-            if child["exit"] not in (0, 3, 4) or not (epoch / "gas-progress").is_file():
+            if (
+                child.get("budget_stop")
+                or child.get("interrupted")
+                or child["exit"] not in (0, 3, 4)
+                or not (epoch / "gas-progress").is_file()
+            ):
                 raise Budget("previous gas suffix unknown")
             gas += int((epoch / "gas-progress").read_text())
         else:
@@ -422,31 +469,127 @@ def admit_work(out, name):
         raise Budget("remaining work below complete frozen upper bound")
 
 
+def ensure_no_live_launch(out):
+    for epoch in epochs(out):
+        for launch in (epoch / "jobs").glob("*/launch.json"):
+            folder = launch.parent
+            if (folder / "child.json").is_file() and load(folder / "child.json").get(
+                "reaped", True
+            ):
+                continue
+            started = folder / "started.json"
+            if not started.is_file():
+                raise Budget(f"unresolved launch, unknown PID: {folder}")
+            pid = load(started).get("pid")
+            if type(pid) != int or pid <= 1:
+                raise Budget(f"unresolved PID: {folder}")
+            try:
+                os.killpg(pid, 0)
+            except ProcessLookupError:
+                continue
+            except PermissionError:
+                pass
+            raise Budget(f"unresolved live process group {pid}: {folder}")
+
+
+def run_wrapper(argv, folder, so, se):
+    """Forward cancellation to the time/monitor group and retain its independent exit."""
+    signals = []
+
+    def cancel(sig, _):
+        signals.append(sig)
+
+    saved = {
+        sig: signal.signal(sig, cancel)
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    }
+    proc = None
+    try:
+        proc = subprocess.Popen(argv, stdout=so, stderr=se, start_new_session=True)
+        while proc.poll() is None and not signals:
+            time.sleep(0.02)
+    finally:
+        if proc is not None and proc.poll() is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+        if proc is not None:
+            host = folder / "host.time"
+            dump(
+                folder / "wrapper.json",
+                {
+                    "argv": argv,
+                    "exit": proc.returncode,
+                    "cancellation": [signal.Signals(s).name for s in signals],
+                    "host_time_sha256": digest(host) if host.exists() else None,
+                },
+            )
+            # A killed monitor cannot wait4 its child. Terminate the live group for this launch;
+            # a missing child receipt remains unknown and further admission rechecks the group.
+            if not (folder / "child.json").is_file():
+                started = folder / "started.json"
+                if started.is_file():
+                    pid = load(started)["pid"]
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(pid, signal.SIGKILL)
+                dump(
+                    folder / "monitor-loss.json",
+                    {"utc": utc(), "wrapper_exit": proc.returncode, "wait4": "unknown"},
+                )
+        for sig, handler in saved.items():
+            signal.signal(sig, handler)
+    return proc.returncode
+
+
 def run_job(out, name, argv=None, role=None):
     out = Path(out).resolve()
     with exclusive(out):
         _, external = verify(out)
         roster = jobs(out, external)
         j = roster[name]
-        admit_work(out, name)
         if (argv is not None and list(map(str, argv)) != j["argv"]) or (
             role is not None and role != j["role"]
         ):
             raise ValueError("unregistered invocation")
-        clock = load(out / "clock.json")
-        absolute = load(LEDGER / "absolute-clock.json")
-        if any(clock[k] != v for k, v in absolute.items()):
-            raise ValueError("absolute clock changed")
-        sec = remaining(clock)
-        spent, used = external_spent(out, strict=j["role"] == "reference")
-        if j["role"] == "reference":
-            if used >= 24:
-                raise Budget("reference jobs exhausted")
-            sec = min(sec, 3600 - spent)
-        if sec <= 0 or raw_bytes(out) >= LIMITS["artifact_bytes"]:
-            raise Budget("combined or external budget exhausted")
         folder = out / "jobs" / name
-        folder.mkdir()  # One execution per frozen action; no budget reset or implicit retry.
+        if folder.exists():
+            raise ValueError(f"action already recorded: {name}")
+        try:
+            clock = load(out / "clock.json")
+            absolute = load(LEDGER / "absolute-clock.json")
+            if any(clock[k] != v for k, v in absolute.items()):
+                raise ValueError("absolute clock changed")
+            sec = remaining(clock)
+            if sec <= 0 or raw_bytes(out) >= LIMITS["artifact_bytes"]:
+                raise Budget("combined budget exhausted")
+            ensure_no_live_launch(out)
+            admit_work(out, name)
+            if j["role"] == "reference":
+                spent, used = external_spent(out)
+                if used >= 24:
+                    raise Budget("reference jobs exhausted")
+                sec = min(sec, 3600 - spent)
+                if sec <= 0:
+                    raise Budget("external wall budget exhausted")
+        except Budget as exc:
+            folder.mkdir()
+            dump(
+                folder / "denied.json",
+                {
+                    "name": name,
+                    "utc": utc(),
+                    "status": "BudgetExceeded",
+                    "reason": str(exc),
+                    "launched": False,
+                },
+            )
+            raise
+        folder.mkdir()
         input_digest = None
         if "matched-evaluate" in j["argv"]:
             src = Path(j["argv"][-2])
@@ -492,22 +635,19 @@ def run_job(out, name, argv=None, role=None):
                 "-l",
                 "-o",
                 str(folder / "host.time"),
-                sys.executable,
+                load(out / "inputs/settings.json")["host_python"],
                 __file__,
                 "_monitor",
                 str(out),
                 str(folder),
             ]
-            receipt = subprocess.run(wrapper, stdout=so, stderr=se, check=False)
-        dump(folder / "wrapper.json", {"argv": wrapper, "exit": receipt.returncode})
+            run_wrapper(wrapper, folder, so, se)
+        if not (folder / "child.json").is_file():
+            raise ValueError("monitor lost; direct child receipt unavailable")
         child = load(folder / "child.json")
-        if "maximum resident set size" not in (folder / "host.time").read_text():
-            raise ValueError("missing independent host-time receipt")
-        status = (
-            2 if child["budget_stop"] else child["exit"] if child["exit"] >= 0 else 1
-        )
-        if status != receipt.returncode:
-            raise ValueError("child and wrapper exit disagreement")
+        status = child_status(child)
+        if not reconciled_wrapper(folder, child):
+            raise ValueError("inconsistent child and host-time wrapper receipts")
         return status
 
 
@@ -564,9 +704,136 @@ def checked_gates(rows):
     return rows
 
 
-def report(out):
-    p, x = verify(out)
-    roster = jobs(out, x)
+def unmeasured(name, status="Pending"):
+    return {
+        "name": name,
+        "observed": [],
+        "expected": [],
+        "absolute_error": [],
+        "tolerance": [],
+        "status": status,
+    }
+
+
+def expected_external(epoch):
+    families = epoch.get("expected_gate_families")
+    if not isinstance(families, dict) or not families:
+        raise ValueError("missing frozen external gate families")
+    flat = []
+    for family, names in families.items():
+        if (
+            not isinstance(family, str)
+            or not family
+            or not isinstance(names, list)
+            or not names
+            or any(not isinstance(n, str) or not n for n in names)
+        ):
+            raise ValueError("invalid external gate family")
+        flat.extend(names)
+    if len(set(flat)) != len(flat):
+        raise ValueError("duplicate external gate expectation")
+    return flat
+
+
+def child_status(child):
+    if child["budget_stop"]:
+        return 2
+    return child["exit"] if child["exit"] >= 0 and not child.get("interrupted") else 1
+
+
+def reconciled_wrapper(folder, child):
+    if not (folder / "wrapper.json").is_file() or not (folder / "host.time").is_file():
+        return False
+    wrapper = load(folder / "wrapper.json")
+    settings = load(folder.parent.parent / "inputs/settings.json")
+    argv = [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        str(folder / "host.time"),
+        settings["host_python"],
+        __file__,
+        "_monitor",
+        str(folder.parent.parent),
+        str(folder),
+    ]
+    if (
+        wrapper.get("argv") != argv
+        or wrapper.get("host_time_sha256") != digest(folder / "host.time")
+        or wrapper.get("exit") != child_status(child)
+        or wrapper.get("cancellation")
+    ):
+        return False
+    txt = (folder / "host.time").read_text()
+    timing = re.search(r"(?m)^\s*([\d.]+) real\s+([\d.]+) user\s+([\d.]+) sys\s*$", txt)
+    peak = re.search(r"(?m)^\s*(\d+)\s+maximum resident set size\s*$", txt)
+    if not timing or not peak or int(peak[1]) <= 0:
+        return False
+    try:
+        measured = [float(v) for v in timing.groups()]
+    except ValueError:
+        return False
+    return all(
+        math.isfinite(v) and v >= 0
+        for v in measured
+        + [
+            child["elapsed_seconds"],
+            child["user_cpu_seconds"],
+            child["system_cpu_seconds"],
+            child["peak_rss_bytes"],
+        ]
+    )
+
+
+def required_rows(rows, expected):
+    names = {r["name"] for r in rows}
+    return list(rows) + [unmeasured(n) for n in expected if n not in names]
+
+
+def internal_names(phase):
+    if phase == "ou":
+        return [
+            f"ou_{kind}_mean_{i}"
+            for i in range(9)
+            for kind in ("projected", "raw", "reaction")
+        ] + [f"ou_cov_{i}_{j}" for i in range(9) for j in range(9)]
+    if phase == "deterministic":
+        names = ["vv_rotor_mixed_time_negative_control"]
+        for f in (
+            "rotor",
+            "rotor-heavy",
+            "water-principal",
+            "water-principal-heavy",
+            "water-nonprincipal",
+            "water-nonprincipal-heavy",
+        ):
+            for n in (100, 200, 400, 800):
+                names.extend(
+                    [
+                        f"{f}_{n}_finite_window_ledger",
+                        f"{f}_{n}_euler_or_rotor_reaction",
+                    ]
+                )
+            names.extend(
+                f"{f}_{observable}_last_two_ratios"
+                for observable in ("positions", "velocities", "interval", "endpoint")
+            )
+            if "nonprincipal" in f:
+                names.append(f"{f}_rk4_refinement")
+            if f.startswith("rotor"):
+                names.extend(
+                    [f"{f}_vv_maps_all_images", f"{f}_baoab_two_half_maps_all_images"]
+                )
+                for tilt in ("true", "false"):
+                    names.extend(
+                        f"{f}_forced_trap_{tilt}_{field}"
+                        for field in ("pressure", "atom_0", "atom_1")
+                    )
+        return names
+    return []
+
+
+def physics_rows(out, external):
     gates = []
     for case in load(MESH)["cases"]:
         fine = case["rows"][-1]
@@ -575,158 +842,276 @@ def report(out):
         gates.append(
             gate(
                 "historical_spme_" + case["fixture"],
-                [fine["max_component_error"]],
-                [0.0],
-                [2e-4],
+                [fine["max_component_error"], fine["max_translation_change"]],
+                [0.0, 0.0],
+                [2e-4, 2e-4],
             )
         )
-    # Native solver exit status is separate from external physical comparisons.
-    external_gates = out / "external-gates.json"
-    if external_gates.is_file():
-        gates.extend(checked_gates(load(external_gates)))
-    else:
-        gates.append(
-            {
-                "name": "required_external_physical_comparisons",
-                "observed": [],
-                "expected": [],
-                "absolute_error": [],
-                "tolerance": [],
-                "status": "Pending",
-            }
-        )
-    records = []
-    unknown = []
-    projected = 0
-    gas = 0
-    for name, j in roster.items():
-        folder = out / "jobs" / name
-        if not (folder / "child.json").exists():
-            if (folder / "launch.json").exists():
-                unknown.append(name)
-            gates.append(
+    fp = out / "external-gates.json"
+    rows = checked_gates(load(fp)) if fp.exists() else []
+    gates.extend(required_rows(rows, expected_external(external)))
+    for phase in ("deterministic", "ou"):
+        path = out / (phase + "-gates.json")
+        if path.exists():
+            gates.extend(
+                required_rows(checked_gates(load(path)), internal_names(phase))
+            )
+        else:
+            gates.append(unmeasured(f"required_{phase}_physical_gates"))
+    final = out / "ensemble-gates.json"
+    final_rows = checked_gates(load(final)) if final.exists() else []
+    if not final_rows:
+        gates.append(unmeasured("required_ensemble_physical_gates"))
+    latest = []
+    rungs = []
+    for species in ("gas-rotor", "gas-water"):
+        most_recent = []
+        for duration in (400, 800, 1600):
+            path = out / f"{species}-{duration}-gates.json"
+            if not path.exists():
+                continue
+            observed = checked_gates(load(path))
+            prefix = f"{species}_{duration}_"
+            if any(not row["name"].startswith(prefix) for row in observed):
+                raise ValueError("gas rung row from different trajectory set")
+            names = {row["name"] for row in observed}
+            expected = []
+            pressure = [
+                f"{timing}_{k}"
+                for timing in ("endpoint", "interval")
+                for k in ("xx", "yy", "zz", "xy", "xz", "yz", "scalar")
+            ]
+            energy = [
+                f"{k}_{m}"
+                for k in ("com", "rotation")
+                for m in ("mean", "variance", "cdf10", "cdf50", "cdf90")
+            ]
+            for metric in pressure + energy + [f"orientation_{i}" for i in range(6)]:
+                expected.extend(
+                    f"{prefix}{h}_{metric}_precision"
+                    for h in ("0.04", "0.02", "0.01", "0.005")
+                )
+                if f"{prefix}{metric}_unresolved_fit" not in names:
+                    expected.append(f"{prefix}{metric}_intercept")
+                    if metric in pressure:
+                        expected.extend(
+                            [
+                                f"{prefix}{metric}_finest",
+                                f"{prefix}{metric}_drop_coarse",
+                            ]
+                        )
+            most_recent = required_rows(observed, expected)
+            rungs.append(
                 {
-                    "name": name,
-                    "observed": [],
-                    "expected": [],
-                    "absolute_error": [],
-                    "tolerance": [],
-                    "status": "Pending",
+                    "species": species,
+                    "measurement_duration": duration,
+                    "sha256": digest(path),
+                    "gates": most_recent,
                 }
             )
+        if not most_recent:
+            gates.append(unmeasured(f"required_{species}_rung"))
+        latest.extend(most_recent)
+    if final_rows:
+        by_name = {row["name"]: row for row in final_rows}
+        for row in latest:
+            other = by_name.get(row["name"])
+            if other is None:
+                gates.append(unmeasured("missing_final_" + row["name"]))
+                by_name[row["name"]] = row
+            elif other != row:
+                raise ValueError("final gas record differs from completed rung")
+        gates.extend(by_name.values())
+    else:
+        gates.extend(latest)
+    return gates, rungs
+
+
+def measured_work(out, name, job, child):
+    folder = out / "jobs" / name
+    count = 0
+    draws = 0
+    launched = (folder / "launch.json").exists()
+    incomplete = launched and child is None
+    if (folder / "work.json").exists():
+        w = load(folder / "work.json")
+        if (
+            set(w) != {"system_steps", "molecule_steps", "complete"}
+            or type(w["complete"]) != bool
+            or any(
+                type(w[k]) != int or w[k] < 0
+                for k in ("system_steps", "molecule_steps")
+            )
+        ):
+            raise ValueError("malformed actual work")
+        count = w["molecule_steps"]
+        incomplete |= not w["complete"]
+    elif child and name.startswith(("cost-old-", "cost-new-")) and child["exit"] == 0:
+        data = load(folder / "stdout.log")
+        steps = data["steps"]
+        if (
+            type(steps) != int
+            or steps < 0
+            or data["fixture"] not in ("rotor", "gas-water")
+        ):
+            raise ValueError("invalid cost work")
+        count = steps * (32 if data["fixture"] == "gas-water" else 1)
+    elif launched and (
+        job.get("role") == "reference"
+        or "matched-trajectory" in job.get("argv", [])
+        or name in ("deterministic", "costs")
+    ):
+        incomplete = True
+    if name == "ensemble":
+        progress = out / "gas-progress"
+        if progress.is_file():
+            count = int(progress.read_text())
+            if count < 0:
+                raise ValueError("negative completed gas work")
+        incomplete |= launched and (
+            not progress.exists()
+            or not child
+            or child["exit"] not in (0, 3, 4)
+            or bool(child.get("budget_stop"))
+        )
+    if name == "ou-draws":
+        path = folder / "stdout.log"
+        pairs = (
+            [
+                (int(i), int(n))
+                for i, n in re.findall(
+                    r"conditional seed=(\d+) draws=(\d+)", path.read_text()
+                )
+            ]
+            if path.exists()
+            else []
+        )
+        if len(pairs) > 8 or pairs != [(i, 8192) for i in range(len(pairs))]:
+            raise ValueError("invalid conditional seed counts")
+        draws = sum(n for _, n in pairs)
+        incomplete |= launched and len(pairs) != 8
+    return count, draws, incomplete
+
+
+def consumption(epoch):
+    counts = {
+        "gas_molecule_steps": 0,
+        "conditional_draws": 0,
+        "all_molecule_steps": 0,
+        "unknown_suffixes": [],
+    }
+    for folder in sorted((epoch / "jobs").iterdir()):
+        if not folder.is_dir():
+            continue
+        launch = folder / "launch.json"
+        child = folder / "child.json"
+        n, d, unknown = measured_work(
+            epoch,
+            folder.name,
+            load(launch) if launch.exists() else {},
+            load(child) if child.exists() else None,
+        )
+        counts["all_molecule_steps"] += n
+        counts["conditional_draws"] += d
+        if folder.name == "ensemble":
+            counts["gas_molecule_steps"] += n
+        if unknown:
+            counts["unknown_suffixes"].append(str(folder))
+    return counts
+
+
+def executable_build(settings, external, job, launch):
+    path = job["argv"][0]
+    if launch["argv"] != job["argv"] or launch["binary_sha256"] != digest(path):
+        raise ValueError("execution differs from registered executable")
+    if job["role"] == "reference":
+        return dict(
+            external["native_build"],
+            source_head=external["external_source_revision"],
+            binary_sha256=launch["binary_sha256"],
+            external_source_revision=external["external_source_revision"],
+            external_packages=external["external_packages"],
+        )
+    build = settings["executable_builds"][path]
+    if build["binary_sha256"] != launch["binary_sha256"]:
+        raise ValueError("binary differs from registered build")
+    return dict(build, external_source_revision=None, external_packages=[])
+
+
+def report(out):
+    p, x = verify(out)
+    roster = jobs(out, x)
+    gates, rungs = physics_rows(out, x)
+    settings = load(out / "inputs/settings.json")
+    records = []
+    builds = {}
+    receipt_checks = {}
+    denials = {}
+    for name, job in roster.items():
+        folder = out / "jobs" / name
+        if (folder / "denied.json").exists():
+            denial = load(folder / "denied.json")
+            if (
+                denial["name"] != name
+                or denial["status"] != "BudgetExceeded"
+                or denial["launched"] is not False
+            ):
+                raise ValueError("malformed denial")
+            denials[name] = denial
+            gates.append(unmeasured("execution_" + name, "BudgetExceeded"))
+            continue
+        if not (folder / "child.json").is_file():
+            gates.append(unmeasured("execution_" + name))
             continue
         child = load(folder / "child.json")
         launch = load(folder / "launch.json")
-        actual_draws = 0
-        actual_steps = 0
-        if name == "ou-draws":
-            counts = [
-                int(n)
-                for n in re.findall(
-                    r"conditional seed=\d+ draws=(\d+)",
-                    (folder / "stdout.log").read_text(),
-                )
-            ]
-            actual_draws = sum(counts)
-            projected += actual_draws
-            if counts != [8192] * 8:
-                unknown.append(name)
-        if (folder / "work.json").exists():
-            measured = load(folder / "work.json")
-            if (
-                set(measured) != {"system_steps", "molecule_steps", "complete"}
-                or any(
-                    type(measured[k]) != int or measured[k] < 0
-                    for k in ("system_steps", "molecule_steps")
-                )
-                or type(measured["complete"]) != bool
-            ):
-                raise ValueError("malformed work sidecar")
-            actual_steps = measured["molecule_steps"]
-            if not measured["complete"]:
-                unknown.append(name)
-        elif name.startswith(("cost-old-", "cost-new-")):
-            if child["exit"] == 0:
-                data = load(folder / "stdout.log")
-                actual_steps = data["steps"] * (
-                    32 if data["fixture"] == "gas-water" else 1
-                )
-            else:
-                unknown.append(name)
-        elif (
-            j["role"] == "reference"
-            or "matched-trajectory" in j["argv"]
-            or name in ("deterministic", "costs")
-        ):
-            unknown.append(name)
-        if name == "ensemble":
-            actual_steps = (
-                int((out / "gas-progress").read_text())
-                if (out / "gas-progress").exists()
-                else 0
-            )
-            gas += actual_steps
-            if child["exit"] != 0 and child["exit"] != 3 and child["exit"] != 4:
-                unknown.append(name)
-        if child["budget_stop"]:
-            status = "BudgetExceeded"
-        elif child["exit"] == 0:
-            status = "Passed"
-        elif child["exit"] == 2:
-            status = "Unsupported"
-        elif child["exit"] == 3:
-            status = "Failed"
-        elif child["exit"] == 4:
-            status = "Inconclusive"
-        else:
+        confirmed = reconciled_wrapper(folder, child)
+        receipt_checks[name] = {
+            "matched_host_wrapper": confirmed,
+            "child_exit": child["exit"],
+            "budget_stop": child["budget_stop"],
+            "interruption": child.get("interrupted"),
+        }
+        status = {
+            0: "Passed",
+            2: "BudgetExceeded" if child["budget_stop"] else "Unsupported",
+            3: "Failed",
+            4: "Inconclusive",
+        }.get(child_status(child), "Pending")
+        if not confirmed:
             status = "Pending"
-        if (
-            not (folder / "wrapper.json").exists()
-            or not (folder / "host.time").exists()
-        ):
-            status = "Pending"
-        if (
-            name in ("deterministic", "ou", "ensemble")
-            and (out / (name + "-gates.json")).exists()
-        ):
-            gates.extend(checked_gates(load(out / (name + "-gates.json"))))
-        gates.append(
-            {
-                "name": "execution_" + name,
-                "observed": [child["exit"]],
-                "expected": [0.0],
-                "absolute_error": [abs(child["exit"])],
-                "tolerance": [0.0],
-                "status": status,
-            }
-        )
+        execution = gate("execution_" + name, [child["exit"]], [0.0], [0.0])
+        execution["status"] = status
+        gates.append(execution)
+        n, d, _ = measured_work(out, name, job, child)
+        build = executable_build(settings, x, job, launch)
+        builds[name] = build
         records.append(
             {
-                "source_head": load(out / "inputs/settings.json")["source_head"],
-                "compiler": load(out / "inputs/settings.json")["compiler"],
-                "build_profile": "release",
-                "features": [],
-                "command": launch["argv"],
-                "protocol_sha256": launch["protocol_sha256"],
-                "binary_sha256": launch["binary_sha256"],
-                "external_source_revision": x.get("external_source_revision")
-                if j["role"] == "reference"
-                else None,
-                "external_packages": x.get("external_packages", [])
-                if j["role"] == "reference"
-                else [],
-                "threads": 1,
-                "started_utc": child["started_utc"],
-                "ended_utc": child["ended_utc"],
-                "elapsed_seconds": child["elapsed_seconds"],
-                "peak_rss_bytes": child["peak_rss_bytes"],
-                "molecule_steps": actual_steps,
-                "projected_draws": actual_draws,
-                "reference_jobs": int(j["role"] == "reference"),
+                k: build[k]
+                for k in (
+                    "source_head",
+                    "compiler",
+                    "build_profile",
+                    "features",
+                    "external_source_revision",
+                    "external_packages",
+                )
             }
         )
-    if not records:
-        raise ValueError("no new actual execution receipts")
+        records[-1].update(
+            command=launch["argv"],
+            protocol_sha256=launch["protocol_sha256"],
+            binary_sha256=launch["binary_sha256"],
+            threads=1,
+            started_utc=child["started_utc"],
+            ended_utc=child["ended_utc"],
+            elapsed_seconds=child["elapsed_seconds"],
+            peak_rss_bytes=child["peak_rss_bytes"],
+            molecule_steps=n,
+            projected_draws=d,
+            reference_jobs=int(job["role"] == "reference"),
+        )
     # Typed provenance always describes one actual executable. The index records combined consumption separately.
     dest = out / "reports"
     dest.mkdir(exist_ok=True)
@@ -774,31 +1159,56 @@ def report(out):
         "Passed",
     )
     dump(
-        run / "physical-report.json",
+        run / "gate-ledger.json",
         {
-            "protocol": p,
-            "provenance": records[-1],
-            "gates": gates,
-            "raw_files": files,
             "status": worst,
+            "gates": gates,
+            "completed_gas_rungs": rungs,
+            "raw_files": files,
         },
     )
+    if records:
+        dump(
+            run / "physical-report.json",
+            {
+                "protocol": p,
+                "provenance": records[-1],
+                "gates": gates,
+                "raw_files": files,
+                "status": worst,
+            },
+        )
+    # With no measured child there is no valid §12 ExecutionProvenance to serialize.
+    by_epoch = {str(e): consumption(e) for e in epochs(out)}
+    totals = {
+        k: sum(v[k] for v in by_epoch.values())
+        for k in ("gas_molecule_steps", "conditional_draws", "all_molecule_steps")
+    }
+    totals["unknown_suffixes"] = [
+        item for v in by_epoch.values() for item in v["unknown_suffixes"]
+    ]
     dump(
         run / "work.json",
         {
+            "status": worst,
             "validation": "Diagnostic",
+            "registered_builds": builds,
             "all_execution_provenance": records,
-            "unknown_or_partial_work": unknown,
+            "receipt_checks": receipt_checks,
+            "budget_denials": denials,
+            "current_epoch_work": by_epoch[str(out)],
+            "work_by_epoch": by_epoch,
+            "cumulative_work": totals,
             "combined_elapsed_seconds": time.monotonic()
             - load(out / "clock.json")["start_monotonic"],
             "external_consumption_known_prefix": external_spent(out, False),
-            "gas_molecule_steps_observed": gas,
-            "new_conditional_draws_observed": projected,
-            "prior_conditional_draws": load(out / "inputs/settings.json")[
-                "prior_projected_draws"
-            ],
+            "prior_conditional_draws": settings["prior_projected_draws"],
             "prior_zero_amplitude_projector_calls": 4,
-            "status": worst,
+            "charged_conditional_calls_known_prefix": sum(
+                settings["prior_projected_draws"]
+            )
+            + 4
+            + totals["conditional_draws"],
         },
     )
     return {

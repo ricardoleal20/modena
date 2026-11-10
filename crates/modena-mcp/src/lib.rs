@@ -667,6 +667,7 @@ impl RunManager {
             // Hermetic sweeps: no per-run file output (avoid clutter / races).
             config.run.trajectory_file = None;
             config.run.log_file = None;
+            config.run.pressure_jsonl = None;
             config.run.restart_file = None;
             configs.push(
                 config
@@ -847,6 +848,7 @@ fn run_loop(
                     });
                 }
             }
+            RunEvent::Pressure { .. } => {}
             RunEvent::Frame { step, .. } => st.step = *step,
             RunEvent::Finished { summary } => {
                 let summary = summary.clone();

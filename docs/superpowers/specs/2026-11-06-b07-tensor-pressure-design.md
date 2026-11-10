@@ -388,7 +388,7 @@ At gamma=0 the bath is zero; preserve current RNG consumption even when its ampl
 `dt<=0`, nonfinite dt/volume, invalid stage/interval, or stale initial cache returns Config/Physics before publishing a record.
 `StepStress` is pre-controller; runner stores/labels any later transformation separately.
 
-`Energies` stays six scalar fields and `pressure` remains the old configurational-only diagnostic for source compatibility.
+`Energies` stays six scalar fields and `pressure` remains the legacy `(2 KE + model virial) / (3 V)` diagnostic. It excludes constraint reaction and impulse stress.
 Do not silently change the meaning of existing CSV columns. Add `Simulation::pressure_observation(&self)->Option<&PressureObservation>`
 and `Simulation::interval_pressure(&self)->Option<&IntervalPressure>`, new `RunEvent::Pressure { step:usize,time:f64,endpoint:PressureObservation,
 interval:Option<IntervalPressure> }`, and optional companion output `pressure.jsonl` when `RunSpec.pressure_jsonl:Option<String>` is set.

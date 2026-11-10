@@ -2,6 +2,8 @@
 //! time-stepping loop, and streams trajectory/energy output.
 
 use std::collections::HashSet;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -39,6 +41,10 @@ use crate::potential::{
     SoftSphereOverride, SoftSphereTypeParams, Tabulated,
 };
 use crate::spme::SpmeForceModel;
+use crate::stress::{
+    endpoint_pressure, IntervalPressure, MissingTensor, MissingTensorReason, ModelEvaluation,
+    PressureObservation, TensorAvailability,
+};
 use crate::system::{SimBox, System};
 use crate::thermo::Energies;
 use crate::thermostat::{Berendsen, NoneThermostat, Thermostat, VelocityRescaling};
@@ -50,7 +56,8 @@ pub struct Simulation {
     system: System,
     model: Box<dyn ForceModel>,
     integrator: Box<dyn Integrator>,
-    thermostat: Box<dyn Thermostat>,
+    thermostat: Option<Box<dyn Thermostat>>,
+    constraints: Option<Constraints>,
     barostat: Box<dyn Barostat>,
     neighbors: NeighborList,
     dt: f64,
@@ -65,8 +72,13 @@ pub struct Simulation {
     trajectory_writer: Option<TrajectoryWriter>,
     log_every: usize,
     log_writer: Option<LogWriter>,
-    current_pe: f64,
-    current_virial: Virial,
+    pressure_writer: Option<BufWriter<File>>,
+    current_model: ModelEvaluation,
+    // Only runner-owned integration and box coupling can change q/cell.
+    geometry_generation: u64,
+    model_generation: u64,
+    endpoint: PressureObservation,
+    interval: Option<IntervalPressure>,
     /// When `Some`, output (CSV log, trajectory, events) is converted from the
     /// internal reduced units back to real units for display. The physics stays
     /// reduced; only the rendered observables are scaled.
@@ -94,6 +106,14 @@ pub enum RunEvent {
         energies: Energies,
         /// Full-rate statistics in reduced units, independent of log cadence.
         conservation: ConservationReport,
+    },
+    /// Pressure in display units at the thermo cadence. Endpoint is after controllers;
+    /// interval describes the preceding mechanical integration step.
+    Pressure {
+        step: usize,
+        time: f64,
+        endpoint: PressureObservation,
+        interval: Option<IntervalPressure>,
     },
     /// Trajectory frame at a frame step (`trajectory_every` cadence). Positions
     /// are flattened `x,y,z` per atom as `f32` for cheap cross-boundary
@@ -416,12 +436,7 @@ impl Simulation {
         let mut thermostat = build_thermostat(&config.thermostat, &config.integrator);
         let mut barostat = build_barostat(&config.barostat)?;
 
-        // Initial force evaluation so F(t) is cached for the first integrator
-        // half-kick.
-        let mut virial = Virial::default();
-        check_setup_stop(stop)?;
-        let mut pe = model.compute(&mut system, &mut virial, &mut neighbors)?;
-        check_setup_stop(stop)?;
+        let mut restored_model = None;
         if let Some(cp) = &checkpoint {
             match config.run.restart_mode {
                 RestartMode::Continue => {
@@ -445,11 +460,17 @@ impl Simulation {
                         return Err(ModenaError::Config("restart physical identity differs (model, dt, ensemble, seeds, topology, constraints or atoms); use restart_mode = \"state_only\" for an intentional new protocol".into()));
                     }
                     integrator.restore_state(&state.integrator)?;
-                    thermostat.restore_state(&state.thermostat)?;
+                    match &mut thermostat {
+                        Some(t) => t.restore_state(&state.thermostat)?,
+                        None => NoneThermostat.restore_state(&state.thermostat)?,
+                    }
                     barostat.restore_state(&state.barostat)?;
                     system.forces = state.forces.clone();
-                    pe = state.potential_energy;
-                    virial.w = state.virial;
+                    restored_model = Some(ModelEvaluation {
+                        energy: state.potential_energy,
+                        scalar_virial: state.virial,
+                        tensor: missing("v2 checkpoint", MissingTensorReason::LegacyRestart),
+                    });
                 }
                 RestartMode::StateOnly => {
                     // State-only intentionally resets extended/RNG state; impose
@@ -459,12 +480,6 @@ impl Simulation {
                         let reference = system.positions.clone();
                         c.shake(&mut system, &reference, 1e-10, 1000)?;
                         c.rattle(&mut system, 1e-10, 1000)?;
-                        system.zero_forces();
-                        virial = Virial::default();
-                        neighbors.force_rebuild(&system);
-                        check_setup_stop(stop)?;
-                        pe = model.compute(&mut system, &mut virial, &mut neighbors)?;
-                        check_setup_stop(stop)?;
                     }
                     if com_eligible {
                         // Constraint projection can change the imported
@@ -474,7 +489,19 @@ impl Simulation {
                 }
             }
         }
-        if !pe.is_finite() || !virial.w.is_finite() || system.forces.iter().any(|x| !x.is_finite())
+        check_setup_stop(stop)?;
+        // Evaluate once after all initialization projections. Continuation already owns F/E/W.
+        let current_model = match restored_model {
+            Some(saved) => saved,
+            None => {
+                system.zero_forces();
+                model.evaluate(&mut system, &mut neighbors)?
+            }
+        };
+        check_setup_stop(stop)?;
+        if !current_model.energy.is_finite()
+            || !current_model.scalar_virial.is_finite()
+            || system.forces.iter().any(|x| !x.is_finite())
         {
             return Err(ModenaError::Physics(
                 "initial force evaluation produced nonfinite values".into(),
@@ -491,6 +518,23 @@ impl Simulation {
         };
 
         check_setup_stop(stop)?;
+        let endpoint = endpoint_pressure(&system, &current_model, constraints.as_ref())?;
+        let pressure_writer = if outputs {
+            config
+                .run
+                .pressure_jsonl
+                .as_ref()
+                .map(|name| -> Result<_> {
+                    let path = base_dir.join(name);
+                    if let Some(parent) = path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    Ok(BufWriter::new(File::create(path)?))
+                })
+                .transpose()?
+        } else {
+            None
+        };
         let trajectory_writer = if outputs {
             open_trajectory(&config.run, base_dir)?
         } else {
@@ -545,8 +589,13 @@ impl Simulation {
             trajectory_writer,
             log_every: config.run.log_every,
             log_writer,
-            current_pe: pe,
-            current_virial: virial,
+            current_model,
+            geometry_generation: 0,
+            model_generation: 0,
+            constraints,
+            endpoint,
+            interval: None,
+            pressure_writer,
             unit_factors: config.unit_factors,
             physical_signature,
         })
@@ -578,6 +627,20 @@ impl Simulation {
         &self.system
     }
 
+    /// Mechanical endpoint at the latest completed snapshot, in reduced units.
+    pub fn pressure_observation(&self) -> Option<&PressureObservation> {
+        (!self.failed).then_some(&self.endpoint)
+    }
+
+    /// Pre-controller interval in reduced units. Absent before the first measured step.
+    pub fn interval_pressure(&self) -> Option<&IntervalPressure> {
+        if self.failed {
+            None
+        } else {
+            self.interval.as_ref()
+        }
+    }
+
     /// The global step counter (0 for a fresh run; the restored step from a
     /// `restore_file` checkpoint; advances as the run loop steps).
     pub fn current_step(&self) -> usize {
@@ -592,6 +655,7 @@ impl Simulation {
     /// callers that drive stepping manually.
     pub fn write_checkpoint(&self, path: &Path) -> Result<()> {
         self.ensure_usable()?;
+        self.ensure_current_model()?;
         crate::io::restart::save(
             path,
             &crate::io::restart::Checkpoint {
@@ -610,11 +674,14 @@ impl Simulation {
                     elements: self.system.elements.clone(),
                     constraint_count: self.system.constraint_count(),
                     conserved_com_dof: self.system.conserved_com_dof(),
-                    potential_energy: self.current_pe,
-                    virial: self.current_virial.w,
+                    potential_energy: self.current_model.energy,
+                    virial: self.current_model.scalar_virial,
                     physical_signature: self.physical_signature.clone(),
                     integrator: self.integrator.checkpoint_state()?,
-                    thermostat: self.thermostat.checkpoint_state()?,
+                    thermostat: match &self.thermostat {
+                        Some(t) => t.checkpoint_state()?,
+                        None => NoneThermostat.checkpoint_state()?,
+                    },
                     barostat: self.barostat.checkpoint_state()?,
                 }),
             },
@@ -664,8 +731,9 @@ impl Simulation {
         stop: Option<&AtomicBool>,
         on_event: &mut impl FnMut(&RunEvent),
     ) -> Result<RunSummary> {
+        self.ensure_current_model()?;
         let dt = self.dt;
-        let mut e = Energies::from(&self.system, self.current_pe, &self.current_virial);
+        let mut e = self.energies();
         let e0 = e.total;
         let mut monitor = EnergyMonitor::new(
             e0,
@@ -701,6 +769,8 @@ impl Simulation {
             conservation: monitor.report(),
         });
 
+        self.emit_pressure(start_step, start_time, on_event)?;
+
         let mut executed = 0usize;
         for i in 1..=self.steps {
             if stop.is_some_and(|flag| flag.load(Ordering::Acquire)) {
@@ -708,10 +778,7 @@ impl Simulation {
             }
             // Global step label: a resumed run continues from the checkpoint.
             let step = start_step + i;
-            e = match self
-                .integrator
-                .step(&mut self.system, &*self.model, &mut self.neighbors, dt)
-            {
+            e = match self.advance() {
                 Ok(e) => e,
                 Err(error) => {
                     on_event(&RunEvent::Failed {
@@ -721,31 +788,6 @@ impl Simulation {
                     return Err(error);
                 }
             };
-            self.current_pe = e.potential;
-            self.current_virial = Virial { w: e.virial };
-
-            // Velocity-only thermostats compose with velocity-Verlet. For
-            // Langevin the thermostat is `None` and the integrator already
-            // handled temperature control.
-            self.thermostat.apply(&mut self.system, dt);
-            // Pressure coupling: scales the box + positions. Only `NoneBarostat`
-            // is a true no-op; any real barostat changes V (and thus the
-            // pressure/KE observables), so recompute the thermo snapshot.
-            if let Err(error) = self.barostat.apply_with_model(
-                &mut self.system,
-                &*self.model,
-                &mut self.neighbors,
-                &mut self.current_pe,
-                &mut self.current_virial,
-                dt,
-            ) {
-                on_event(&RunEvent::Failed {
-                    step,
-                    error: error.to_string(),
-                });
-                return Err(error);
-            }
-            e = Energies::from(&self.system, self.current_pe, &self.current_virial);
             if let Err(error) = monitor.observe(i as f64 * dt, e.total) {
                 on_event(&RunEvent::Failed {
                     step,
@@ -765,6 +807,7 @@ impl Simulation {
                     energies: self.display_energies(&e),
                     conservation: monitor.report(),
                 });
+                self.emit_pressure(step, time, on_event)?;
             }
             if step.is_multiple_of(self.trajectory_every) {
                 self.frame(step, time, &e)?;
@@ -793,6 +836,9 @@ impl Simulation {
         if let Some(w) = self.log_writer.as_mut() {
             w.flush()?;
         }
+        if let Some(w) = &mut self.pressure_writer {
+            w.flush()?;
+        }
         // Final checkpoint — also on early stop, so a run is always resumable
         // from exactly where it stopped.
         if let Some(path) = self.restart_path.clone() {
@@ -808,6 +854,161 @@ impl Simulation {
             summary: summary.clone(),
         });
         Ok(summary)
+    }
+
+    fn energies(&self) -> Energies {
+        Energies::from(
+            &self.system,
+            self.current_model.energy,
+            &Virial {
+                w: self.current_model.scalar_virial,
+            },
+        )
+    }
+
+    fn advance(&mut self) -> Result<Energies> {
+        self.ensure_current_model()?;
+        self.bump_geometry_generation()?;
+        let out = self.integrator.step_with_stress(
+            &mut self.system,
+            &*self.model,
+            &mut self.neighbors,
+            self.dt,
+            &self.current_model,
+        )?;
+        let (mut model, pre_controller_endpoint, mut interval) = match out.stress {
+            Some(stress) => (
+                stress.final_model,
+                Some(stress.endpoint),
+                Some(stress.interval),
+            ),
+            None => (
+                legacy_missing(out.energies.potential, out.energies.virial),
+                None,
+                None,
+            ),
+        };
+        if let Some(t) = &mut self.thermostat {
+            t.apply(&mut self.system, self.dt);
+        }
+        let updated = self.barostat.evaluate_move(
+            &mut self.system,
+            &*self.model,
+            &mut self.neighbors,
+            model.energy,
+            &Virial {
+                w: model.scalar_virial,
+            },
+            self.dt,
+        )?;
+        let moved = updated.is_some();
+        if let Some(updated) = updated {
+            self.bump_geometry_generation()?;
+            model = updated;
+            if let Some(interval) = &mut interval {
+                let mut reasons = match &interval.model_average {
+                    TensorAvailability::Missing(reasons) => reasons.clone(),
+                    TensorAvailability::Complete(_) => Vec::new(),
+                };
+                reasons.push(MissingTensor {
+                    component: "barostat".into(),
+                    reason: MissingTensorReason::PostStepTransform,
+                });
+                interval.model_average = TensorAvailability::Missing(reasons.clone());
+                interval.total = TensorAvailability::Missing(reasons);
+                interval.scalar = None;
+            }
+        }
+        self.endpoint = match pre_controller_endpoint {
+            Some(endpoint) if self.thermostat.is_none() && !moved => endpoint,
+            None if moved => {
+                let unavailable = legacy_missing(model.energy, model.scalar_virial);
+                endpoint_pressure(&self.system, &unavailable, self.constraints.as_ref())?
+            }
+            _ => endpoint_pressure(&self.system, &model, self.constraints.as_ref())?,
+        };
+        self.current_model = model;
+        self.model_generation = self.geometry_generation;
+        self.interval = interval;
+        Ok(self.energies())
+    }
+
+    fn ensure_current_model(&self) -> Result<()> {
+        if self.geometry_generation != self.model_generation {
+            return Err(ModenaError::Physics(
+                "stale runner force/model cache".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn bump_geometry_generation(&mut self) -> Result<()> {
+        self.geometry_generation = self
+            .geometry_generation
+            .checked_add(1)
+            .ok_or_else(|| ModenaError::Physics("runner geometry generation overflow".into()))?;
+        Ok(())
+    }
+
+    fn emit_pressure(
+        &mut self,
+        step: usize,
+        time: f64,
+        sink: &mut impl FnMut(&RunEvent),
+    ) -> Result<()> {
+        finite_display(time)?;
+        let mut endpoint = self.endpoint.clone();
+        let mut interval = self.interval.clone();
+        if let Some(f) = self.unit_factors {
+            scale_components(&mut endpoint.kinetic, f.epsilon)?;
+            scale_components(&mut endpoint.constraint, f.epsilon)?;
+            scale_tensor(&mut endpoint.model, f.epsilon)?;
+            scale_tensor(&mut endpoint.total, f.pressure)?;
+            endpoint.scalar = endpoint
+                .scalar
+                .map(|p| finite_display(f.to_real_pressure(p)))
+                .transpose()?;
+            endpoint.volume = finite_display(endpoint.volume * f.sigma.powi(3))?;
+            if let Some(i) = &mut interval {
+                scale_components(&mut i.kinetic_average, f.epsilon)?;
+                scale_components(&mut i.constraint_average, f.epsilon)?;
+                scale_tensor(&mut i.model_average, f.epsilon)?;
+                scale_tensor(&mut i.total, f.pressure)?;
+                i.scalar = i
+                    .scalar
+                    .map(|p| finite_display(f.to_real_pressure(p)))
+                    .transpose()?;
+                i.volume = finite_display(i.volume * f.sigma.powi(3))?;
+                i.dt = finite_display(f.to_real_time(i.dt))?;
+            }
+        }
+        if let Some(w) = &mut self.pressure_writer {
+            #[derive(serde::Serialize)]
+            struct Sample<'a> {
+                step: usize,
+                time: f64,
+                endpoint: &'a PressureObservation,
+                interval: Option<&'a IntervalPressure>,
+            }
+            serde_json::to_writer(
+                &mut *w,
+                &Sample {
+                    step,
+                    time,
+                    endpoint: &endpoint,
+                    interval: interval.as_ref(),
+                },
+            )
+            .map_err(std::io::Error::from)?;
+            w.write_all(b"\n")?;
+        }
+        sink(&RunEvent::Pressure {
+            step,
+            time,
+            endpoint,
+            interval,
+        });
+        Ok(())
     }
 
     /// Scale a reduced time to real units (ps) when factors are configured.
@@ -880,6 +1081,48 @@ impl Simulation {
         self.log_sample(step, time, e)?;
         self.frame(step, time, e)
     }
+}
+
+fn legacy_missing(energy: f64, scalar_virial: f64) -> ModelEvaluation {
+    ModelEvaluation {
+        energy,
+        scalar_virial,
+        tensor: missing(
+            "integrator without step stress",
+            MissingTensorReason::LegacyForceModel,
+        ),
+    }
+}
+
+fn missing(component: &str, reason: MissingTensorReason) -> TensorAvailability {
+    TensorAvailability::Missing(vec![MissingTensor {
+        component: component.into(),
+        reason,
+    }])
+}
+
+fn finite_display(value: f64) -> Result<f64> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(ModenaError::Physics(
+            "pressure display unit conversion overflow".into(),
+        ))
+    }
+}
+
+fn scale_components(value: &mut crate::stress::SymTensor6, factor: f64) -> Result<()> {
+    for component in &mut value.0 {
+        *component = finite_display(*component * factor)?;
+    }
+    Ok(())
+}
+
+fn scale_tensor(value: &mut TensorAvailability, factor: f64) -> Result<()> {
+    if let TensorAvailability::Complete(t) = value {
+        scale_components(t, factor)?;
+    }
+    Ok(())
 }
 
 fn build_system(
@@ -1529,26 +1772,30 @@ fn build_barostat(spec: &Option<BarostatSpec>) -> Result<Box<dyn Barostat>> {
 fn build_thermostat(
     spec: &Option<ThermostatSpec>,
     integrator: &IntegratorSpec,
-) -> Box<dyn Thermostat> {
+) -> Option<Box<dyn Thermostat>> {
     // Langevin and the Nosé–Hoover chain handle their own temperature control;
     // ignore any thermostat block for them.
     if matches!(
         integrator,
         IntegratorSpec::LangevinBaoab { .. } | IntegratorSpec::NoseHooverChain { .. }
     ) {
-        return Box::new(NoneThermostat);
+        return None;
     }
     match spec {
         Some(ThermostatSpec::Berendsen {
             target_temperature,
             tau,
-        }) => Box::new(Berendsen::new(*target_temperature, *tau)),
+        }) => Some(Box::new(Berendsen::new(*target_temperature, *tau))),
         Some(ThermostatSpec::VelocityRescaling {
             target_temperature,
             tau,
             seed,
-        }) => Box::new(VelocityRescaling::new(*target_temperature, *tau, *seed)),
-        _ => Box::new(NoneThermostat),
+        }) => Some(Box::new(VelocityRescaling::new(
+            *target_temperature,
+            *tau,
+            *seed,
+        ))),
+        _ => None,
     }
 }
 
@@ -1679,5 +1926,195 @@ mod interpreter_path_tests {
             resolve_provider_python(".emt-python", &base).unwrap(),
             ".emt-python"
         );
+    }
+}
+
+#[cfg(test)]
+mod pressure_cache_tests {
+    use super::*;
+    use crate::stress::SymTensor6;
+    use std::sync::{Arc, Mutex};
+
+    const ONE_STEP: &str = r#"
+[structure]
+type = "fcc"
+lattice_constant = 4.0
+replicas = [1,1,1]
+[model]
+type = "lennard_jones"
+sigma = 1.0
+epsilon = 1.0
+cutoff = 1.5
+[integrator]
+type = "velocity_verlet"
+dt = 0.001
+[run]
+steps = 1
+log_every = 1
+"#;
+
+    struct CountingTensor(Arc<Mutex<Vec<ModelEvaluation>>>);
+    impl ForceModel for CountingTensor {
+        fn compute(&self, _: &mut System, _: &mut Virial, _: &mut NeighborList) -> Result<f64> {
+            panic!("runner lost the full model evaluation");
+        }
+        fn evaluate(&self, s: &mut System, _: &mut NeighborList) -> Result<ModelEvaluation> {
+            let v = s.box_size.volume();
+            let tensor = SymTensor6([v, v * 2., v * 3., v + 1., v + 2., v + 3.]);
+            let m = ModelEvaluation {
+                energy: v,
+                scalar_virial: tensor.trace(),
+                tensor: TensorAvailability::Complete(tensor),
+            };
+            self.0.lock().unwrap().push(m.clone());
+            Ok(m)
+        }
+    }
+    struct Scalar;
+    impl ForceModel for Scalar {
+        fn compute(&self, _: &mut System, w: &mut Virial, _: &mut NeighborList) -> Result<f64> {
+            w.w += 3.;
+            Ok(2.)
+        }
+    }
+    struct LegacyIntegrator;
+    impl Integrator for LegacyIntegrator {
+        fn step(
+            &mut self,
+            s: &mut System,
+            model: &dyn ForceModel,
+            n: &mut NeighborList,
+            dt: f64,
+        ) -> Result<Energies> {
+            VelocityVerlet::new().step(s, model, n, dt)
+        }
+    }
+
+    fn install(sim: &mut Simulation, model: Box<dyn ForceModel>) {
+        sim.model = model;
+        sim.system.zero_forces();
+        sim.current_model = sim
+            .model
+            .evaluate(&mut sim.system, &mut sim.neighbors)
+            .unwrap();
+        sim.endpoint = endpoint_pressure(&sim.system, &sim.current_model, None).unwrap();
+    }
+
+    #[test]
+    fn moved_cell_refreshes_full_cache_once_and_noop_reuses_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = InputConfig::from_str(ONE_STEP).unwrap();
+        let mut sim = Simulation::from_config(&config, dir.path()).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        install(&mut sim, Box::new(CountingTensor(calls.clone())));
+        sim.run().unwrap();
+        assert_eq!(calls.lock().unwrap().len(), 2);
+        // Configured barostat at its exact target is also a no-op.
+        let unchanged = sim.system.box_size;
+        let target = sim.energies().pressure;
+        sim.barostat = Box::new(BerendsenBarostat::new(target, 1., 1.));
+        sim.run().unwrap();
+        assert_eq!(sim.system.box_size, unchanged);
+        assert_eq!(calls.lock().unwrap().len(), 3);
+        sim.barostat = Box::new(BerendsenBarostat::new(-2., 1., 1.));
+        sim.run().unwrap();
+        let sample = sim.pressure_observation().unwrap();
+        assert_ne!(sim.system.box_size, unchanged);
+        let records = calls.lock().unwrap().clone();
+        assert_eq!(records.len(), 5);
+        assert_eq!(sample.model, records[4].tensor);
+        assert_ne!(sample.model, records[3].tensor);
+        let i = sim.interval_pressure().unwrap();
+        assert_eq!(i.scalar, None);
+        assert!(
+            matches!(&i.total,TensorAvailability::Missing(m) if m.iter().any(|r|r.reason==MissingTensorReason::PostStepTransform))
+        );
+        sim.barostat = Box::new(NoneBarostat);
+        sim.run().unwrap();
+        assert_eq!(calls.lock().unwrap().len(), 6);
+        assert_eq!(
+            sim.interval.as_ref().unwrap().model_average,
+            records[4].tensor
+        );
+        println!("counted calls after initialization, no barostat, exact-target no-op, moved box, next fixed step: 1, 2, 3, 5, 6; cached moved tensor {:?}",records[4].tensor);
+        // Simulate an internal unpaired geometry edit, then check rejection before F/trajectory mutation.
+        sim.bump_geometry_generation().unwrap();
+        let q = sim.system.positions.clone();
+        let mut emitted = 0;
+        assert!(sim
+            .run_streaming(None, |_| emitted += 1)
+            .unwrap_err()
+            .to_string()
+            .contains("stale runner"));
+        assert_eq!(emitted, 0);
+        assert_eq!(q, sim.system.positions);
+        assert_eq!(calls.lock().unwrap().len(), 6);
+        assert!(sim.pressure_observation().is_none());
+    }
+
+    #[test]
+    fn nonfinite_display_tensor_cannot_be_written_as_null() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = InputConfig::from_str(ONE_STEP).unwrap();
+        config.run.pressure_jsonl = Some("pressure.jsonl".into());
+        let mut sim = Simulation::from_config(&config, dir.path()).unwrap();
+        install(
+            &mut sim,
+            Box::new(CountingTensor(Arc::new(Mutex::new(Vec::new())))),
+        );
+        let mut factors = UnitFactors::new(1., 1., 1.);
+        factors.pressure = f64::MAX;
+        sim.unit_factors = Some(factors);
+        assert!(sim
+            .run()
+            .unwrap_err()
+            .to_string()
+            .contains("display unit conversion overflow"));
+        assert!(sim.pressure_observation().is_none());
+        assert!(std::fs::read(dir.path().join("pressure.jsonl"))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn legacy_provider_and_custom_integrator_report_explicit_missing_diagnostics() {
+        let dir = tempfile::tempdir().unwrap();
+        for custom in [false, true] {
+            let path = format!("pressure-{custom}.jsonl");
+            let mut config = InputConfig::from_str(ONE_STEP).unwrap();
+            config.run.pressure_jsonl = Some(path.clone());
+            let mut sim = Simulation::from_config(&config, dir.path()).unwrap();
+            if custom {
+                sim.integrator = Box::new(LegacyIntegrator);
+            } else {
+                install(&mut sim, Box::new(Scalar));
+            }
+            let e = sim.run().unwrap().final_energies;
+            let raw = std::fs::read_to_string(dir.path().join(path)).unwrap();
+            let row: serde_json::Value = serde_json::from_str(raw.lines().last().unwrap()).unwrap();
+            let endpoint = &row["endpoint"];
+            assert!(endpoint["scalar"].is_null());
+            assert_eq!(endpoint["total"]["kind"], "missing");
+            assert_eq!(
+                endpoint["model"]["value"][0]["reason"]["kind"],
+                "legacy_force_model"
+            );
+            assert_eq!(endpoint["validation"]["kind"], "diagnostic");
+            if custom {
+                assert!(row["interval"].is_null());
+                assert_eq!(
+                    endpoint["model"]["value"][0]["component"],
+                    "integrator without step stress"
+                );
+            } else {
+                assert_eq!(e.virial, 3.);
+                assert!(row["interval"]["scalar"].is_null());
+                assert_eq!(row["interval"]["total"]["kind"], "missing");
+            }
+            println!(
+                "custom={custom}, legacy W={}, endpoint={}, interval={}",
+                e.virial, endpoint["model"], row["interval"]["total"]["kind"]
+            );
+        }
     }
 }

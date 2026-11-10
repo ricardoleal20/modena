@@ -391,15 +391,30 @@ log_every = 100
 #[test]
 fn external_toml_runs_total_provider_and_reports_real_stress_metadata() {
     use modena_core::{io::input::InputConfig, runner::Simulation};
-    let (_dir, python) = fixture(RUNNER_VALID);
+    let counted = format!(
+        "with open(__file__ + '.calls', 'a') as f: f.write('evaluate\\n')\n {RUNNER_VALID}"
+    );
+    let (_dir, python) = fixture(&counted);
+    let calls = || {
+        std::fs::read_to_string(format!("{python}.calls"))
+            .unwrap()
+            .lines()
+            .count()
+    };
     let config = InputConfig::from_str(&runner_toml(&python, &"a".repeat(64), "3.29.0")).unwrap();
     let mut sim =
         Simulation::from_config_without_outputs(&config, std::path::Path::new(".")).unwrap();
+    assert_eq!(calls(), 1);
     assert_eq!(sim.system().atomic_numbers, vec![29; 4]);
     let metadata = serde_json::to_value(sim.metadata()).unwrap();
     assert_eq!(metadata["pressure_status"], "unconstrained_provider_stress");
     assert_eq!(metadata["provider"]["provider"], "ase_emt");
     let summary = sim.run().unwrap();
+    assert_eq!(calls(), 3);
+    println!(
+        "external mock evaluate requests: initial 1, after 2 steps {}",
+        calls()
+    );
     assert_eq!(summary.conservation.diagnostics.unwrap().samples, 3);
     assert!(
         (summary.final_energies.potential - 2.0 * modena_core::external::EV_TO_KCAL_MOL).abs()

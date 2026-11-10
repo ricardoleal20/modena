@@ -9,6 +9,7 @@ pub struct Energies {
     pub potential: f64,
     pub total: f64,
     pub temperature: f64,
+    /// Legacy (2 KE + model virial) / (3 V), excluding constraint stress.
     pub pressure: f64,
     pub virial: f64,
 }

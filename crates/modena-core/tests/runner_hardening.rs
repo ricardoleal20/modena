@@ -51,14 +51,28 @@ fn initialization_uses_conserved_com_dof() {
 
 #[test]
 fn initial_constraints_are_projected_before_sampling() {
-    let text = format!("{BASE}\n[[constraints.bonds]]\natoms = [0,1]\nlength = 1.6\n");
+    let larger_box = BASE.replace("replicas = [1,1,1]", "replicas = [2,2,2]");
+    let text = format!("{larger_box}\n[[constraints.bonds]]\natoms = [0,1]\nlength = 1.6\n");
     let s = sim(&text, Path::new("."));
     let sys = s.system();
     let d = sys.box_size.min_image(sys.pos(0) - sys.pos(1));
     assert!((d.norm() - 1.6).abs() < 1e-8);
     assert!(d.dot(sys.vel(0) - sys.vel(1)).abs() < 1e-8);
-    assert_eq!(sys.dof(), 8);
+    assert_eq!(sys.dof(), 92);
     assert!((sys.temperature() - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn initial_constraints_reject_ambiguous_half_cell_images() {
+    let text = format!("{BASE}\n[[constraints.bonds]]\natoms = [0,1]\nlength = 1.6\n");
+    let config = InputConfig::from_str(&text).unwrap();
+    let error = Simulation::from_config(&config, Path::new("."))
+        .err()
+        .unwrap();
+    assert!(
+        matches!(error, modena_core::ModenaError::Physics(ref message) if message.contains("ambiguous nearest constraint image")),
+        "{error}"
+    );
 }
 
 #[test]

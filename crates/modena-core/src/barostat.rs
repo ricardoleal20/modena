@@ -9,7 +9,7 @@
 //!
 //! Canonical isotropic NPT uses [`MonteCarloBarostat`] with a canonical
 //! temperature controller. [`BerendsenBarostat`] is equilibration only. The
-//! direct legacy [`ParrinelloRahman`] and scalar anisotropic APIs remain
+//! direct legacy [`ParrinelloRahman`] and tensor-driven anisotropic APIs remain
 //! experimental; production configuration rejects them. Constrained box
 //! rescaling is unsupported until the required coupling and stress exist.
 
@@ -24,11 +24,23 @@ use rand::{RngExt, SeedableRng};
 use serde_json::{json, Value};
 
 use crate::force_model::Virial;
-use crate::system::System;
+use crate::stress::{ModelEvaluation, PressureObservation, TensorAvailability};
+use crate::system::{SimBox, System};
 
 /// Pressure coupling. Applied once per step; scales the box and all positions.
 pub trait Barostat: Send {
-    fn apply(&mut self, system: &mut System, virial: &Virial, dt: f64);
+    fn apply(&mut self, system: &mut System, virial: &Virial, dt: f64) -> Result<()>;
+    /// Experimental endpoint-diagonal coupling, in reduced units.
+    fn apply_with_pressure(
+        &mut self,
+        _system: &mut System,
+        _pressure: &PressureObservation,
+        _dt: f64,
+    ) -> Result<()> {
+        Err(ModenaError::Config(
+            "tensor coupling unsupported by this barostat".into(),
+        ))
+    }
     /// Apply coupling and refresh all mechanical caches after a box move.
     /// Returns true when a volume move was accepted/applied.
     fn apply_with_model(
@@ -40,10 +52,27 @@ pub trait Barostat: Send {
         virial: &mut Virial,
         dt: f64,
     ) -> Result<bool> {
-        let old_box = system.box_size;
-        self.apply(system, virial, dt);
-        if old_box == system.box_size {
+        let Some(updated) = self.evaluate_move(system, model, neighbors, *pe, virial, dt)? else {
             return Ok(false);
+        };
+        *pe = updated.energy;
+        virial.w = updated.scalar_virial;
+        Ok(true)
+    }
+    /// Return the updated full model and leave its forces cached on a successful move.
+    fn evaluate_move(
+        &mut self,
+        system: &mut System,
+        model: &dyn ForceModel,
+        neighbors: &mut NeighborList,
+        _pe: f64,
+        virial: &Virial,
+        dt: f64,
+    ) -> Result<Option<ModelEvaluation>> {
+        let old_box = system.box_size;
+        self.apply(system, virial, dt)?;
+        if old_box == system.box_size {
+            return Ok(None);
         }
         if !system.box_size.volume().is_finite() || system.box_size.volume() <= 0.0 {
             return Err(ModenaError::Physics(
@@ -52,9 +81,7 @@ pub trait Barostat: Send {
         }
         neighbors.force_rebuild(system);
         system.zero_forces();
-        *virial = Virial::default();
-        *pe = model.compute(system, virial, neighbors)?;
-        Ok(true)
+        model.evaluate(system, neighbors).map(Some)
     }
     fn checkpoint_state(&self) -> Result<Value> {
         Ok(Value::Null)
@@ -68,7 +95,9 @@ pub trait Barostat: Send {
 pub struct NoneBarostat;
 
 impl Barostat for NoneBarostat {
-    fn apply(&mut self, _system: &mut System, _virial: &Virial, _dt: f64) {}
+    fn apply(&mut self, _system: &mut System, _virial: &Virial, _dt: f64) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Current scalar pressure P = (2 KE + W) / (3 V) (reduced units).
@@ -78,6 +107,81 @@ fn pressure(system: &System, virial: &Virial) -> f64 {
         return 0.0;
     }
     (2.0 * system.kinetic_energy() + virial.w) / (3.0 * v)
+}
+
+fn require_scalar_coupling(anisotropic: bool) -> Result<()> {
+    if anisotropic {
+        return Err(ModenaError::Config(
+            "anisotropic coupling requires tensor pressure".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn endpoint_diagonal(
+    system: &System,
+    p: &PressureObservation,
+    anisotropic: bool,
+    dt: f64,
+) -> Result<[f64; 3]> {
+    if !anisotropic || system.constraint_count() != 0 || system.box_size.is_triclinic() {
+        return Err(ModenaError::Config("experimental diagonal coupling requires anisotropic mode and an unconstrained orthorhombic system".into()));
+    }
+    if !dt.is_finite()
+        || dt <= 0.
+        || !p.volume.is_finite()
+        || p.volume <= 0.
+        || p.volume != system.box_size.volume()
+    {
+        return Err(ModenaError::Config(
+            "invalid timestep or mismatched endpoint volume".into(),
+        ));
+    }
+    let (TensorAvailability::Complete(model), TensorAvailability::Complete(total)) =
+        (&p.model, &p.total)
+    else {
+        return Err(ModenaError::Config(
+            "complete tensor pressure required".into(),
+        ));
+    };
+    if !model.finite()
+        || !total.finite()
+        || !p.kinetic.finite()
+        || !p.constraint.finite()
+        || !p.scalar.is_some_and(f64::is_finite)
+    {
+        return Err(ModenaError::Config(
+            "finite endpoint pressure required".into(),
+        ));
+    }
+    Ok([total.0[0], total.0[1], total.0[2]])
+}
+
+fn scaled_cell(system: &System, scale: [f64; 3]) -> Result<SimBox> {
+    let mut cell = system.box_size;
+    for (axis, mu) in scale.into_iter().enumerate() {
+        cell.scale_axis(axis, mu);
+    }
+    if !cell.volume().is_finite()
+        || cell.volume() <= 0.
+        || !system
+            .positions
+            .iter()
+            .enumerate()
+            .all(|(i, x)| (x * scale[i % 3]).is_finite())
+    {
+        return Err(ModenaError::Physics(
+            "invalid experimental box update".into(),
+        ));
+    }
+    Ok(cell)
+}
+
+fn apply_diagonal(system: &mut System, scale: [f64; 3], cell: SimBox) {
+    system.box_size = cell;
+    for (i, x) in system.positions.iter_mut().enumerate() {
+        *x *= scale[i % 3];
+    }
 }
 
 /// Berendsen weak-coupling barostat. Scales the box toward `target_pressure`
@@ -132,37 +236,40 @@ impl Barostat for BerendsenBarostat {
             Err(state_error("Berendsen barostat parameters differ"))
         }
     }
-    fn apply(&mut self, system: &mut System, virial: &Virial, dt: f64) {
+    fn apply(&mut self, system: &mut System, virial: &Virial, dt: f64) -> Result<()> {
+        require_scalar_coupling(self.anisotropic)?;
         if self.tau <= 0.0 {
-            return;
+            return Ok(());
         }
-        if self.anisotropic {
-            // Diagonal pressure components: P_kk = (2 KE_k + W_kk) / V. With the
-            // scalar virial we only have W (trace); distribute the kinetic part
-            // per-axis from the velocity components and split W evenly.
-            let v = system.box_size.volume();
-            if v <= 0.0 {
-                return;
-            }
-            for k in 0..3 {
-                let ke_k: f64 = (0..system.n())
-                    .map(|i| 0.5 * system.masses[i] * system.vel(i).0[k].powi(2))
-                    .sum();
-                let p_kk = (2.0 * ke_k + virial.w / 3.0) / v;
-                let mu = self.axis_factor(p_kk, dt);
-                system.box_size.size.0[k] *= mu;
-                for i in 0..system.n() {
-                    system.positions[3 * i + k] *= mu;
-                }
-            }
-        } else {
-            let p = pressure(system, virial);
-            let mu = self.axis_factor(p, dt);
-            system.box_size.scale_uniform(mu);
-            for x in system.positions.iter_mut() {
-                *x *= mu;
-            }
+        let mu = self.axis_factor(pressure(system, virial), dt);
+        system.box_size.scale_uniform(mu);
+        for x in &mut system.positions {
+            *x *= mu;
         }
+        Ok(())
+    }
+
+    fn apply_with_pressure(
+        &mut self,
+        system: &mut System,
+        pressure: &PressureObservation,
+        dt: f64,
+    ) -> Result<()> {
+        let axes = endpoint_diagonal(system, pressure, self.anisotropic, dt)?;
+        if !self.target_pressure.is_finite()
+            || !self.compressibility.is_finite()
+            || self.compressibility <= 0.
+            || !self.tau.is_finite()
+            || self.tau <= 0.
+        {
+            return Err(ModenaError::Config(
+                "invalid experimental Berendsen parameters".into(),
+            ));
+        }
+        let scale = axes.map(|p| self.axis_factor(p, dt));
+        let cell = scaled_cell(system, scale)?;
+        apply_diagonal(system, scale, cell);
+        Ok(())
     }
 }
 
@@ -228,88 +335,67 @@ impl Barostat for ParrinelloRahman {
         self.piston_vel = v;
         Ok(())
     }
-    fn apply(&mut self, system: &mut System, virial: &Virial, dt: f64) {
+    fn apply(&mut self, system: &mut System, virial: &Virial, dt: f64) -> Result<()> {
+        require_scalar_coupling(self.anisotropic)?;
         if self.tau <= 0.0 || self.temperature <= 0.0 {
-            return;
+            return Ok(());
         }
-        let dof = system.dof() as f64;
-        let wp = self.piston_mass(dof);
+        let mass = self.piston_mass(system.dof() as f64);
         let half = 0.5 * dt;
-
-        // Pressure used for the piston force. Isotropic: scalar P. Anisotropic:
-        // per-axis diagonal P_kk.
-        let p_axis = |k: usize| -> f64 {
-            let v = system.box_size.volume();
-            if v <= 0.0 {
-                return 0.0;
-            }
-            let ke_k: f64 = (0..system.n())
-                .map(|i| 0.5 * system.masses[i] * system.vel(i).0[k].powi(2))
-                .sum();
-            (2.0 * ke_k + virial.w / 3.0) / v
-        };
-
-        let coupled_axes: Vec<usize> = if self.anisotropic {
-            vec![0, 1, 2]
-        } else {
-            vec![0] // isotropic: drive axis 0 piston, apply same μ to all axes
-        };
-
-        // Half-kick the pistons: v_p += 0.5 dt · 3V(P_kk − P0)/W  (isotropic
-        // piston force uses the scalar pressure).
-        for &k in &coupled_axes {
-            let p = if self.anisotropic {
-                p_axis(k)
-            } else {
-                pressure(system, virial)
-            };
-            let v = system.box_size.volume();
-            let force = 3.0 * v * (p - self.target_pressure);
-            self.piston_vel[k] += half * force / wp;
+        let force =
+            3.0 * system.box_size.volume() * (pressure(system, virial) - self.target_pressure);
+        self.piston_vel[0] += half * force / mass;
+        let mu = (self.piston_vel[0] * dt).exp();
+        system.box_size.scale_uniform(mu);
+        for x in &mut system.positions {
+            *x *= mu;
         }
-
-        // Drift: scale each axis by exp(v_p · dt) ≈ 1 + v_p dt (and rescale
-        // positions to preserve fractional coords).
-        for &k in &coupled_axes {
-            let mu = (self.piston_vel[k] * dt).exp();
-            if self.anisotropic {
-                system.box_size.size.0[k] *= mu;
-                for i in 0..system.n() {
-                    system.positions[3 * i + k] *= mu;
-                }
-            } else {
-                // Isotropic: one piston (axis 0) drives all three axes.
-                system.box_size.scale_uniform(mu);
-                for x in system.positions.iter_mut() {
-                    *x *= mu;
-                }
-            }
+        let force =
+            3.0 * system.box_size.volume() * (pressure(system, virial) - self.target_pressure);
+        self.piston_vel[0] += half * force / mass;
+        Ok(())
+    }
+    fn apply_with_pressure(
+        &mut self,
+        system: &mut System,
+        pressure: &PressureObservation,
+        dt: f64,
+    ) -> Result<()> {
+        let axes = endpoint_diagonal(system, pressure, self.anisotropic, dt)?;
+        if !self.target_pressure.is_finite()
+            || !self.temperature.is_finite()
+            || self.temperature <= 0.
+            || !self.tau.is_finite()
+            || self.tau <= 0.
+        {
+            return Err(ModenaError::Config(
+                "invalid experimental piston parameters".into(),
+            ));
         }
-
-        // Recompute pressure after the box move (volume changed) and half-kick
-        // the pistons again. The virial is unchanged (positions scaled uniformly
-        // preserve the pair distances up to the min-image, so W is a good
-        // approximation for the half-step).
-        let p_axis_new = |k: usize| -> f64 {
-            let v = system.box_size.volume();
-            if v <= 0.0 {
-                return 0.0;
-            }
-            let ke_k: f64 = (0..system.n())
-                .map(|i| 0.5 * system.masses[i] * system.vel(i).0[k].powi(2))
-                .sum();
-            (2.0 * ke_k + virial.w / 3.0) / v
-        };
-        for &k in &coupled_axes {
-            let p = if self.anisotropic {
-                p_axis_new(k)
-            } else {
-                pressure(system, virial)
-            };
-            let v = system.box_size.volume();
-            let force = 3.0 * v * (p - self.target_pressure);
-            self.piston_vel[k] += half * force / wp;
+        let volume = pressure.volume;
+        let mass = self.piston_mass(system.dof() as f64);
+        if !mass.is_finite() || mass <= 0. {
+            return Err(ModenaError::Config(
+                "invalid experimental piston mass".into(),
+            ));
         }
+        let half_kick = |v: f64, p: f64| 0.5 * dt * (3.0 * v * (p - self.target_pressure)) / mass;
+        let mut piston = std::array::from_fn(|k| self.piston_vel[k] + half_kick(volume, axes[k]));
+        let scale = piston.map(|v| (v * dt).exp());
+        let cell = scaled_cell(system, scale)?;
+        // This one-observation kernel holds the pressure numerator fixed over the drift.
+        let new_volume = cell.volume();
+        for (k, velocity) in piston.iter_mut().enumerate() {
+            *velocity += half_kick(new_volume, axes[k] * volume / new_volume);
+        }
+        if !piston.iter().all(|v| v.is_finite()) {
+            return Err(ModenaError::Physics(
+                "nonfinite experimental piston update".into(),
+            ));
+        }
+        apply_diagonal(system, scale, cell);
+        self.piston_vel = piston;
+        Ok(())
     }
 }
 
@@ -412,16 +498,18 @@ impl MonteCarloBarostat {
     }
 }
 impl Barostat for MonteCarloBarostat {
-    fn apply(&mut self, _system: &mut System, _virial: &Virial, _dt: f64) {}
-    fn apply_with_model(
+    fn apply(&mut self, _system: &mut System, _virial: &Virial, _dt: f64) -> Result<()> {
+        Ok(())
+    }
+    fn evaluate_move(
         &mut self,
         system: &mut System,
         model: &dyn ForceModel,
         neighbors: &mut NeighborList,
-        pe: &mut f64,
-        virial: &mut Virial,
+        old_pe: f64,
+        _virial: &Virial,
         _dt: f64,
-    ) -> Result<bool> {
+    ) -> Result<Option<ModelEvaluation>> {
         self.validate()?;
         if system.constraint_count() != 0 {
             return Err(ModenaError::Config(
@@ -433,17 +521,15 @@ impl Barostat for MonteCarloBarostat {
             .checked_add(1)
             .ok_or_else(|| state_error("MC step count overflow"))?;
         if !self.elapsed_steps.is_multiple_of(self.interval) {
-            return Ok(false);
+            return Ok(None);
         }
         let old = system.clone();
-        let old_pe = *pe;
-        let old_virial = *virial;
         self.attempted = self
             .attempted
             .checked_add(1)
             .ok_or_else(|| state_error("MC attempt count overflow"))?;
         let delta = self.propose(system);
-        let trial = (|| -> Result<f64> {
+        let trial = (|| -> Result<ModelEvaluation> {
             if !system.box_size.volume().is_finite()
                 || system.box_size.volume() <= 0.0
                 || system.positions.iter().any(|x| !x.is_finite())
@@ -454,25 +540,25 @@ impl Barostat for MonteCarloBarostat {
             }
             neighbors.force_rebuild(system);
             system.zero_forces();
-            *virial = Virial::default();
-            let trial_pe = model.compute(system, virial, neighbors)?;
-            if !trial_pe.is_finite()
-                || !virial.w.is_finite()
+            let trial = model.evaluate(system, neighbors)?;
+            if !trial.energy.is_finite()
+                || !trial.scalar_virial.is_finite()
+                || matches!(trial.tensor, TensorAvailability::Complete(t) if !t.finite())
                 || system.forces.iter().any(|x| !x.is_finite())
             {
                 return Err(ModenaError::Physics(
                     "MC trial produced nonfinite forces/energy".into(),
                 ));
             }
-            Ok(trial_pe)
+            Ok(trial)
         })();
-        let accepted = trial.as_ref().is_ok_and(|trial_pe| {
+        let accepted = trial.as_ref().is_ok_and(|trial| {
             self.accepts(
                 system.n(),
                 old.box_size.volume(),
                 system.box_size.volume(),
                 old_pe,
-                *trial_pe,
+                trial.energy,
                 delta,
             )
         });
@@ -481,14 +567,11 @@ impl Barostat for MonteCarloBarostat {
                 .accepted
                 .checked_add(1)
                 .ok_or_else(|| state_error("MC acceptance count overflow"))?;
-            *pe = trial?;
-            Ok(true)
+            trial.map(Some)
         } else {
             *system = old;
-            *pe = old_pe;
-            *virial = old_virial;
             neighbors.force_rebuild(system);
-            trial.map(|_| false)
+            trial.map(|_| None)
         }
     }
     fn checkpoint_state(&self) -> Result<Value> {
@@ -546,7 +629,7 @@ mod tests {
         let v0 = sys.box_size.volume();
         let mut baro = BerendsenBarostat::new(0.0, 1.0, 1.0);
         let virial = Virial { w: 100.0 }; // large positive virial → high pressure
-        baro.apply(&mut sys, &virial, 0.005);
+        baro.apply(&mut sys, &virial, 0.005).unwrap();
         assert!(
             sys.box_size.volume() > v0,
             "box must expand under high pressure"
@@ -564,7 +647,7 @@ mod tests {
         let mut baro = ParrinelloRahman::new(0.0, 1.0, 1.0);
         let virial = Virial { w: 10.0 };
         for _ in 0..10 {
-            baro.apply(&mut sys, &virial, 0.005);
+            baro.apply(&mut sys, &virial, 0.005).unwrap();
         }
         // Box should have moved (piston integrated over 10 steps).
         assert!(sys.box_size.volume() > 0.0);

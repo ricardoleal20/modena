@@ -47,6 +47,7 @@ impl SimulationBuilder {
                 trajectory_file: None,
                 trajectory_every: 100,
                 log_file: None,
+                pressure_jsonl: None,
                 log_every: 10,
                 restore_file: None,
                 restart_mode: crate::io::input::RestartMode::Continue,

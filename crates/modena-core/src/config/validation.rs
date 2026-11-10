@@ -353,7 +353,7 @@ pub(crate) fn validate(c: &InputConfig) -> Result<()> {
                 ..
             } => {
                 if *anisotropic {
-                    return Err(error("anisotropic coupling requires a full stress tensor; scalar virial is insufficient"));
+                    return Err(error("production anisotropic coupling is unvalidated; tensor pressure is diagnostic"));
                 }
                 positive("barostat tau", *tau)?;
                 positive("compressibility", *compressibility)?;

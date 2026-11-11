@@ -44,6 +44,10 @@ fn child(args: &[String]) -> R<i32> {
             .ok_or_else(|| format!("unregistered fixture {id}"))
     };
     let g = match (phase.as_str(), rest) {
+        ("ase-six-strain", []) => {
+            validation::ase::measure(dir)?;
+            return Ok(0);
+        }
         ("deterministic", []) => fixtures::run_deterministic(dir)?,
         ("ou", []) => ou::run_ou(dir)?,
         ("ensemble", []) => ensemble::run_ensemble(dir)?,

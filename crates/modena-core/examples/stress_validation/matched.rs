@@ -4,6 +4,7 @@ use super::{
     fixtures::{analytic_endpoint, Zero},
     protocol::*,
 };
+use modena_core::constraint_stress::{constraint_geometry, endpoint_reaction};
 use modena_core::stress::{endpoint_pressure, ConstraintSolverOptions};
 use modena_core::{
     CompositeForceModel, EwaldForceModel, ForceModel, Integrator, LangevinBAOAB, LennardJones,
@@ -218,7 +219,17 @@ pub fn evaluate(f: &ValidationFixture, b: &str, input: &Path, output: &Path) -> 
         } else {
             None
         };
-        let record = serde_json::json!({"reciprocal_cutoff":match b{"ewald-10"=>Some(10.),"ewald-12"=>Some(12.),_=>f.reciprocal_cutoff},"spme_mesh":if b=="spme"{Some(modena_core::spme::mesh_for_box(&s.box_size,f.reciprocal_cutoff.ok_or("missing cutoff")?))}else{None},"frame":frame(&s,row.step,row.time)?,"fixture":f.id,"backend":b,"potential_energy":e.energy,"forces":s.forces,"conservative_tensor":tensor(&e.tensor)?,"endpoint":tensor(&p.total)?,"analytic_force_pressure":analytic});
+        let reaction_forces = if analytic.is_some() {
+            let geometry = constraint_geometry(&s, &f.constraints).map_err(err)?;
+            let reaction = endpoint_reaction(&s, &geometry).map_err(err)?;
+            for force in &reaction.forces {
+                finite(&force.0)?;
+            }
+            Some(reaction.forces)
+        } else {
+            None
+        };
+        let record = serde_json::json!({"reciprocal_cutoff":match b{"ewald-10"=>Some(10.),"ewald-12"=>Some(12.),_=>f.reciprocal_cutoff},"spme_mesh":if b=="spme"{Some(modena_core::spme::mesh_for_box(&s.box_size,f.reciprocal_cutoff.ok_or("missing cutoff")?))}else{None},"frame":frame(&s,row.step,row.time)?,"fixture":f.id,"backend":b,"potential_energy":e.energy,"forces":s.forces,"conservative_tensor":tensor(&e.tensor)?,"endpoint":tensor(&p.total)?,"analytic_force_pressure":analytic,"production_reaction_forces":reaction_forces});
         serde_json::to_writer(&mut w, &record).map_err(err)?;
         writeln!(w).map_err(err)?;
         count += 1;

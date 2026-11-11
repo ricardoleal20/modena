@@ -192,7 +192,18 @@ def jobs(out, x):
             argv = j["argv"]
             if len(argv) < 4 or argv[1] != "--child" or argv[3] != str(out):
                 raise ValueError("invalid matched command")
-            if argv[2] == "matched-evaluate" and len(argv) == 8:
+            if argv[2] == "ase-six-strain" and len(argv) == 4:
+                provider = load(out / "reference/inputs/ase.json")["provider"]
+                python = provider["python"]
+                if (
+                    name != "ase-six-strain"
+                    or j["env"].get("MODENA_ASE_PYTHON") != python
+                    or python not in x["source_sha256"]
+                    or str(out / "reference/inputs/ase.json")
+                    not in x["snapshot_sha256"]
+                ):
+                    raise ValueError("unbound ASE child/provider")
+            elif argv[2] == "matched-evaluate" and len(argv) == 8:
                 fixture, backend, src, dest = argv[4:]
                 if type(j.get("expected_frames")) != int or j["expected_frames"] < 1:
                     raise ValueError("register snapshot stream frame count")
@@ -324,6 +335,7 @@ def monitor(out, folder):
         reaped = False
         samples = 0
         sampled = 0
+        sampled_tree = 0
         stop = None
         interrupted = None
         try:
@@ -354,6 +366,23 @@ def monitor(out, folder):
                     rss = int.from_bytes(buf.raw[8:16], "little")
                     sampled = max(sampled, rss)
                     samples += 1
+                    if launch["name"] == "ase-six-strain":
+                        # The persistent CPU EMT worker is a direct child of the Rust provider.
+                        # Keep the direct wait4 receipt and account this worker in the live cap.
+                        pids = (ctypes.c_int * 16)()
+                        size = ctypes.sizeof(pids)
+                        count = lib.proc_listchildpids(child.pid, pids, size)
+                        if count < 0 or pids[-1]:
+                            raise ValueError(
+                                "unavailable or oversized ASE child roster"
+                            )
+                        tree = rss
+                        for worker in (pid for pid in pids if pid > 0):
+                            if lib.proc_pidinfo(worker, 4, 0, buf, 96) == 96:
+                                tree += int.from_bytes(buf.raw[8:16], "little")
+                        sampled_tree = max(sampled_tree, tree)
+                        if tree > cap:
+                            stop = "ASE Rust and worker RSS cap"
                     if rss > cap:
                         stop = "RSS cap"
                 if (
@@ -406,6 +435,9 @@ def monitor(out, folder):
             "system_cpu_seconds": usage.ru_stime,
             "rss_samples": samples,
             "sampled_max_rss_bytes": sampled,
+            "sampled_ase_tree_max_rss_bytes": sampled_tree
+            if launch["name"] == "ase-six-strain"
+            else None,
             "budget_stop": stop,
             "interrupted": interrupted,
             "reaped": reaped,
@@ -559,6 +591,16 @@ def run_job(out, name, argv=None, role=None):
             role is not None and role != j["role"]
         ):
             raise ValueError("unregistered invocation")
+        for family in j.get("requires_families", []):
+            required = external["expected_gate_families"][family]
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", family):
+                raise ValueError("invalid prerequisite family")
+            evidence = load(out / "reference/comparisons" / (family + ".json"))
+            rows = checked_gates(evidence["gates"])
+            if {r["name"] for r in rows} != set(required) or any(
+                r["status"] != "Passed" for r in rows
+            ):
+                raise ValueError("blocked by external prerequisite " + family)
         folder = out / "jobs" / name
         if folder.exists():
             raise ValueError(f"action already recorded: {name}")

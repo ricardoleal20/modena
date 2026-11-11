@@ -1,0 +1,8 @@
+# Source examples/PACKAGES/cauchy/log.2Jun2020.cauchystat.g++.1
+# SHA256 62c0d60997a8226e0076ae219bff0a6ac29c553b6dcd5964de849adf83cf7e6f
+LAMMPS (2 Jun 2020)
+units		metal
+timestep 0.002
+Step Temp Pxx Pyy Pzz Pxy Pxz Pyz
+       0         1200    9859.2374    9729.7389    10279.526   -110.10907   -391.60768    295.10918
+     100    461.95579    11262.405    9918.4702    7373.1896    1389.9833   -165.54737   -128.04989

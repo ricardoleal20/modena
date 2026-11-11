@@ -156,6 +156,31 @@ fn weighted_fit_retains_shared_seed_uncertainty() {
     );
 }
 #[test]
+fn gate_publication_retains_partial_bytes_without_replacing_a_completed_file() {
+    use serde::ser::{Error, SerializeSeq};
+    struct Interrupted;
+    impl serde::Serialize for Interrupted {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let mut seq = s.serialize_seq(None)?;
+            seq.serialize_element(&17)?;
+            Err(S::Error::custom("engineering interrupted serializer"))
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ensemble-gates.json");
+    assert!(validation::protocol::write_new(&path, &Interrupted).is_err());
+    assert!(
+        !path.exists(),
+        "incomplete bytes must not be published as a completed gate file"
+    );
+    let partial = dir.path().join("ensemble-gates.json.partial");
+    assert_eq!(std::fs::read(&partial).unwrap(), b"[17");
+    let done = dir.path().join("water-400-gates.json");
+    validation::protocol::write_new(&done, &[1, 2]).unwrap();
+    assert!(validation::protocol::write_new(&done, &[3]).is_err());
+    assert_eq!(std::fs::read(&done).unwrap(), b"[1,2]\n");
+}
+#[test]
 fn finite_checks_precede_reductions() {
     for bad in [f64::NAN, f64::INFINITY, -f64::INFINITY] {
         assert!(validation::protocol::gate("observed", &[1., bad], &[1., 0.], &[1., 1.]).is_err());

@@ -45,12 +45,20 @@ def digest(path):
 
 
 def dump(path, obj):
-    with Path(path).open("x") as f:
+    path = Path(path)
+    if path.exists():
+        raise FileExistsError(str(path))
+    partial = path.with_name(path.name + ".partial")
+    with partial.open("x") as f:
         json.dump(obj, f, sort_keys=True, allow_nan=False, separators=(",", ":"))
         f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.link(partial, path)
+    partial.unlink()
 
 
-def load(p):
+def loads(data):
     def invalid(x):
         raise ValueError("nonfinite JSON " + x)
 
@@ -63,8 +71,12 @@ def load(p):
         return d
 
     return json.loads(
-        Path(p).read_text(), parse_constant=invalid, object_pairs_hook=unique
+        data.decode("utf-8"), parse_constant=invalid, object_pairs_hook=unique
     )
+
+
+def load(p):
+    return loads(Path(p).read_bytes())
 
 
 def capture(cmd):

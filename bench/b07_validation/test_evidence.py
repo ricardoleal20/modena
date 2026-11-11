@@ -194,6 +194,110 @@ class Evidence(unittest.TestCase):
             "Pending",
         )
 
+    def test_truncated_rung_and_final_preserve_other_evidence(self):
+        self.settings()
+        folder = self.job("ensemble")
+        folder.mkdir()
+        freeze.dump(folder / "launch.json", {"role": "rust"})
+        (self.out / "gas-progress").write_text("96")
+        failure = campaign.gate(
+            "gas-rotor_400_endpoint_xx_intercept", [1.0], [0.0], [0.01]
+        )
+        freeze.dump(self.out / "gas-rotor-400-gates.json", [failure])
+        for filename in (
+            "gas-water-400-gates.json",
+            "ensemble-gates.json",
+            "external-gates.json",
+            "ou-gates.json",
+            "deterministic-gates.json.partial",
+            "gas-water-800-gates.json.partial",
+        ):
+            with self.subTest(file=filename):
+                path = self.out / filename
+                path.write_bytes(b"[{")
+                try:
+                    ledger, work = self.run_report()
+                    rows = {r["name"]: r for r in ledger["gates"]}
+                    self.assertEqual(rows[failure["name"]]["status"], "Failed")
+                    defect = ledger["incomplete_gate_files"][str(path)]
+                    self.assertEqual(defect["sha256"], freeze.digest(path))
+                    self.assertEqual(defect["bytes"], 2)
+                    self.assertTrue(defect["reason"])
+                    self.assertEqual(
+                        Path(defect["preserved_bytes"]).read_bytes(), b"[{"
+                    )
+                    self.assertEqual(rows[defect["gate"]]["status"], "Inconclusive")
+                    self.assertEqual(work["cumulative_work"]["gas_molecule_steps"], 96)
+                    self.assertIn(
+                        str(folder), work["current_epoch_work"]["unknown_suffixes"]
+                    )
+                    self.assertEqual(path.read_bytes(), b"[{")
+                finally:
+                    path.rename(path.with_suffix(".saved"))
+
+    def test_python_gate_publication_is_atomic_and_no_clobber(self):
+        path = self.out / "external-gates.json"
+        with self.assertRaises(ValueError):
+            freeze.dump(path, [17, float("nan")])
+        self.assertFalse(path.exists())
+        self.assertTrue(
+            (self.out / "external-gates.json.partial").read_bytes().startswith(b"[17")
+        )
+        published = self.out / "valid-gates.json"
+        freeze.dump(published, [1, 2])
+        with self.assertRaises(FileExistsError):
+            freeze.dump(published, [3])
+        self.assertEqual(freeze.load(published), [1, 2])
+
+    def test_interrupted_cost_suffix_and_completed_cost_count(self):
+        old = self.job("cost-old-rotor")
+        new = self.job("cost-new-rotor")
+        self.jobs[old.name]["argv"] = [self.exe, "-c", "import time; time.sleep(2)"]
+        self.jobs[new.name]["argv"] = [
+            self.exe,
+            "-c",
+            "import json; print(json.dumps(dict(steps=sum(1 for _ in range(3)),fixture='rotor',elapsed_ns=3)))",
+        ]
+        self.settings()
+        with patch.object(campaign, "remaining", return_value=0.2):
+            self.assertEqual(campaign.run_job(self.out, old.name), 2)
+        self.assertEqual(campaign.run_job(self.out, new.name), 0)
+        ledger, work = self.run_report()
+        self.assertEqual(
+            next(
+                g["status"]
+                for g in ledger["gates"]
+                if g["name"] == "execution_cost-old-rotor"
+            ),
+            "BudgetExceeded",
+        )
+        self.assertEqual(
+            campaign.measured_work(
+                self.out,
+                new.name,
+                self.jobs[new.name],
+                {"exit": 0, "budget_stop": "late wall check"},
+            ),
+            (3, 0, False),
+        )
+        self.assertEqual(
+            campaign.measured_work(
+                self.out, new.name, self.jobs[new.name], {"exit": -9}
+            ),
+            (3, 0, True),
+        )
+        for section in ["current_epoch_work", "cumulative_work"]:
+            self.assertIn(str(old), work[section]["unknown_suffixes"])
+            self.assertNotIn(str(new), work[section]["unknown_suffixes"])
+            self.assertEqual(work[section]["all_molecule_steps"], 3)
+        # A partially written old stdout must also leave the successful comparison readable.
+        freeze.dump(self.out / "costs.json", {"steps": [{"fixture": "rotor"}]})
+        self.run_report()
+        comparison = freeze.load(
+            max((self.out / "reports").iterdir()) / "cost-comparison.json"
+        )
+        self.assertEqual(set(comparison[0]["common_legacy_step"]), {"new"})
+
     def test_old_and_native_provenance_from_registered_build(self):
         old = self.job("cost-old-rotor")
         self.jobs[old.name]["argv"] = [

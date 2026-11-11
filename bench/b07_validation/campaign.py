@@ -5,6 +5,8 @@ import contextlib
 import ctypes
 import datetime
 import fcntl
+import hashlib
+import json
 import math
 import os
 import platform
@@ -27,6 +29,7 @@ from freeze import (
     host_identity,
     inventory,
     load,
+    loads,
     prepare,
 )
 
@@ -833,8 +836,54 @@ def internal_names(phase):
     return []
 
 
-def physics_rows(out, external):
+def physics_rows(out, external, defects=None, fragment_folder=None):
     gates = []
+    if defects is None:
+        defects = {}
+
+    def reject(path, data, reason):
+        sha = hashlib.sha256(data).hexdigest()
+        marker = "incomplete_evidence_" + path.name
+        detail = {"gate": marker, "reason": reason, "sha256": sha, "bytes": len(data)}
+        if fragment_folder is not None:
+            fragment_folder.mkdir(exist_ok=True)
+            snapshot = fragment_folder / path.name
+            with snapshot.open("xb") as f:
+                f.write(data)
+            detail["preserved_bytes"] = str(snapshot)
+        defects[str(path)] = detail
+        gates.append(unmeasured(marker, "Inconclusive"))
+
+    def collect(path):
+        # Read once: the digest and a report's preserved copy cover exactly the
+        # bytes that failed, including pre-atomic writer output in an old epoch.
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            data = None
+        stage = path.with_name(path.name + ".partial")
+        try:
+            staged = stage.read_bytes()
+        except FileNotFoundError:
+            staged = None
+        if staged is not None and staged != data:
+            reject(stage, staged, "unpublished staged gate bytes")
+        if data is None:
+            return []
+        try:
+            decoded = loads(data)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            reject(path, data, f"incomplete or invalid JSON: {exc}")
+            return []
+        except ValueError as exc:
+            reject(path, data, f"invalid JSON data: {exc}")
+            return []
+        try:
+            return checked_gates(decoded)
+        except (ValueError, TypeError, KeyError) as exc:
+            reject(path, data, f"invalid gate record: {exc}")
+            return []
+
     for case in load(MESH)["cases"]:
         fine = case["rows"][-1]
         if fine["mesh"] != [32] * 3:
@@ -848,18 +897,17 @@ def physics_rows(out, external):
             )
         )
     fp = out / "external-gates.json"
-    rows = checked_gates(load(fp)) if fp.exists() else []
+    rows = collect(fp)
     gates.extend(required_rows(rows, expected_external(external)))
     for phase in ("deterministic", "ou"):
         path = out / (phase + "-gates.json")
-        if path.exists():
-            gates.extend(
-                required_rows(checked_gates(load(path)), internal_names(phase))
-            )
+        rows = collect(path)
+        if rows:
+            gates.extend(required_rows(rows, internal_names(phase)))
         else:
             gates.append(unmeasured(f"required_{phase}_physical_gates"))
     final = out / "ensemble-gates.json"
-    final_rows = checked_gates(load(final)) if final.exists() else []
+    final_rows = collect(final)
     if not final_rows:
         gates.append(unmeasured("required_ensemble_physical_gates"))
     latest = []
@@ -868,9 +916,9 @@ def physics_rows(out, external):
         most_recent = []
         for duration in (400, 800, 1600):
             path = out / f"{species}-{duration}-gates.json"
-            if not path.exists():
+            observed = collect(path)
+            if not observed:
                 continue
-            observed = checked_gates(load(path))
             prefix = f"{species}_{duration}_"
             if any(not row["name"].startswith(prefix) for row in observed):
                 raise ValueError("gas rung row from different trajectory set")
@@ -946,13 +994,23 @@ def measured_work(out, name, job, child):
             raise ValueError("malformed actual work")
         count = w["molecule_steps"]
         incomplete |= not w["complete"]
-    elif child and name.startswith(("cost-old-", "cost-new-")) and child["exit"] == 0:
-        data = load(folder / "stdout.log")
+    elif launched and name.startswith(("cost-old-", "cost-new-")):
+        interrupted = child is None or child["exit"] != 0
+        # A driver prints the measured count after its loop. Preserve an emitted
+        # final record even if termination happens before a clean process exit.
+        try:
+            data = load(folder / "stdout.log")
+        except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+            if interrupted:
+                return count, draws, True
+            raise
+        incomplete |= interrupted
         steps = data["steps"]
         if (
             type(steps) != int
             or steps < 0
             or data["fixture"] not in ("rotor", "gas-water")
+            or not name.endswith("-" + data["fixture"])
         ):
             raise ValueError("invalid cost work")
         count = steps * (32 if data["fixture"] == "gas-water" else 1)
@@ -1041,7 +1099,12 @@ def executable_build(settings, external, job, launch):
 def report(out):
     p, x = verify(out)
     roster = jobs(out, x)
-    gates, rungs = physics_rows(out, x)
+    dest = out / "reports"
+    dest.mkdir(exist_ok=True)
+    run = dest / str(time.time_ns())
+    run.mkdir()
+    defects = {}
+    gates, rungs = physics_rows(out, x, defects, run / "incomplete-gates")
     settings = load(out / "inputs/settings.json")
     records = []
     builds = {}
@@ -1113,10 +1176,6 @@ def report(out):
             reference_jobs=int(job["role"] == "reference"),
         )
     # Typed provenance always describes one actual executable. The index records combined consumption separately.
-    dest = out / "reports"
-    dest.mkdir(exist_ok=True)
-    run = dest / str(time.time_ns())
-    run.mkdir()
     costs = out / "costs.json"
     if costs.exists():
         summary = []
@@ -1125,7 +1184,12 @@ def report(out):
             by_version = {}
             for version in ["old", "new"]:
                 log = out / "jobs" / f"cost-{version}-{fixture}" / "stdout.log"
-                if log.is_file():
+                child_file = log.parent / "child.json"
+                if (
+                    child_file.is_file()
+                    and child_status(load(child_file)) == 0
+                    and log.is_file()
+                ):
                     data = load(log)
                     by_version[version] = {
                         "steps": data["steps"],
@@ -1164,6 +1228,7 @@ def report(out):
             "status": worst,
             "gates": gates,
             "completed_gas_rungs": rungs,
+            "incomplete_gate_files": defects,
             "raw_files": files,
         },
     )

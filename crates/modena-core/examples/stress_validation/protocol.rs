@@ -60,13 +60,24 @@ pub fn tensor(t: &TensorAvailability) -> R<[f64; 6]> {
     Ok(t.0)
 }
 pub fn write_new(path: &Path, value: &impl Serialize) -> R<()> {
+    if path.try_exists().map_err(err)? {
+        return Err(format!("output already exists: {}", path.display()));
+    }
+    // A failed serialization leaves its bytes beside the intended path. Linking
+    // the finished sibling publishes atomically without replacing an earlier result.
+    let mut partial = path.as_os_str().to_os_string();
+    partial.push(".partial");
+    let staged = Path::new(&partial);
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
-        .open(path)
+        .open(staged)
         .map_err(err)?;
     serde_json::to_writer(&mut file, value).map_err(err)?;
-    file.write_all(b"\n").map_err(err)
+    file.write_all(b"\n").map_err(err)?;
+    file.sync_all().map_err(err)?;
+    std::fs::hard_link(staged, path).map_err(err)?;
+    std::fs::remove_file(staged).map_err(err)
 }
 pub fn read<T: serde::de::DeserializeOwned>(path: &Path) -> R<T> {
     serde_json::from_reader(File::open(path).map_err(err)?).map_err(err)

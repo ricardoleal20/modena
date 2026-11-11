@@ -3,6 +3,7 @@
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from campaign import (
@@ -16,6 +17,7 @@ from campaign import (
     verify,
     verify_files,
 )
+from freeze import python_runtime_files
 from .native import COMP, LADDER, NATIVE_BUILD, data_file, section, write, write_table
 
 V3 = Path("/private/tmp/modena-b07-validation-v3")
@@ -233,6 +235,14 @@ print(json.dumps(dict(versions=[ase.__version__,numpy.__version__,scipy.__versio
         p
         for p in std.rglob("*")
         if p.is_file() and "site-packages" not in p.relative_to(std).parts
+    )
+    # Host-side reductions import statistics/random and their native modules in
+    # addition to the internal controller's own prepared interpreter closure.
+    files.update(python_runtime_files(Path(sys.executable)))
+    files.update(
+        Path(m.__file__).resolve()
+        for m in list(sys.modules.values())
+        if getattr(m, "__file__", None) and Path(m.__file__).is_file()
     )
     files.update((ROOT / "bench/b07_reference").glob("*.py"))
     files.update(
@@ -526,6 +536,9 @@ def register(out, binary, fixtures, source, packages, build):
     x = dict(
         internal_protocol_sha256=digest(out / "protocol.json"),
         previous_internal_protocol_sha256=V3_SHA,
+        adapter_source_head=subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip(),
         source_sha256=source,
         snapshot_sha256=inventory(static.iterdir()),
         external_source_revision=REV,

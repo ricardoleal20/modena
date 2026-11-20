@@ -12,6 +12,7 @@ from campaign import (
     external_spent,
     gate,
     remaining,
+    new_clock,
     verify_files,
 )
 from freeze import digest, dump, load
@@ -32,12 +33,9 @@ class Admission(unittest.TestCase):
                 verify_files(files)
 
     def test_expired_and_uncounted_jobs(self):
-        self.assertLess(
-            remaining(
-                {"start_monotonic": 0, "deadline_monotonic": 0, "deadline_utc": 0}
-            ),
-            0,
-        )
+        self.assertLessEqual(remaining(new_clock(0)),0)
+        with self.assertRaises(Budget):
+            remaining({"start_monotonic":0,"deadline_monotonic":0,"deadline_utc":0})
         with tempfile.TemporaryDirectory() as d:
             out = pathlib.Path(d)
             folder = out / "jobs" / "ensemble"

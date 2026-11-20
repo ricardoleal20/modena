@@ -430,6 +430,10 @@ def prepare(out):
         j["steps"] * (32 if j["backend"] != "zero" else 1)
         for j in load(inputs / "roster.json")
     )
+    from timing import legacy_snapshot, sample
+    facts["clock_observation"] = sample()
+    facts["clock_identity"] = facts["clock_observation"]["identity"]
+    facts["legacy_clock"] = legacy_snapshot(EVIDENCE/"b07-campaign-budget-v1")
     facts["host_python"] = str(Path(sys.executable).resolve())
     from runtime import PYTHON_FLAGS, SAFE_ENV, THREAD_ENV
     facts["host_python_flags"] = PYTHON_FLAGS

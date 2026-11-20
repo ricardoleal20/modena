@@ -44,14 +44,12 @@ from freeze import (
 )
 
 from runtime import PYTHON_FLAGS, SAFE_ENV, THREAD_ENV, numerical_env
+from timing import (Budget, active_clock, clock_identity, elapsed as clock_elapsed,
+                    limited_clock, migrate, new_clock, remaining, legacy_elapsed, verify_legacy_files, COMPANION)
 ENV = dict(SAFE_ENV, **THREAD_ENV)
 
 LEDGER = EVIDENCE / "b07-campaign-budget-v1"
 OU = "integrator::conditional_ou::fixed_water_conditional_momentum_law"
-
-
-class Budget(Exception):
-    pass
 
 
 def utc():
@@ -99,6 +97,9 @@ def verify(out, both=True):
         raise ValueError("unexpected host reporter/interpreter")
     if settings["host_identity"] != host_identity():
         raise ValueError("host or shared library cache changed")
+    verify_legacy_files(settings.get("legacy_clock"))
+    if settings.get("clock_identity") != clock_identity():
+        raise ValueError("prepared shared clock source/boot changed")
     fixtures = [
         load(f)
         for f in sorted((out / "inputs").glob("*.json"))
@@ -242,20 +243,44 @@ def jobs(out, x):
     return result
 
 
-def remaining(clock):
-    # Fail closed on reboot, backward monotonic discontinuity or an expired wall deadline.
-    if time.monotonic() < clock["start_monotonic"]:
-        raise Budget("host clock discontinuity")
-    return min(
-        clock["deadline_utc"] - time.time(),
-        clock["deadline_monotonic"] - time.monotonic(),
-    )
+def prepared_clock(out):
+    active = active_clock(LEDGER)
+    if "compatibility_sha256" in active:
+        settings = load(out/"inputs/settings.json")
+        mapping = load(LEDGER/COMPANION)
+        expected = settings.get("legacy_clock")
+        if (expected is None or mapping["legacy"] != expected
+                or mapping["observed"] != settings.get("clock_observation")):
+            raise Budget("compatibility mapping differs from prepared legacy binding")
+    return active
+
+
+def epoch_clock(out):
+    recorded = load(out/"clock.json")
+    active = prepared_clock(out)
+    pins = dict(internal=digest(out/"protocol.json"),external=digest(out/"external-epoch.json"))
+    if recorded != dict(active,**pins):
+        raise Budget("epoch clock or absolute-clock binding changed")
+    return recorded
+
+
+def migrate_clock(out):
+    with exclusive(out):
+        verify(out)
+        if (out/"clock.json").exists():
+            raise ValueError("migration target epoch already started")
+        settings = load(out/"inputs/settings.json")
+        migrate(LEDGER,settings["legacy_clock"],settings["clock_identity"],
+                settings["clock_observation"])
 
 
 def start(out):
     with exclusive(out):
         _, x = verify(out)
         jobs(out, x)
+        settings = load(out/"inputs/settings.json")
+        if settings["clock_identity"] != clock_identity():
+            raise Budget("prepared clock boot/source identity changed")
         if platform.system() != "Darwin":
             raise ValueError("Darwin wait4 RSS/host-time adapter required")
         if raw_bytes(out) >= LIMITS["artifact_bytes"]:
@@ -281,18 +306,8 @@ def start(out):
             raise ValueError("campaign epoch already started")
         absolute = LEDGER / "absolute-clock.json"
         if not absolute.exists():
-            now = time.monotonic()
-            wall = time.time()
-            dump(
-                absolute,
-                {
-                    "started_utc": utc(),
-                    "start_monotonic": now,
-                    "deadline_utc": wall + 7200,
-                    "deadline_monotonic": now + 7200,
-                },
-            )
-        clock = load(absolute)
+            dump(absolute, new_clock())
+        clock = prepared_clock(out)
         if remaining(clock) <= 0:
             raise Budget("shared campaign deadline expired")
         pins = {
@@ -458,11 +473,11 @@ def monitor(out, folder):
                             stop = "ASE Rust and worker RSS cap"
                     if rss > cap:
                         stop = "RSS cap"
-                if (
-                    now >= launch["deadline_monotonic"]
-                    or time.time() >= launch["deadline_utc"]
-                ):
-                    stop = "wall cap"
+                try:
+                    if remaining(launch) <= 0:
+                        stop = "wall cap"
+                except Budget as exc:
+                    stop = "clock: " + str(exc)
                 if now - last_scan >= 0.5:
                     if raw_bytes(out) >= LIMITS["artifact_bytes"]:
                         stop = "artifact cap"
@@ -491,11 +506,11 @@ def monitor(out, folder):
         stop = "deterministic CPU cap"
     if not interrupted and raw_bytes(out) > LIMITS["artifact_bytes"]:
         stop = "artifact cap"
-    if (
-        time.monotonic() > launch["deadline_monotonic"]
-        or time.time() > launch["deadline_utc"]
-    ):
-        stop = "wall cap"
+    try:
+        if remaining(launch) <= 0:
+            stop = "wall cap"
+    except Budget as exc:
+        stop = "clock: " + str(exc)
     if launch["name"] == "ase-six-strain" and code == 0 and not stop:
         if not worker_coverage(dict(ase_workers=workers, ase_worker_interpreter=worker_interpreter)):
             interrupted = interrupted or "ASE worker successful RSS/interpreter sample coverage missing"
@@ -675,10 +690,7 @@ def run_job(out, name, argv=None, role=None):
         if folder.exists():
             raise ValueError(f"action already recorded: {name}")
         try:
-            clock = load(out / "clock.json")
-            absolute = load(LEDGER / "absolute-clock.json")
-            if any(clock[k] != v for k, v in absolute.items()):
-                raise ValueError("absolute clock changed")
+            clock = epoch_clock(out)
             sec = remaining(clock)
             if sec <= 0 or raw_bytes(out) >= LIMITS["artifact_bytes"]:
                 raise Budget("combined budget exhausted")
@@ -720,8 +732,7 @@ def run_job(out, name, argv=None, role=None):
             input_sha256=input_digest,
             protocol_sha256=digest(out / "protocol.json"),
             binary_sha256=digest(j["argv"][0]),
-            deadline_monotonic=min(clock["deadline_monotonic"], time.monotonic() + sec),
-            deadline_utc=min(clock["deadline_utc"], time.time() + sec),
+            **{k:v for k,v in limited_clock(clock,sec).items() if k not in ("internal","external")},
         )
         dump(folder / "launch.json", launch)
         with (
@@ -1211,6 +1222,25 @@ def executable_build(settings, external, job, launch):
     return dict(build, external_source_revision=None, external_packages=[])
 
 
+def prior_denials(out):
+    rows = []
+    for epoch in epochs(out):
+        if epoch == out:
+            continue
+        for path in sorted((epoch/"jobs").glob("*/denied.json")):
+            rows.append(dict(epoch=str(epoch),path=str(path),sha256=digest(path),denial=load(path)))
+    return rows
+
+
+def reporting_clock(out):
+    if (out/"clock.json").exists():
+        return clock_elapsed(epoch_clock(out))
+    absolute = LEDGER/"absolute-clock.json"
+    if absolute.exists() and load(absolute).get("schema") != 2:
+        return legacy_elapsed(load(absolute))
+    return dict(seconds=None,basis="not started",legacy_monotonic_elapsed_seconds=None)
+
+
 def report(out):
     p, x = verify(out)
     roster = jobs(out, x)
@@ -1353,6 +1383,7 @@ def report(out):
             "gates": gates,
             "completed_gas_rungs": rungs,
             "incomplete_gate_files": defects,
+            "prior_epoch_denials": prior_denials(out),
             "raw_files": files,
         },
     )
@@ -1376,6 +1407,7 @@ def report(out):
     totals["unknown_suffixes"] = [
         item for v in by_epoch.values() for item in v["unknown_suffixes"]
     ]
+    clock_details = reporting_clock(out)
     dump(
         run / "work.json",
         {
@@ -1388,8 +1420,9 @@ def report(out):
             "current_epoch_work": by_epoch[str(out)],
             "work_by_epoch": by_epoch,
             "cumulative_work": totals,
-            "combined_elapsed_seconds": time.monotonic()
-            - load(out / "clock.json")["start_monotonic"],
+            "combined_elapsed_seconds": clock_details["seconds"],
+            "combined_elapsed_details": clock_details,
+            "prior_epoch_denials": prior_denials(out),
             "external_consumption_known_prefix": external_spent(out, False),
             "prior_conditional_draws": settings["prior_projected_draws"],
             "prior_zero_amplitude_projector_calls": 4,
@@ -1423,6 +1456,9 @@ def main():
         return 0
     if a.phase == "verify":
         verify(out, (out / "external-epoch.json").exists())
+        return 0
+    if a.phase == "migrate-clock":
+        migrate_clock(out)
         return 0
     if a.phase == "start":
         start(out)

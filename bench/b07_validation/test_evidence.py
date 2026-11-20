@@ -27,16 +27,15 @@ class Evidence(unittest.TestCase):
         (self.out / "jobs").mkdir()
         self.exe = str(Path(sys.executable).resolve())
         self.pin = "a" * 64
-        self.clock = {
-            "start_monotonic": time.monotonic(),
-            "deadline_monotonic": time.monotonic() + 20,
-            "deadline_utc": time.time() + 20,
-        }
-        freeze.dump(self.out / "clock.json", self.clock)
-        freeze.dump(self.out / "protocol.json", {"test": "receipt control only"})
-        self.ledger = self.base / "ledger"
+        self.clock = campaign.new_clock(20)
+        freeze.dump(self.out/"protocol.json", {"test":"receipt control only"})
+        freeze.dump(self.out/"external-epoch.json", {"test":"synthetic external pin"})
+        self.ledger = self.base/"ledger"
         self.ledger.mkdir()
-        freeze.dump(self.ledger / "absolute-clock.json", self.clock)
+        freeze.dump(self.ledger/"absolute-clock.json",self.clock)
+        freeze.dump(self.out/"clock.json",dict(self.clock,
+            absolute_anchor_sha256=freeze.digest(self.ledger/"absolute-clock.json"),
+            internal=freeze.digest(self.out/"protocol.json"),external=freeze.digest(self.out/"external-epoch.json")))
         self.source = {
             "source_head": "current-core",
             "compiler": "test-rustc",
@@ -356,10 +355,11 @@ class Evidence(unittest.TestCase):
         self.assertIn(
             freeze.OLD / "crates/modena-core/src/external/ase_emt_worker.py", files
         )
-        self.assertIn(
-            Path(self.exe).parent.parent / "Python3",
-            freeze.python_runtime_files(Path(self.exe)),
-        )
+        import sysconfig
+        library = (Path(self.exe).parent.parent / sysconfig.get_config_var("PYTHONFRAMEWORK")
+                   if sysconfig.get_config_var("PYTHONFRAMEWORK")
+                   else Path(sysconfig.get_config_var("LIBDIR")) / sysconfig.get_config_var("LDLIBRARY"))
+        self.assertIn(library, freeze.python_runtime_files(Path(self.exe)))
 
     def test_cancelled_monitor_reaps_helper_and_refuses_unresolved_prior_launch(self):
         folder = self.job("helper")
@@ -431,13 +431,16 @@ class Evidence(unittest.TestCase):
         path=ctypes.create_string_buffer(4096)
         self.assertGreater(lib.proc_pidpath(os.getpid(),path,len(path)),0)
         actual=str(Path(os.fsdecode(path.value)).resolve())
-        freeze.dump(self.out/"external-epoch.json",{"ase_runtime":{"process_executable":actual}})
+        # This synthetic monitor invokes monitor directly, with no epoch admission.
+        (self.out/"external-epoch.json").write_text(__import__("json").dumps({"ase_runtime":{"process_executable":actual}}))
         script = "import subprocess,sys;subprocess.run([sys.executable,'-I','-S','-c','import time;time.sleep(.2)'],check=True)"
         freeze.dump(folder/"launch.json",dict(self.jobs["ase-six-strain"],
                     argv=[self.exe,*campaign.PYTHON_FLAGS,"-c",script],
                     name="ase-six-strain",protocol_sha256=self.pin,**self.clock))
         self.assertEqual(campaign.monitor(self.out,folder),0)
         child=freeze.load(folder/"child.json")
+        self.assertGreaterEqual(child["elapsed_seconds"],.2)
+        self.assertLess(child["elapsed_seconds"],5)
         self.assertTrue(campaign.worker_coverage(child))
         self.assertGreater(child["sampled_ase_tree_max_rss_bytes"],0)
         self.assertTrue(all(r["rss_samples"]>0 for r in child["ase_workers"].values()))

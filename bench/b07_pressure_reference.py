@@ -35,6 +35,7 @@ from campaign import (
     raw_bytes,
     LIMITS,
     exclusive,
+    epoch_clock,
 )
 from evidence import (origin_binding, projected_frames, validate_projection, job_state,
     family_binding, read_family, worst, process_status, derivation_receipt)
@@ -139,7 +140,7 @@ class Campaign:
         self.roster = load(out / "inputs/roster.json")
         self.results = self.area / "comparisons"
         self.results.mkdir(exist_ok=True)
-        self.clock = load(out / "clock.json")
+        self.clock = epoch_clock(out)
 
     def launch(self, id):
         out, x = self.out, self.x

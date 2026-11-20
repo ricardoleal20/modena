@@ -386,7 +386,7 @@ def prepare(binary, protocol, out):
     return register(out, binary, fixtures, source, packages, build, runtime)
 
 
-def register(out, binary, fixtures, source, packages, build, runtime):
+def register(out, binary, fixtures, source, packages, build, runtime, previous_protocol=V4_SHA):
     area, static = out / "reference", out / "reference/inputs"
     exe = out / "bin/stress_validation"
     actions, sections, evaluations, families = {}, {}, {}, {}
@@ -560,7 +560,7 @@ def register(out, binary, fixtures, source, packages, build, runtime):
     ]
     x = dict(
         internal_protocol_sha256=digest(out / "protocol.json"),
-        previous_internal_protocol_sha256=V4_SHA,
+        previous_internal_protocol_sha256=previous_protocol,
         original_internal_protocol_sha256=V3_SHA,
         ase_runtime=runtime,
         adapter_source_head=subprocess.check_output(

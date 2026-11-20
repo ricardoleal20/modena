@@ -346,7 +346,8 @@ class SourceGates(unittest.TestCase):
             x = dict(expected_gate_families={"family": ["wanted-a", "wanted-b"]},
                      family_inputs={"family":{"producers":[],"families":[]}})
             ref.dump(out/"external-epoch.json",x)
-            c = ref.Campaign(out, x, {"fixtures": []})
+            with patch.object(ref,"epoch_clock",return_value={}):
+                c = ref.Campaign(out, x, {"fixtures": []})
             with patch.object(
                 ref, "run_job", side_effect=AssertionError("must not launch")
             ):
@@ -501,7 +502,7 @@ class ReviewedEvidence(unittest.TestCase):
         (out/"inputs").mkdir()
         (out/"jobs").mkdir()
         ref.dump(out/"inputs/roster.json",[])
-        ref.dump(out/"clock.json",dict(start_monotonic=time.monotonic(),deadline_monotonic=time.monotonic()+600,deadline_utc=time.time()+600))
+        ref.dump(out/"clock.json",campaign.new_clock(600))
         ref.dump(out/"protocol.json",{"fixtures":[SYNTHETIC_ROTOR]})
         self.fix={"rotor":SYNTHETIC_ROTOR}
         self.cfg=dict(argv=["/usr/bin/true"],cwd=str(self.folder),env={},role="reference",
@@ -520,6 +521,10 @@ class ReviewedEvidence(unittest.TestCase):
         lease=patch.object(ref,"exclusive",return_value=contextlib.nullcontext())
         lease.start()
         self.addCleanup(lease.stop)
+        for module in (ref,campaign):
+            reader=patch.object(module,"epoch_clock",side_effect=lambda path:ref.load(path/"clock.json"))
+            reader.start()
+            self.addCleanup(reader.stop)
         self.mock=patch.object(campaign,"reconciled_wrapper",return_value=True)
         self.mock.start()
         self.addCleanup(self.mock.stop)

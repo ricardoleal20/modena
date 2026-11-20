@@ -182,7 +182,10 @@ fn monitor_rejects_invalid_samples_without_corrupting_previous_statistics() {
         (1.0, f64::NAN),
         (f64::INFINITY, 1.0),
     ] {
-        assert!(monitor.observe(t, e).is_err());
+        let error = monitor.observe(t, e).unwrap_err();
+        if e.is_nan() {
+            assert!(error.to_string().contains("non-finite energy"), "{error}");
+        }
         assert_eq!(monitor.report(), initial);
     }
     assert!(EnergyMonitor::new(0.0, 0, 1.0, ConservationApplicability::Nve).is_err());

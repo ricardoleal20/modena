@@ -251,7 +251,10 @@ class BehavioralControls(unittest.TestCase):
 
 class ControlledImports(unittest.TestCase):
     def test_actual_host_and_provider_startup_ignore_readable_timestamp_cache(self):
-        interpreters=[Path("/usr/bin/python3"),epoch.ASEROOT/"bin/python"]
+        interpreters = {Path(sys.executable).resolve()}
+        optional = epoch.ASEROOT / "bin/python"
+        if optional.is_file():
+            interpreters.add(optional.resolve())
         launch=campaign.ROOT/"bench/b07_validation/launch.sh"
         host=campaign.ROOT/"bench/b07_pressure_reference.py"
         # Synthetic cache code is never scientific work. Preserve any previous cache exactly.
@@ -288,6 +291,7 @@ class ControlledImports(unittest.TestCase):
 
 
 class FrozenGraph(unittest.TestCase):
+    @unittest.skipUnless((epoch.V4 / "external-epoch.json").is_file(), "requires the frozen local v4 archive")
     def test_registered_graph_preserves_roster_and_exact_origins(self):
         import shutil
         archived=epoch.V4

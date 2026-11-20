@@ -302,6 +302,7 @@ fn validate_stress(cp: &Checkpoint, s: &RestartStress) -> Result<()> {
             "endpoint model, scalar cache or volume mismatch",
         ));
     }
+    check_missing_provenance(&s.model.tensor)?;
     if let TensorAvailability::Complete(t) = s.model.tensor {
         let trace = t.trace();
         let tolerance = 5e-12 * (1. + t.0[0].abs() + t.0[1].abs() + t.0[2].abs());
@@ -366,6 +367,16 @@ fn validate_stress(cp: &Checkpoint, s: &RestartStress) -> Result<()> {
     validate_history(s, state, interval)
 }
 
+fn check_missing_provenance(model: &TensorAvailability) -> Result<()> {
+    if matches!(model,TensorAvailability::Missing(why) if why.is_empty() || why.iter().any(|r|r.component.is_empty()))
+    {
+        return Err(invalid_stress(
+            "unavailable tensor needs component provenance",
+        ));
+    }
+    Ok(())
+}
+
 fn check_pressure(
     kinetic: SymTensor6,
     model: &TensorAvailability,
@@ -374,12 +385,7 @@ fn check_pressure(
     total: &TensorAvailability,
     scalar: Option<f64>,
 ) -> Result<()> {
-    if matches!(model,TensorAvailability::Missing(why) if why.is_empty() || why.iter().any(|r|r.component.is_empty()))
-    {
-        return Err(invalid_stress(
-            "unavailable tensor needs component provenance",
-        ));
-    }
+    check_missing_provenance(model)?;
     let (expected, p) = pressure_total(kinetic, model, constraint, volume)?;
     if &expected != total || p != scalar {
         return Err(invalid_stress(
@@ -397,8 +403,11 @@ fn validate_history(
     use ProjectionStage::*;
     let signature = &state.physical_signature;
     let expected: &[ProjectionStage] = match signature["integrator"]["type"].as_str() {
+        // The runner normalizes an explicit empty table to the unconstrained
+        // integrator. Older public v3 records can retain its two empty reports.
         Some("velocity_verlet")
-            if state.constraint_count > 0 || !signature["constraints"].is_null() =>
+            if state.constraint_count > 0
+                || (!signature["constraints"].is_null() && !s.last_stages.is_empty()) =>
         {
             &[VvPosition, VvFinal]
         }
@@ -474,11 +483,53 @@ fn validate_history(
                 && b.unprojected_moment.finite()
                 && b.reaction_moment == o.tensor_impulse =>
         {
+            if state.constraint_count > 0 {
+                let edges = checkpoint_constraint_pairs(state)?;
+                o.check_atom_impulses(
+                    state.masses.len(),
+                    |k| edges[k],
+                    |i, axis| b.reaction[i].0[axis],
+                )
+                .map_err(|e| invalid_stress(&format!("OU bath reaction: {e}")))?;
+            }
             Ok(())
         }
         (None, None) => Ok(()),
         _ => Err(invalid_stress("missing, unexpected or invalid OU bath")),
     }
+}
+
+/// Mechanical v2 identity stores explicit loose bonds and an optional
+/// (water count, OH length, HOH angle) tuple for the generated O,H,H triples.
+fn checkpoint_constraint_pairs(state: &ContinuationState) -> Result<Vec<(usize, usize)>> {
+    use crate::constraint_stress::water_pairs;
+    use crate::io::input::ConstraintsSpec;
+    let signature = &state.physical_signature;
+    let explicit: Option<ConstraintsSpec> =
+        serde_json::from_value(signature["constraints"].clone())
+            .map_err(|_| invalid_stress("invalid constraint specification"))?;
+    let water: Option<(usize, f64, f64)> =
+        serde_json::from_value(signature["water_geometry"].clone())
+            .map_err(|_| invalid_stress("invalid generated water specification"))?;
+    let mut pairs: Vec<_> = explicit
+        .into_iter()
+        .flat_map(|c| c.bonds)
+        .map(|bond| (bond.atoms[0], bond.atoms[1]))
+        .collect();
+    if let Some((waters, _, _)) = water {
+        if waters.checked_mul(3) != Some(state.masses.len()) {
+            return Err(invalid_stress("generated water atom count mismatch"));
+        }
+        pairs.extend((0..waters).flat_map(|w| water_pairs(3 * w)));
+    }
+    if pairs.len() != state.constraint_count
+        || pairs
+            .iter()
+            .any(|&(i, j)| i == j || i >= state.masses.len() || j >= state.masses.len())
+    {
+        return Err(invalid_stress("OU bath constraint topology mismatch"));
+    }
+    Ok(pairs)
 }
 
 /// Parse a checkpoint from `path`.

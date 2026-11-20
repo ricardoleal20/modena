@@ -371,10 +371,7 @@ pub fn endpoint_pressure(
             "nonfinite endpoint model evaluation".into(),
         ));
     }
-    let empty = crate::Constraints::new();
-    let constraint =
-        crate::constraint_stress::reaction_from_constraints(system, constraints.unwrap_or(&empty))?
-            .tensor;
+    let constraint = crate::constraint_stress::constraint_pressure_tensor(system, constraints)?;
     let kinetic = kinetic_tensor(system);
     if !kinetic.finite() {
         return Err(ModenaError::Physics(
@@ -400,10 +397,20 @@ pub(crate) fn pressure_total(
     constraint: SymTensor6,
     volume: f64,
 ) -> crate::Result<(TensorAvailability, Option<f64>)> {
-    if !kinetic.finite() || !constraint.finite() || !volume.is_finite() || volume <= 0. {
+    if !kinetic.finite() {
         return Err(crate::ModenaError::Physics(
-            "invalid pressure numerator or volume".into(),
+            "non-finite kinetic pressure tensor".into(),
         ));
+    }
+    if !constraint.finite() {
+        return Err(crate::ModenaError::Physics(
+            "non-finite constraint pressure tensor".into(),
+        ));
+    }
+    if !volume.is_finite() || volume <= 0. {
+        return Err(crate::ModenaError::Physics(format!(
+            "invalid pressure volume {volume:e}"
+        )));
     }
     Ok(match model {
         TensorAvailability::Missing(why) => (TensorAvailability::Missing(why.clone()), None),

@@ -502,6 +502,15 @@ class ReviewedEvidence(unittest.TestCase):
         (out/"inputs").mkdir()
         (out/"jobs").mkdir()
         ref.dump(out/"inputs/roster.json",[])
+        # These controls exercise seals and dependency handling with synthetic time.
+        clock_sample = dict(before_ns=1, after_ns=1, utc_ns=1_700_000_000_000_000_000,
+                            boot_utc_ns=0, identity={"boot": "fixture"})
+        clock = patch("timing.sample", return_value=clock_sample)
+        clock.start()
+        self.addCleanup(clock.stop)
+        ledger = patch.object(campaign, "LEDGER", out / "ledger")
+        ledger.start()
+        self.addCleanup(ledger.stop)
         ref.dump(out/"clock.json",campaign.new_clock(600))
         ref.dump(out/"protocol.json",{"fixtures":[SYNTHETIC_ROTOR]})
         self.fix={"rotor":SYNTHETIC_ROTOR}

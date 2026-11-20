@@ -109,15 +109,30 @@ impl ProjectionReport {
         after: &[f64],
         interval: f64,
     ) -> Result<()> {
+        self.check_atom_impulses(
+            masses.len(),
+            |k| (geometry.edges[k].i, geometry.edges[k].j),
+            |i, axis| {
+                let k = 3 * i + axis;
+                masses[i] * (after[k] - before[k]) / interval
+            },
+        )
+    }
+
+    /// The stage and checkpoint both represent this signed sum at each atom.
+    /// Callers provide already validated edge and atom indices.
+    pub(crate) fn check_atom_impulses(
+        &self,
+        atoms: usize,
+        edge_atoms: impl Fn(usize) -> (usize, usize),
+        represented: impl Fn(usize, usize) -> f64,
+    ) -> Result<()> {
         const RECONSTRUCTION_TOLERANCE: f64 = 5e-10;
-        let mut impulses = vec![(Vec3::zero(), Vec3::zero()); masses.len()];
+        let mut impulses = vec![(Vec3::zero(), Vec3::zero()); atoms];
         for update in &self.impulses {
-            let edge = &geometry.edges[update.edge];
+            let (i, j) = edge_atoms(update.edge);
             let magnitude = Vec3(update.impulse_on_j.0.map(f64::abs));
-            for (atom, contribution) in [
-                (edge.i, -update.impulse_on_j),
-                (edge.j, update.impulse_on_j),
-            ] {
+            for (atom, contribution) in [(i, -update.impulse_on_j), (j, update.impulse_on_j)] {
                 let (sum, absolute_sum) = &mut impulses[atom];
                 *sum += contribution;
                 *absolute_sum += magnitude;
@@ -125,8 +140,7 @@ impl ProjectionReport {
         }
         for (i, (sum, absolute_sum)) in impulses.iter().enumerate() {
             for axis in 0..3 {
-                let k = 3 * i + axis;
-                let represented = masses[i] * (after[k] - before[k]) / interval;
+                let represented = represented(i, axis);
                 let difference = (represented - sum.0[axis]).abs();
                 let tolerance = RECONSTRUCTION_TOLERANCE * (1. + absolute_sum.0[axis]);
                 if !difference.is_finite() || !tolerance.is_finite() || difference > tolerance {
@@ -152,17 +166,24 @@ impl ProjectionReport {
         Ok(())
     }
 }
+pub(crate) fn water_pairs(first: usize) -> [(usize, usize); 3] {
+    [
+        (first, first + 1),
+        (first, first + 2),
+        (first + 1, first + 2),
+    ]
+}
+
 /// Stable order: loose bonds, then OH1/OH2/H1H2 for each water.
 pub(crate) fn topology(c: &Constraints) -> Vec<(usize, usize, f64)> {
     c.bonds
         .iter()
         .map(|e| (e.i, e.j, e.d))
         .chain(c.waters.iter().flat_map(|w| {
-            [
-                (w.first, w.first + 1, w.d_oh),
-                (w.first, w.first + 2, w.d_oh),
-                (w.first + 1, w.first + 2, w.d_hh),
-            ]
+            water_pairs(w.first)
+                .into_iter()
+                .zip([w.d_oh, w.d_oh, w.d_hh])
+                .map(|((i, j), distance)| (i, j, distance))
         }))
         .collect()
 }
@@ -712,18 +733,31 @@ pub fn endpoint_reaction(
     solve_endpoint(system, &current)
 }
 
-pub(crate) fn reaction_from_constraints(
+pub(crate) fn constraint_pressure_tensor(
     system: &System,
-    constraints: &Constraints,
-) -> Result<EndpointReaction> {
-    let geometry = select_geometry(system, constraints, &system.positions)?;
-    solve_endpoint(system, &geometry)
+    constraints: Option<&Constraints>,
+) -> Result<SymTensor6> {
+    if let Some(c) = constraints.filter(|c| !c.is_empty()) {
+        let geometry = select_geometry(system, c, &system.positions)?;
+        return Ok(solve_endpoint(system, &geometry)?.tensor);
+    }
+    crate::constraints::validate_state_buffers(system)?;
+    validate_endpoint_forces(system)?;
+    if !system.box_size.is_triclinic() {
+        validate_orthorhombic(system.box_size)?;
+    }
+    Ok(SymTensor6::ZERO)
 }
 
-fn solve_endpoint(system: &System, g: &ConstraintGeometry) -> Result<EndpointReaction> {
+fn validate_endpoint_forces(system: &System) -> Result<()> {
     if system.forces.iter().any(|f| !f.is_finite()) {
         return Err(geometry_error("nonfinite conservative endpoint force"));
     }
+    Ok(())
+}
+
+fn solve_endpoint(system: &System, g: &ConstraintGeometry) -> Result<EndpointReaction> {
+    validate_endpoint_forces(system)?;
     let mut reaction = EndpointReaction {
         multipliers: vec![0.; g.edges.len()],
         forces: vec![Vec3::zero(); system.n()],

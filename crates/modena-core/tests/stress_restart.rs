@@ -437,3 +437,122 @@ fn stage_history_rejects_unconstrained_bath_reaction() {
         .0[0] = 1.;
     assert_history_rejected(&good, &bad);
 }
+
+#[test]
+fn constrained_bath_reaction_matches_o_stage_including_generated_water_edges() {
+    let dir = tempfile::tempdir().unwrap();
+    let water_config = InputConfig::from_str(
+        r#"
+units = "real"
+[structure]
+type = "water"
+n_waters = 1
+density = 0.02
+[model]
+type = "lennard_jones"
+cutoff = 2.0
+[[model.types]]
+sigma = 1.0
+epsilon = 0.1
+[[model.types]]
+sigma = 1.0
+epsilon = 0.0
+[integrator]
+type = "langevin_baoab"
+dt = 0.0001
+gamma = 1.0
+target_temperature = 100.0
+seed = 71
+[run]
+steps = 1
+initial_temperature = 100.0
+"#,
+    )
+    .unwrap();
+    let mut water = Simulation::from_config_without_outputs(&water_config, dir.path()).unwrap();
+    water.run().unwrap();
+    let path = dir.path().join("water.chk");
+    water.write_checkpoint(&path).unwrap();
+    for good in [
+        load_with_stress(path).unwrap(),
+        make_stress_checkpoint_after_rotor_step(),
+    ] {
+        let mut bad = good.clone();
+        bad.stress
+            .as_mut()
+            .unwrap()
+            .last_bath
+            .as_mut()
+            .unwrap()
+            .reaction[1]
+            .0[2] += 0.1;
+        assert_history_rejected(&good, &bad);
+    }
+}
+
+#[test]
+fn nhc_box_move_validates_cached_missing_provenance_independently() {
+    use modena_core::stress::MissingTensor;
+    use serde_json::json;
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = rotor_config(dir.path(), 1, None);
+    cfg.constraints = None;
+    cfg.integrator = serde_json::from_value(
+        json!({"type":"nose_hoover_chain","dt":0.003,"target_temperature":1.0}),
+    )
+    .unwrap();
+    cfg.barostat = serde_json::from_value(
+        json!({"type":"berendsen","target_pressure":0.25,"tau":2.0,"compressibility":0.1}),
+    )
+    .unwrap();
+    let mut sim = Simulation::from_config_without_outputs(&cfg, dir.path()).unwrap();
+    sim.run().unwrap();
+    let path = dir.path().join("nhc.chk");
+    sim.write_checkpoint(&path).unwrap();
+    let mut good = load_with_stress(path).unwrap();
+    let s = good.stress.as_mut().unwrap();
+    assert!(matches!(s.model.tensor, TensorAvailability::Complete(_)));
+    assert!(matches!(s.endpoint.model, TensorAvailability::Missing(_)));
+    let reason = |name: &str| MissingTensor {
+        component: name.into(),
+        reason: MissingTensorReason::LegacyForceModel,
+    };
+    s.model.tensor = TensorAvailability::Missing(vec![reason("custom scalar model")]);
+    for reasons in [vec![], vec![reason("")]] {
+        let mut bad = good.clone();
+        bad.stress.as_mut().unwrap().model.tensor = TensorAvailability::Missing(reasons);
+        assert_history_rejected(&good, &bad);
+    }
+}
+
+#[test]
+fn explicit_empty_vv_constraints_restore_the_actual_unconstrained_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = rotor_config(dir.path(), 1, None);
+    cfg.constraints = Some(Default::default());
+    cfg.integrator =
+        serde_json::from_value(serde_json::json!({"type":"velocity_verlet","dt":0.003})).unwrap();
+    let mut direct = Simulation::from_config_without_outputs(&cfg, dir.path()).unwrap();
+    direct.run().unwrap();
+    let seam = saved(&direct, &dir.path().join("empty.chk"));
+    // Public v3 files may already contain the two explicit zero projections.
+    let mut staged = load_with_stress(dir.path().join("empty.chk")).unwrap();
+    let s = staged.stress.as_mut().unwrap();
+    use modena_core::constraint_stress::{ProjectionReport, ProjectionStage};
+    for stage in [ProjectionStage::VvPosition, ProjectionStage::VvFinal] {
+        s.last_stages.push(ProjectionReport {
+            stage,
+            impulses: Vec::new(),
+            tensor_impulse: modena_core::stress::SymTensor6::ZERO,
+            iterations: 0,
+            max_position_residual: 0.0,
+            max_velocity_residual: 0.0,
+        });
+    }
+    let staged_path = dir.path().join("staged-empty.chk");
+    save_with_stress(&staged_path, &staged).unwrap();
+    assert_eq!(load_with_stress(staged_path).unwrap().stress, staged.stress);
+    cfg.run.restore_file = Some("empty.chk".into());
+    let resumed = Simulation::from_config_without_outputs(&cfg, dir.path()).unwrap();
+    assert_eq!(saved(&resumed, &dir.path().join("resumed.chk")), seam);
+}

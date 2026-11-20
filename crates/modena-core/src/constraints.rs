@@ -74,6 +74,30 @@ pub struct Constraints {
     pub waters: Vec<RigidWater>,
 }
 
+pub(crate) fn validate_state_buffers(system: &System) -> Result<()> {
+    let n = system.n();
+    if system.positions.len() != 3 * n
+        || system.velocities.len() != 3 * n
+        || system.forces.len() != 3 * n
+    {
+        return Err(constraint_error(
+            "system buffer lengths do not match atom count",
+        ));
+    }
+    if system.masses.iter().any(|m| !m.is_finite() || *m <= 0.0) {
+        return Err(constraint_error("masses must be finite and positive"));
+    }
+    if system
+        .positions
+        .iter()
+        .chain(&system.velocities)
+        .any(|x| !x.is_finite())
+    {
+        return Err(constraint_error("positions/velocities must be finite"));
+    }
+    Ok(())
+}
+
 impl Constraints {
     pub fn new() -> Self {
         Self::default()
@@ -112,26 +136,8 @@ impl Constraints {
     /// Validate buffers, atom indices, positive masses and target geometry.
     pub fn validate(&self, system: &System) -> Result<()> {
         self.validate_parameters()?;
+        validate_state_buffers(system)?;
         let n = system.n();
-        if system.positions.len() != 3 * n
-            || system.velocities.len() != 3 * n
-            || system.forces.len() != 3 * n
-        {
-            return Err(constraint_error(
-                "system buffer lengths do not match atom count",
-            ));
-        }
-        if system.masses.iter().any(|m| !m.is_finite() || *m <= 0.0) {
-            return Err(constraint_error("masses must be finite and positive"));
-        }
-        if system
-            .positions
-            .iter()
-            .chain(&system.velocities)
-            .any(|x| !x.is_finite())
-        {
-            return Err(constraint_error("positions/velocities must be finite"));
-        }
         for c in &self.bonds {
             if c.i >= n || c.j >= n || c.i == c.j || !c.d.is_finite() || c.d <= 0.0 {
                 return Err(constraint_error("invalid bond indices or target length"));

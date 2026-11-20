@@ -1408,7 +1408,8 @@ seed = 42
         );
         let anomalies = mgr.detect_anomaly(Some(rid), None).unwrap();
         assert!(anomalies.anomalies.iter().any(|a| a.typ == "run_failure"));
-        assert!(status.error.unwrap().contains("non-finite energy"));
+        let error = status.error.unwrap();
+        assert_eq!(error, "physics error: non-finite kinetic pressure tensor");
     }
 
     #[test]

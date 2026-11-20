@@ -147,6 +147,9 @@ jobs:
       - name: Build
         run: cargo build --locked --workspace --verbose --release
       - name: Test
+        # Calibration fixtures require one Rayon worker. Parallel probes set their own counts.
+        env:
+          RAYON_NUM_THREADS: "1"
         run: cargo test --locked --workspace --verbose
       - name: Build and freeze layout-step contract example
         run: |

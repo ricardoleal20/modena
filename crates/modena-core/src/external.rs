@@ -131,7 +131,7 @@ impl Serialize for ScaledPositions<'_> {
     ) -> std::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeSeq;
         let mut seq = serializer.serialize_seq(Some(self.positions.len() / 3))?;
-        for p in self.positions.chunks_exact(3) {
+        for p in self.positions.as_chunks::<3>().0 {
             seq.serialize_element(&[p[0] * self.sigma, p[1] * self.sigma, p[2] * self.sigma])?;
         }
         seq.end()

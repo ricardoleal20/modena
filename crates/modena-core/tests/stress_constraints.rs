@@ -254,7 +254,7 @@ fn water_newton_and_three_bonds_agree_for_both_mass_sets() {
         let mut replay = initial.clone();
         replay.positions = before.clone();
         let mut prior = f64::INFINITY;
-        for pass in a.impulses.chunks_exact(3) {
+        for pass in a.impulses.as_chunks::<3>().0 {
             let residual = water_c.max_residual(&replay);
             assert!(residual < prior);
             prior = residual;

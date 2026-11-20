@@ -1252,11 +1252,7 @@ fn reference_secondary_core_ewald_only_after_image_and_tail_checks() {
         let core = Evaluation {
             energy,
             strain_w: virial.w,
-            forces: system
-                .forces
-                .chunks_exact(3)
-                .map(|f| [f[0], f[1], f[2]])
-                .collect(),
+            forces: system.forces.as_chunks::<3>().0.to_vec(),
         };
         strict_reference_delta(converged, &core, &format!("secondary core {}", s.id));
     }
@@ -2398,7 +2394,7 @@ fn ordinary_batch_child_probe() {
     assert_eq!(e.neighbor_rebuilds(), before);
     let raw_forces = e.post_batch_forces();
     let expected = evaluate_spme(&s, special_parameters()).unwrap();
-    for (actual, expected) in raw_forces.chunks_exact(3).zip(&expected.forces) {
+    for (actual, expected) in raw_forces.as_chunks::<3>().0.iter().zip(&expected.forces) {
         for axis in 0..3 {
             assert!((actual[axis] - expected[axis]).abs() < 1e-12);
         }

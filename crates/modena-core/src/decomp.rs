@@ -498,8 +498,8 @@ mod tests {
         let grid = RankGrid::balanced(Vec3::new(10.0, 10.0, 10.0), 2.5, 8);
         // 10 / 2.5 = 4 per axis max → up to 64 ranks, but target 8.
         assert!(grid.n_ranks() <= 8);
-        for k in 0..3 {
-            let edge = 10.0 / grid.nr[k] as f64;
+        for ranks in grid.nr {
+            let edge = 10.0 / ranks as f64;
             assert!(edge + 1e-12 >= 2.5, "edge {edge} < min_edge");
         }
     }

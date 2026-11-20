@@ -320,7 +320,7 @@ print(json.dumps({'energy_ev':a.get_potential_energy(),'forces_ev_per_angstrom':
             / 2e-6;
         assert!((fd_w - direct_w).abs() < 2e-6);
         let mut translated = s.clone();
-        for p in translated.positions.chunks_exact_mut(3) {
+        for p in translated.positions.as_chunks_mut::<3>().0 {
             p[0] += 0.71;
             p[1] -= 0.37;
             p[2] += 1.12;

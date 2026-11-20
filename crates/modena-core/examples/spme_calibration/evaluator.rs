@@ -117,12 +117,7 @@ impl SpmeEvaluator {
         let output = Evaluation {
             energy,
             strain_w: virial.w,
-            forces: self
-                .system
-                .forces
-                .chunks_exact(3)
-                .map(|f| [f[0], f[1], f[2]])
-                .collect(),
+            forces: self.system.forces.as_chunks::<3>().0.to_vec(),
         };
         if !output.energy.is_finite()
             || !output.strain_w.is_finite()

@@ -52,7 +52,7 @@ fn special() -> (System, Vec<PairScale>) {
 }
 fn ionic() -> (System, Vec<PairScale>) {
     let mut s = modena_core::lattice::rocksalt(2.2, [2; 3], "Na", "Cl", 1., 1., 1., -1.);
-    for (i, r) in s.positions.chunks_exact_mut(3).enumerate() {
+    for (i, r) in s.positions.as_chunks_mut::<3>().0.iter_mut().enumerate() {
         for (axis, v) in r.iter_mut().enumerate() {
             let z = ((i as u64 + 1) * 1_664_525 + (axis as u64 + 1) * 1_013_904_223 + 19 * 69_069)
                 % 65_536;

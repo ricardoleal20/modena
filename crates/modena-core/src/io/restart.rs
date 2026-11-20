@@ -316,14 +316,16 @@ fn validate_stress(cp: &Checkpoint, s: &RestartStress) -> Result<()> {
             ));
         }
     }
-    let kinetic =
-        cp.velocities
-            .chunks_exact(3)
-            .zip(&state.masses)
-            .fold(SymTensor6::ZERO, |sum, (v, m)| {
-                let v = Vec3::new(v[0], v[1], v[2]);
-                sum.plus(SymTensor6::dyad(v, v).scaled(*m))
-            });
+    let kinetic = cp
+        .velocities
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(&state.masses)
+        .fold(SymTensor6::ZERO, |sum, (&v, m)| {
+            let v = Vec3(v);
+            sum.plus(SymTensor6::dyad(v, v).scaled(*m))
+        });
     if kinetic != end.kinetic || (state.constraint_count == 0 && end.constraint != SymTensor6::ZERO)
     {
         return Err(invalid_stress(

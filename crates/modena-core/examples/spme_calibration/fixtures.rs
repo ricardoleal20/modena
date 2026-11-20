@@ -121,7 +121,9 @@ fn ionic(
     let cell = factors.map(|f| edge * f);
     let positions = sys
         .positions
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .enumerate()
         .map(|(i, r)| {
             std::array::from_fn(|axis| {

@@ -582,9 +582,11 @@ fn projected_ou(
     };
     let projection = projection.unwrap_or_else(|| ProjectionReport::new(stage));
     let reaction: Vec<_> = before
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .enumerate()
-        .map(|(i, v)| (system.vel(i) - Vec3::new(v[0], v[1], v[2])) * system.masses[i])
+        .map(|(i, &v)| (system.vel(i) - Vec3(v)) * system.masses[i])
         .collect();
     if !unprojected_moment.finite()
         || reaction

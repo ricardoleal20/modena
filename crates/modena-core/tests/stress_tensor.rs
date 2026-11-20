@@ -212,7 +212,7 @@ fn six_strain_gate(
         near(cold.energy, e, 5e-12);
         near(cold.scalar_virial, w.w-11., 5e-12);
         for (a,b) in deterministic.forces.iter().zip(&s.forces) { near(*b, 2.*a-7., 5e-12); }
-        for component in 0..6 {
+        for (component, expected) in t.0.into_iter().enumerate() {
             let mut derivatives = Vec::new();
             for eps in [1e-4,3e-5,1e-5,3e-6] {
                 let energy = |eta| {
@@ -222,10 +222,9 @@ fn six_strain_gate(
                 };
                 let fd = -(energy(eps)-energy(-eps))/(2.*eps);
                 assert!(fd.is_finite());
-                eprintln!("six_strain label={label} threads={threads} component={component} eps={eps:e} fd={fd:.17e} tensor={:.17e}", t.0[component]);
+                eprintln!("six_strain label={label} threads={threads} component={component} eps={eps:e} fd={fd:.17e} tensor={:.17e}", expected);
                 derivatives.push(fd);
             }
-            let expected = t.0[component];
             assert!(derivatives.windows(2).any(|pair| {
                 pair.iter().all(|x| (x-expected).abs() <= 2e-7*(1.+expected.abs()))
                     && (pair[0]-pair[1]).abs() <= 4e-7*(1.+expected.abs())

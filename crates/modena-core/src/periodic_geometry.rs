@@ -265,11 +265,12 @@ pub(crate) fn global_shift_bound(
         }
     }
     let mut h_p: f64 = 0.0;
-    for l in 0..3 {
+    let columns = (0..3).map(|axis| cell.basis.map(|vector| vector.0[axis]));
+    for column in columns {
         let mut sum = ZERO;
-        for (k, enabled) in options.pbc.into_iter().enumerate() {
+        for (component, enabled) in column.into_iter().zip(options.pbc) {
             if enabled {
-                sum = sum.add(point(cell.basis[k].0[l].abs())?)?;
+                sum = sum.add(point(component.abs())?)?;
             }
         }
         h_p = h_p.max(sum.hi);
@@ -429,7 +430,7 @@ fn scalar_fractional_errors(
         return Err(GeometryError::Invalid);
     }
     let mut p = [0.0_f64; 3];
-    for r in positions.chunks_exact(3) {
+    for r in positions.as_chunks::<3>().0 {
         for k in 0..3 {
             p[k] = p[k].max(r[k].abs());
         }
@@ -917,8 +918,8 @@ mod tests {
         }
         let q = scalar_min_image_search_radius(&c, &p, 1.5).unwrap();
         assert!((1.5..1.50000001).contains(&q));
-        for coordinates in p[3..].chunks_exact(3) {
-            let delta = Vec3::new(coordinates[0], coordinates[1], coordinates[2]);
+        for &coordinates in p[3..].as_chunks::<3>().0 {
+            let delta = Vec3(coordinates);
             if cell.min_image(delta).norm2() < 2.25 {
                 // Independent fixed cube finds the exact dyadic physical image,
                 // without production inverse/wrapping/search-radius helpers.

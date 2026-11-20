@@ -270,12 +270,7 @@ where
                 Evaluation {
                     energy,
                     strain_w: virial.w,
-                    forces: evaluator
-                        .system
-                        .forces
-                        .chunks_exact(3)
-                        .map(|f| [f[0], f[1], f[2]])
-                        .collect(),
+                    forces: evaluator.system.forces.as_chunks::<3>().0.to_vec(),
                 }
             } else {
                 evaluator.evaluate()?

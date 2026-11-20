@@ -1,5 +1,15 @@
 """Shared B07 campaign ledger and child monitor. All science runs are serial."""
 
+import sys
+if __name__ == "__main__" and not (
+    sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode
+    and sys.pycache_prefix == "/dev/null"
+):
+    raise SystemExit("use bench/b07_validation/launch.sh INTERPRETER SCRIPT to control imports before startup")
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import argparse
 import contextlib
 import ctypes
@@ -33,14 +43,9 @@ from freeze import (
     prepare,
 )
 
-ENV = {
-    "RAYON_NUM_THREADS": "1",
-    "RUST_TEST_THREADS": "1",
-    "OMP_NUM_THREADS": "1",
-    "OPENBLAS_NUM_THREADS": "1",
-    "MKL_NUM_THREADS": "1",
-    "VECLIB_MAXIMUM_THREADS": "1",
-}
+from runtime import PYTHON_FLAGS, SAFE_ENV, THREAD_ENV, numerical_env
+ENV = dict(SAFE_ENV, **THREAD_ENV)
+
 LEDGER = EVIDENCE / "b07-campaign-budget-v1"
 OU = "integrator::conditional_ou::fixed_water_conditional_momentum_law"
 
@@ -179,6 +184,7 @@ def jobs(out, x):
             or not Path(j["argv"][0]).is_absolute()
         ):
             raise ValueError("unsupported role/cwd/argv")
+        numerical_env(j["env"])
         if not all(j["env"].get(k) == v for k, v in ENV.items()):
             raise ValueError("numeric/thread environment changed")
         if j["role"] == "rust" and j["argv"][0] != str(out / "bin/stress_validation"):
@@ -199,6 +205,8 @@ def jobs(out, x):
                     name != "ase-six-strain"
                     or j["env"].get("MODENA_ASE_PYTHON") != python
                     or python not in x["source_sha256"]
+                    or x["source_sha256"].get(x["ase_runtime"]["process_executable"])
+                    != x["ase_runtime"]["process_executable_sha256"]
                     or str(out / "reference/inputs/ase.json")
                     not in x["snapshot_sha256"]
                 ):
@@ -295,6 +303,58 @@ def start(out):
         dump(out / "clock.json", dict(clock, **pins))
 
 
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # Live but not observable must fail closed.
+
+
+def sample_ase_workers(records, pids, read_rss, read_path, alive, expected):
+    """Distinguish a departed worker from a live worker whose RSS cannot be read."""
+    total = 0
+    for pid in pids:
+        row = records.setdefault(str(pid), dict(pid=pid, rss_samples=0,
+                    interpreter_samples=0, max_rss_bytes=0, paths=[], exited=False))
+        rss = read_rss(pid)
+        if rss is None:
+            if alive(pid):
+                raise ValueError("live ASE worker RSS unreadable: " + str(pid))
+            row["exited"] = True
+            continue
+        row["rss_samples"] += 1
+        row["max_rss_bytes"] = max(row["max_rss_bytes"], rss)
+        total += rss
+        path = read_path(pid)
+        if path is None:
+            if alive(pid):
+                raise ValueError("live ASE worker executable unreadable: " + str(pid))
+            row["exited"] = True
+            continue
+        resolved = str(Path(path).resolve())
+        if resolved not in row["paths"]:
+            row["paths"].append(resolved)
+        if resolved == expected:
+            row["interpreter_samples"] += 1
+        row["exited"] = False
+    for key, row in records.items():
+        if int(key) not in pids and not alive(int(key)):
+            row["exited"] = True
+    return total
+
+
+def worker_coverage(child):
+    workers = child.get("ase_workers", {})
+    expected = child.get("ase_worker_interpreter")
+    return bool(expected and workers and all(
+        row.get("rss_samples", 0) > 0 and row.get("interpreter_samples", 0) > 0
+        and expected in row.get("paths", []) and row.get("pid") == int(pid)
+        for pid, row in workers.items()))
+
+
 def monitor(out, folder):
     """Runs INSIDE /usr/bin/time. wait4 measures the direct numerical child alone."""
     launch = load(folder / "launch.json")
@@ -303,6 +363,20 @@ def monitor(out, folder):
     lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
     buf = ctypes.create_string_buffer(96)
     cap = LIMITS["rust_rss_bytes"] if role == "rust" else LIMITS["reference_rss_bytes"]
+    workers = {}
+    worker_interpreter = (load(out/"external-epoch.json")["ase_runtime"]["process_executable"]
+                          if launch["name"] == "ase-six-strain" else None)
+
+    def worker_rss(pid):
+        if lib.proc_pidinfo(pid, 4, 0, buf, 96) == 96:
+            return int.from_bytes(buf.raw[8:16], "little")
+        return None
+
+    def worker_path(pid):
+        path = ctypes.create_string_buffer(4096)
+        if lib.proc_pidpath(pid, path, len(path)) > 0:
+            return os.fsdecode(path.value)
+        return None
 
     def caps():
         if launch["name"] == "deterministic":
@@ -311,7 +385,7 @@ def monitor(out, folder):
             resource.RLIMIT_FSIZE, (LIMITS["artifact_bytes"], LIMITS["artifact_bytes"])
         )
 
-    env = dict(os.environ, **launch["env"])
+    env = numerical_env(launch["env"])
     env["B07_PROTOCOL_SHA256"] = launch["protocol_sha256"]
     env["B07_WORK_PATH"] = str(folder / "work.json")
     env["B07_HOST_PYTHON"] = load(out / "inputs/settings.json")["host_python"]
@@ -376,10 +450,9 @@ def monitor(out, folder):
                             raise ValueError(
                                 "unavailable or oversized ASE child roster"
                             )
-                        tree = rss
-                        for worker in (pid for pid in pids if pid > 0):
-                            if lib.proc_pidinfo(worker, 4, 0, buf, 96) == 96:
-                                tree += int.from_bytes(buf.raw[8:16], "little")
+                        tree = rss + sample_ase_workers(workers,
+                            [pid for pid in pids if pid > 0], worker_rss, worker_path,
+                            pid_alive, worker_interpreter)
                         sampled_tree = max(sampled_tree, tree)
                         if tree > cap:
                             stop = "ASE Rust and worker RSS cap"
@@ -423,6 +496,9 @@ def monitor(out, folder):
         or time.time() > launch["deadline_utc"]
     ):
         stop = "wall cap"
+    if launch["name"] == "ase-six-strain" and code == 0 and not stop:
+        if not worker_coverage(dict(ase_workers=workers, ase_worker_interpreter=worker_interpreter)):
+            interrupted = interrupted or "ASE worker successful RSS/interpreter sample coverage missing"
     dump(
         folder / "child.json",
         {
@@ -434,6 +510,8 @@ def monitor(out, folder):
             "user_cpu_seconds": usage.ru_utime,
             "system_cpu_seconds": usage.ru_stime,
             "rss_samples": samples,
+            "ase_workers": workers if launch["name"] == "ase-six-strain" else None,
+            "ase_worker_interpreter": worker_interpreter,
             "sampled_max_rss_bytes": sampled,
             "sampled_ase_tree_max_rss_bytes": sampled_tree
             if launch["name"] == "ase-six-strain"
@@ -540,7 +618,7 @@ def run_wrapper(argv, folder, so, se):
     }
     proc = None
     try:
-        proc = subprocess.Popen(argv, stdout=so, stderr=se, start_new_session=True)
+        proc = subprocess.Popen(argv, stdout=so, stderr=se, start_new_session=True, env=numerical_env(ENV))
         while proc.poll() is None and not signals:
             time.sleep(0.02)
     finally:
@@ -591,16 +669,8 @@ def run_job(out, name, argv=None, role=None):
             role is not None and role != j["role"]
         ):
             raise ValueError("unregistered invocation")
-        for family in j.get("requires_families", []):
-            required = external["expected_gate_families"][family]
-            if not re.fullmatch(r"[A-Za-z0-9_-]+", family):
-                raise ValueError("invalid prerequisite family")
-            evidence = load(out / "reference/comparisons" / (family + ".json"))
-            rows = checked_gates(evidence["gates"])
-            if {r["name"] for r in rows} != set(required) or any(
-                r["status"] != "Passed" for r in rows
-            ):
-                raise ValueError("blocked by external prerequisite " + family)
+        from evidence import require_passes
+        require_passes(out, external, j.get("requires_families", []))
         folder = out / "jobs" / name
         if folder.exists():
             raise ValueError(f"action already recorded: {name}")
@@ -642,25 +712,8 @@ def run_job(out, name, argv=None, role=None):
             with src.open("rb") as stream:
                 if sum(1 for _ in stream) != j["expected_frames"]:
                     raise ValueError("unexpected actual snapshot count")
-            frozen = external["snapshot_sha256"].get(str(src))
-            if frozen is None:
-                # The adapter binds derived q/v only after parsing an actual native dump.
-                binding = load(Path(str(src) + ".origin.json"))
-                native = Path(binding["raw_path"])
-                producer = out / "jobs" / binding["producer_job"]
-                if (
-                    binding["sha256"] != input_digest
-                    or not native.resolve().is_relative_to(out)
-                    or digest(native) != binding["raw_sha256"]
-                    or binding["producer_receipt_sha256"]
-                    != digest(producer / "child.json")
-                    or load(producer / "child.json")["exit"] != 0
-                    or binding["producer_job"] not in external["jobs"]
-                    or external["jobs"][binding["producer_job"]]["role"] != "reference"
-                ):
-                    raise ValueError("invalid native snapshot origin")
-            elif frozen != input_digest:
-                raise ValueError("matched snapshot identity changed")
+            from evidence import validate_matched_input
+            input_digest = validate_matched_input(out, external, name)
         launch = dict(
             j,
             name=name,
@@ -681,12 +734,21 @@ def run_job(out, name, argv=None, role=None):
                 "-o",
                 str(folder / "host.time"),
                 load(out / "inputs/settings.json")["host_python"],
+                *PYTHON_FLAGS,
                 __file__,
                 "_monitor",
                 str(out),
                 str(folder),
             ]
             run_wrapper(wrapper, folder, so, se)
+        if name in external.get("jobs", {}):
+            if j["role"] == "reference" and not (folder/"work.json").exists():
+                from b07_reference.records import confirmed_work
+                sections = [s for s in external["sections"].values() if s["producer"] == name]
+                completed = (folder/"child.json").exists() and child_status(load(folder/"child.json")) == 0
+                dump(folder/"work.json", confirmed_work(Path(j["cwd"])/"native.log",sections,completed))
+            from evidence import seal_job
+            seal_job(out, external, name)
         if not (folder / "child.json").is_file():
             raise ValueError("monitor lost; direct child receipt unavailable")
         child = load(folder / "child.json")
@@ -797,6 +859,7 @@ def reconciled_wrapper(folder, child):
         "-o",
         str(folder / "host.time"),
         settings["host_python"],
+        *PYTHON_FLAGS,
         __file__,
         "_monitor",
         str(folder.parent.parent),
@@ -896,7 +959,7 @@ def physics_rows(out, external, defects=None, fragment_folder=None):
         defects[str(path)] = detail
         gates.append(unmeasured(marker, "Inconclusive"))
 
-    def collect(path):
+    def collect(path, verified_rows=None):
         # Read once: the digest and a report's preserved copy cover exactly the
         # bytes that failed, including pre-atomic writer output in an old epoch.
         try:
@@ -921,6 +984,8 @@ def physics_rows(out, external, defects=None, fragment_folder=None):
             reject(path, data, f"invalid JSON data: {exc}")
             return []
         try:
+            if verified_rows is not None and decoded == verified_rows:
+                return decoded
             return checked_gates(decoded)
         except (ValueError, TypeError, KeyError) as exc:
             reject(path, data, f"invalid gate record: {exc}")
@@ -939,8 +1004,16 @@ def physics_rows(out, external, defects=None, fragment_folder=None):
             )
         )
     fp = out / "external-gates.json"
-    rows = collect(fp)
-    gates.extend(required_rows(rows, expected_external(external)))
+    if "family_inputs" in external:
+        from evidence import read_family
+        sealed = [r for family in external["expected_gate_families"]
+                  for r in read_family(out, external, family)]
+        rows = collect(fp, sealed)
+        if rows and rows != sealed:
+            reject(fp, fp.read_bytes(), "external gate publication differs from verified families")
+        gates.extend(sealed)
+    else:
+        gates.extend(required_rows(collect(fp), expected_external(external)))
     for phase in ("deterministic", "ou"):
         path = out / (phase + "-gates.json")
         rows = collect(path)
@@ -1166,7 +1239,12 @@ def report(out):
             gates.append(unmeasured("execution_" + name, "BudgetExceeded"))
             continue
         if not (folder / "child.json").is_file():
-            gates.append(unmeasured("execution_" + name))
+            status = "Inconclusive" if (folder/"launch.json").exists() else "Pending"
+            if name in x.get("jobs", {}):
+                from evidence import job_state
+                status, details = job_state(out,x,name)
+                receipt_checks[name] = {"classification":details}
+            gates.append(unmeasured("execution_" + name, status))
             continue
         child = load(folder / "child.json")
         launch = load(folder / "launch.json")
@@ -1183,8 +1261,12 @@ def report(out):
             3: "Failed",
             4: "Inconclusive",
         }.get(child_status(child), "Pending")
-        if not confirmed:
-            status = "Pending"
+        if name in x.get("jobs", {}):
+            from evidence import job_state
+            status, diagnostic = job_state(out, x, name)
+            receipt_checks[name]["classification"] = diagnostic
+        elif not confirmed:
+            status = "Inconclusive"
         execution = gate("execution_" + name, [child["exit"]], [0.0], [0.0])
         execution["status"] = status
         gates.append(execution)

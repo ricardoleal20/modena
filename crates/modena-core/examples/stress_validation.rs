@@ -125,7 +125,12 @@ fn main() -> ExitCode {
     } else {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         host_python(&args).and_then(|python| {
-            Command::new(python)
+            Command::new("/bin/sh")
+                .arg(
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../bench/b07_validation/launch.sh"),
+                )
+                .arg(python)
                 .arg(root.join("bench/b07_validation/campaign.py"))
                 .args(&args)
                 .status()

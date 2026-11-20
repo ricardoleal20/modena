@@ -229,8 +229,8 @@ def prepare(out):
     logs.mkdir()
     (out / "jobs").mkdir()
     baseline = old_source()
-    rustc = Path(capture(["rustup", "which", "rustc"]))
-    cargo = Path(capture(["rustup", "which", "cargo"]))
+    rustc = Path(capture([str(Path.home() / ".cargo/bin/rustup"), "which", "rustc"]))
+    cargo = Path(capture([str(Path.home() / ".cargo/bin/rustup"), "which", "cargo"]))
     files = {
         SPEC,
         MESH,
@@ -257,6 +257,9 @@ def prepare(out):
     files.add(ROOT / "crates/modena-core/examples/stress_validation.rs")
     files.update(ROOT.glob("crates/*/Cargo.toml"))
     files.update((ROOT / "bench/b07_validation").glob("*.py"))
+    files.update((ROOT / "bench/b07_validation").glob("*.sh"))
+    files.add(Path("/bin/sh"))
+    files.add(Path("/usr/bin/env"))
     files.update((ROOT / "bench/b07_validation").glob("*.rs"))
     prereg = out / "preregistered-protocol.md"
     shutil.copyfile(
@@ -428,6 +431,10 @@ def prepare(out):
         for j in load(inputs / "roster.json")
     )
     facts["host_python"] = str(Path(sys.executable).resolve())
+    from runtime import PYTHON_FLAGS, SAFE_ENV, THREAD_ENV
+    facts["host_python_flags"] = PYTHON_FLAGS
+    facts["numerical_environment"] = dict(SAFE_ENV, **THREAD_ENV)
+    facts["host_startup"] = str(ROOT/"bench/b07_validation/launch.sh")
     facts["checksum_utility"] = "/usr/bin/shasum"
     driver = digest(ROOT / "bench/b07_validation/whole_step.rs")
     facts["driver_source_sha256"] = driver

@@ -165,6 +165,8 @@ def gas_analysis(out, x, f, id):
                 target = int(kind[3:]) / 100
                 tol = 0.02
         if n < 2:
+            evidence["metrics"][k] = dict(required_additional_work="unknown",
+                                         reason="fewer than two retained blocks")
             output.append(unmeasured(name, "Inconclusive"))
             continue
         retained = series[half : half + n * size]
@@ -307,6 +309,8 @@ def interaction(out, x, fixtures, roster, backend):
         for k in COMP:
             name = f"nvt-{backend}-{timing}-{k}"
             if any(slot[2] < 2 for slot in slots.values()):
+                details[name] = dict(required_additional_work="unknown",
+                                     reason="fewer than two retained blocks")
                 rows.append(unmeasured(name, "Inconclusive"))
                 continue
 

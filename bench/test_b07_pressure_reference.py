@@ -10,7 +10,11 @@ class PressureParserTests(unittest.TestCase):
         self.assertEqual(row["pressure"], [1.0, 2.0, 3.0, 0.4, 0.5, 0.6])
 
 
+import contextlib
 import json
+import os
+import sys
+import time
 import math
 import subprocess
 import tempfile
@@ -146,33 +150,22 @@ class StrictRecords(unittest.TestCase):
                 list(records.dumps(p, SYNTHETIC_ROTOR))
 
     def test_derived_frames_producer_and_tampering(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp)
-            s, folder = output(out, (0, 1))
-            (out / "jobs/probe").mkdir(parents=True)
-            ref.dump(out / "jobs/probe/child.json", {"exit": 0})
-            x = dict(sections={"probe": s})
-            fixtures = {"rotor": SYNTHETIC_ROTOR}
+        setup = ReviewedEvidence("runTest")
+        setup.setUp()
+        self.addCleanup(setup.doCleanups)
+        setup.seal()
+        out, x, fixtures, folder = setup.out, setup.x, setup.fix, setup.folder
+        ref.derived(out, x, fixtures, "probe")
+        src = out / "reference/probe.jsonl"
+        origin = ref.load(Path(str(src) + ".origin.json"))
+        self.assertEqual(origin["sha256"],ref.digest(src))
+        self.assertEqual(origin["raw_path"],str(folder/"probe.dump"))
+        self.assertEqual(origin["producer_job"],"probe")
+        self.assertEqual(len(src.read_text().splitlines()), 2)
+        src.write_text("{}\n")
+        with self.assertRaises(ValueError):
             ref.derived(out, x, fixtures, "probe")
-            src = out / "reference/probe.jsonl"
-            origin = ref.load(Path(str(src) + ".origin.json"))
-            self.assertEqual(
-                origin,
-                dict(
-                    sha256=ref.digest(src),
-                    raw_path=str(folder / "probe.dump"),
-                    raw_sha256=ref.digest(folder / "probe.dump"),
-                    producer_job="probe",
-                    producer_receipt_sha256=ref.digest(out / "jobs/probe/child.json"),
-                ),
-            )
-            self.assertEqual(len(src.read_text().splitlines()), 2)
-            src.write_text("{}\n")
-            with self.assertRaises(ValueError):
-                ref.derived(out, x, fixtures, "probe")
 
-
-class SyntheticAnalytic(unittest.TestCase):
     def test_rotor_same_snapshot_production_reaction_not_analytic_substitute(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
@@ -328,7 +321,7 @@ class SourceGates(unittest.TestCase):
             folder = out / "jobs/probe"
             folder.mkdir(parents=True)
             self.assertEqual(ref.retained_result(out, "probe"), "Pending")
-            with patch.object(ref, "reconciled_wrapper", return_value=True):
+            with patch("campaign.reconciled_wrapper", return_value=True):
                 for exit, reason, status in [
                     (1, None, "Inconclusive"),
                     (-9, "wall cap", "BudgetExceeded"),
@@ -338,7 +331,7 @@ class SourceGates(unittest.TestCase):
                         json.dumps(dict(exit=exit, budget_stop=reason))
                     )
                     self.assertEqual(ref.retained_result(out, "probe"), status)
-            with patch.object(ref, "reconciled_wrapper", return_value=False):
+            with patch("campaign.reconciled_wrapper", return_value=False):
                 self.assertEqual(ref.retained_result(out, "probe"), "Inconclusive")
             (folder / "denied.json").write_text("{}")
             self.assertEqual(ref.retained_result(out, "probe"), "BudgetExceeded")
@@ -350,7 +343,9 @@ class SourceGates(unittest.TestCase):
             (out / "inputs").mkdir()
             ref.dump(out / "inputs/roster.json", [])
             ref.dump(out / "clock.json", {})
-            x = dict(expected_gate_families={"family": ["wanted-a", "wanted-b"]})
+            x = dict(expected_gate_families={"family": ["wanted-a", "wanted-b"]},
+                     family_inputs={"family":{"producers":[],"families":[]}})
+            ref.dump(out/"external-epoch.json",x)
             c = ref.Campaign(out, x, {"fixtures": []})
             with patch.object(
                 ref, "run_job", side_effect=AssertionError("must not launch")
@@ -493,3 +488,121 @@ class HostPrerequisites(unittest.TestCase):
                 ):
                     campaign.run_job(out, "native")
             self.assertFalse((out / "jobs/native").exists())
+
+class ReviewedEvidence(unittest.TestCase):
+    def setUp(self):
+        import campaign
+        self.host=campaign
+        self.tmp=tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.out=Path(self.tmp.name).resolve()
+        out=self.out
+        self.s,self.folder=output(out,(0,1))
+        (out/"inputs").mkdir()
+        (out/"jobs").mkdir()
+        ref.dump(out/"inputs/roster.json",[])
+        ref.dump(out/"clock.json",dict(start_monotonic=time.monotonic(),deadline_monotonic=time.monotonic()+600,deadline_utc=time.time()+600))
+        ref.dump(out/"protocol.json",{"fixtures":[SYNTHETIC_ROTOR]})
+        self.fix={"rotor":SYNTHETIC_ROTOR}
+        self.cfg=dict(argv=["/usr/bin/true"],cwd=str(self.folder),env={},role="reference",
+                      artifacts=[str(self.folder/"native.log"),str(self.folder/"probe.dump")])
+        self.x=dict(sections={"probe":self.s},jobs={"probe":self.cfg},expected_gate_families={"primary":["one"]},
+                    family_inputs={"primary":{"producers":["probe"],"families":[]}})
+        ref.dump(out/"external-epoch.json",self.x)
+        from evidence import derivation_receipt
+        derivation_receipt(out/"reference/probe.jsonl.derivation.json",{"status":"Pending"},create=True)
+        self.f=out/"jobs/probe"
+        self.f.mkdir()
+        ref.dump(self.f/"launch.json",dict(self.cfg,name="probe",protocol_sha256=ref.digest(out/"protocol.json"),binary_sha256=ref.digest("/usr/bin/true")))
+        ref.dump(self.f/"child.json",dict(exit=0,budget_stop=None,interrupted=None))
+        for name in ("started.json","wrapper.json","host.time","stdout.log","stderr.log","wrapper.stdout","wrapper.stderr"):
+            (self.f/name).write_text("{}")
+        lease=patch.object(ref,"exclusive",return_value=contextlib.nullcontext())
+        lease.start()
+        self.addCleanup(lease.stop)
+        self.mock=patch.object(campaign,"reconciled_wrapper",return_value=True)
+        self.mock.start()
+        self.addCleanup(self.mock.stop)
+
+    def seal(self):
+        from evidence import seal_job
+        seal_job(self.out,self.x,"probe")
+
+    def test_cached_family_rechecks_changed_raw_direct_and_collect(self):
+        self.seal()
+        c=ref.Campaign(self.out,self.x,{"fixtures":[]})
+        g=self.host.gate("one",[1.],[1.],[0.])
+        self.assertEqual(c.family("primary",{},lambda:[g]),"Passed")
+        (self.folder/"native.log").write_text("replaced thermo\n")
+        self.assertEqual(c.family("primary",{},lambda:self.fail()),"Inconclusive")
+        self.assertEqual(ref.collect(self.out,self.x)[0]["status"],"Inconclusive")
+        from evidence import require_passes
+        with self.assertRaises(ValueError):
+            require_passes(self.out,self.x,["primary"])
+
+    def test_deleted_matched_output_invalidates_seal(self):
+        path=self.out/"matched.jsonl"
+        path.write_text("{}\n")
+        self.cfg["artifacts"].append(str(path))
+        self.f.joinpath("launch.json").unlink()
+        ref.dump(self.f/"launch.json",dict(self.cfg,name="probe",protocol_sha256=ref.digest(self.out/"protocol.json"),binary_sha256=ref.digest("/usr/bin/true")))
+        self.seal()
+        c=ref.Campaign(self.out,self.x,{"fixtures":[]})
+        self.assertEqual(c.family("primary",{},lambda:[self.host.gate("one",[0.],[0.],[0.])]),"Passed")
+        path.unlink()
+        self.assertEqual(ref.collect(self.out,self.x)[0]["status"],"Inconclusive")
+
+    def test_exact_origin_and_reprojection(self):
+        self.seal()
+        ref.derived(self.out,self.x,self.fix,"probe")
+        src=self.out/"reference/probe.jsonl"
+        dest=Path(str(src)+".origin.json")
+        original=ref.load(dest)
+        for change in ("producer","raw","payload"):
+            obj=dict(original)
+            if change=="producer": obj["producer_job"]="another"
+            elif change=="raw": obj["raw_path"]=str(self.folder/"other.dump")
+            else:
+                src.write_bytes(src.read_bytes().replace(b"1.5",b"1.6"))
+                obj["sha256"]=ref.digest(src)
+            dest.write_text(json.dumps(obj))
+            with self.subTest(change=change),self.assertRaises(ValueError):
+                ref.derived(self.out,self.x,self.fix,"probe")
+
+    def test_projection_budget_before_append(self):
+        self.seal()
+        cap=self.host.raw_bytes(self.out)+4200
+        with patch.dict(self.host.LIMITS,artifact_bytes=cap),self.assertRaises(self.host.Budget):
+            ref.derived(self.out,self.x,self.fix,"probe")
+        self.assertFalse((self.out/"reference/probe.jsonl").exists())
+        self.assertEqual(ref.load(self.out/"reference/probe.jsonl.derivation.json")["status"],"BudgetExceeded")
+        self.assertLessEqual(self.host.raw_bytes(self.out),cap)
+
+    def test_actual_producer_failure_in_both_ledgers(self):
+        import evidence
+        for code,diagnostic,expected in [(1,"ERROR: Lost atoms: original 96 current 90","Failed"),(1,"ERROR: could not open file","Inconclusive")]:
+            (self.f/"child.json").write_text(json.dumps(dict(exit=code,budget_stop=None,interrupted=None)))
+            (self.f/"stdout.log").write_text(diagnostic)
+            evidence.seal_job(self.out,self.x,"probe")
+            self.assertEqual(evidence.job_state(self.out,self.x,"probe")[0],expected)
+            c=ref.Campaign(self.out,self.x,{"fixtures":[]})
+            self.assertEqual(c.family("primary",{"probe":expected},lambda:self.fail()),expected)
+            self.assertEqual(ref.collect(self.out,self.x)[0]["status"],expected)
+            for path in [self.f/"artifacts.json",*c.results.iterdir()]: path.unlink()
+        self.f.joinpath("launch.json").unlink()
+        self.f.joinpath("child.json").unlink()
+        self.assertEqual(evidence.job_state(self.out,self.x,"probe")[0],"Pending")
+
+    def test_clean_runtime_and_worker_visibility(self):
+        import campaign
+        self.assertIn("pycache_prefix=/dev/null",campaign.PYTHON_FLAGS)
+        with patch.dict(os.environ,LAMMPS_PLUGIN_PATH="/ambient",DYLD_LIBRARY_PATH="/ambient"):
+            env=campaign.numerical_env(campaign.ENV)
+            self.assertNotIn("DYLD_LIBRARY_PATH",env)
+            self.assertNotIn("LAMMPS_PLUGIN_PATH",env)
+        observed={}
+        with self.assertRaisesRegex(ValueError,"unreadable"):
+            campaign.sample_ase_workers(observed,[19],lambda pid:None,lambda pid:None,lambda pid:True,"/provider")
+        self.assertEqual(campaign.sample_ase_workers(observed,[19],lambda pid:None,lambda pid:None,lambda pid:False,"/provider"),0)
+        self.assertEqual(campaign.sample_ase_workers(observed,[23],lambda pid:100,lambda pid:"/provider",lambda pid:True,"/provider"),100)
+        self.assertEqual(observed["23"]["interpreter_samples"],1)

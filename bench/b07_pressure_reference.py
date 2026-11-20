@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """Prepare or measure the frozen B07 external reference through the shared campaign ledger."""
 
+import sys
+if __name__ == "__main__" and not (
+    sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode
+    and sys.pycache_prefix == "/dev/null"
+):
+    raise SystemExit("use bench/b07_validation/launch.sh INTERPRETER SCRIPT to control imports before startup")
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import argparse
 import json
 import os
@@ -8,6 +17,7 @@ from pathlib import Path
 import sys
 import contextlib
 import signal
+import hashlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "b07_validation"))
 from campaign import (
@@ -22,7 +32,12 @@ from campaign import (
     run_job,
     unmeasured,
     verify,
+    raw_bytes,
+    LIMITS,
+    exclusive,
 )
+from evidence import (origin_binding, projected_frames, validate_projection, job_state,
+    family_binding, read_family, worst, process_status, derivation_receipt)
 from b07_reference.records import (
     parse_pressure_line as parse_pressure_line,
     confirmed_work,
@@ -58,50 +73,62 @@ def retained_result(out, id):
     if (folder / "denied.json").exists():
         return "BudgetExceeded"
     if not (folder / "child.json").exists():
-        return "Pending"
-    c = load(folder / "child.json")
-    if not reconciled_wrapper(folder, c):
-        return "Inconclusive"
-    code = child_status(c)
-    return (
-        "Passed"
-        if code == 0
-        else "BudgetExceeded"
-        if c["budget_stop"]
-        else "Inconclusive"
-    )
+        return "Pending" if not (folder/"launch.json").exists() else "Inconclusive"
+    child = load(folder/"child.json")
+    role = load(folder/"launch.json").get("role", "rust") if (folder/"launch.json").exists() else "rust"
+    return process_status(folder, child, role)[0]
 
 
 def derived(out, x, fixtures, tag):
-    s = x["sections"][tag]
-    src = out / "reference" / (tag + ".jsonl")
-    origin = Path(str(src) + ".origin.json")
-    raw = out / "reference" / s["producer"] / (tag + ".dump")
-    binding = dict(
-        raw_path=str(raw),
-        raw_sha256=digest(raw),
-        producer_job=s["producer"],
-        producer_receipt_sha256=digest(out / "jobs" / s["producer"] / "child.json"),
-    )
+    # Own the same lease as launches: only this writer can grow campaign artifacts.
+    with exclusive(out):
+        return _derived(out, x, fixtures, tag)
+
+
+def _derived(out, x, fixtures, tag):
+    binding = origin_binding(out, x, tag)
+    src = Path(binding["input_path"])
     if src.exists():
-        if load(origin) != dict(binding, sha256=digest(src)):
-            raise ValueError("changed native-derived snapshot/receipt")
+        validate_projection(out, x, tag, fixtures)
         return
-    partial = Path(str(src) + ".partial")
-    with partial.open("x") as f:
-        for r in native_rows(out, s, fixtures[s["fixture"]]):
-            frame = r["frame"]
-            if keep(s, frame["step"]):
-                # All q/v and step originate in this single sorted native dump.
-                frame["time"] = frame["step"] * s["dt"]
-                f.write(
-                    json.dumps(frame, separators=(",", ":"), allow_nan=False) + "\n"
-                )
-        f.flush()
-        os.fsync(f.fileno())
-    os.link(partial, src)
-    partial.unlink()
-    dump(origin, dict(binding, sha256=digest(src)))
+    partial = Path(str(src)+".partial")
+    receipt = Path(str(src)+".derivation.json")
+    if partial.exists() or load(receipt)["status"] != "Pending":
+        raise Budget("native projection already interrupted")
+    count = 0
+    sha = hashlib.sha256()
+    # Reserve enough space for publication metadata and a compact budget-stop receipt.
+    reserve = 4096
+    used = raw_bytes(out)
+    derivation_receipt(receipt, dict(status="Running", confirmed_frames=0))
+    try:
+        if used+reserve > LIMITS["artifact_bytes"]:
+            raise Budget("artifact cap before native projection")
+        with partial.open("xb") as stream:
+            for data in projected_frames(out, x, fixtures, tag):
+                if used+len(data)+reserve > LIMITS["artifact_bytes"]:
+                    raise Budget("artifact cap during native projection")
+                stream.write(data)
+                stream.flush()
+                sha.update(data)
+                count += 1
+                used += len(data)
+            os.fsync(stream.fileno())
+        if origin_binding(out, x, tag) != binding:
+            raise ValueError("native origin changed while deriving")
+        sidecar = dict(binding, sha256=sha.hexdigest())
+        metadata_bytes = len((json.dumps(sidecar,sort_keys=True,allow_nan=False,separators=(",",":"))+"\n").encode())
+        if used+metadata_bytes > LIMITS["artifact_bytes"]:
+            raise Budget("artifact cap before projection publication")
+        # Atomic hard links do not allocate another data stream. Publish origin first.
+        dump(str(src)+".origin.json", sidecar)
+        os.link(partial, src)
+        partial.unlink()
+        derivation_receipt(receipt, dict(status="Completed", confirmed_frames=count, sha256=sha.hexdigest()))
+    except BaseException as exc:
+        derivation_receipt(receipt, dict(status="BudgetExceeded" if isinstance(exc,Budget) else "Inconclusive",
+                                        confirmed_frames=count, reason=str(exc)[:1000]))
+        raise
 
 
 class Campaign:
@@ -125,7 +152,12 @@ class Campaign:
                 run_job(out, id, j["argv"], j["role"])
             except Budget:
                 pass  # The shared monitor preserves a durable denial.
-        status = retained_result(out, id)
+            except (ValueError, OSError, KeyError):
+                if not (folder/"launch.json").exists():
+                    raise
+                # Preserve an attempted producer whose monitor/receipt failed.
+                # job_state keeps it Inconclusive and family collection records its blocker.
+        status = job_state(out, x, id)[0]
         if (
             j["role"] == "reference"
             and (folder / "launch.json").exists()
@@ -143,56 +175,45 @@ class Campaign:
     def family(self, name, prereqs, fn):
         path = self.results / (name + ".json")
         expected = self.x["expected_gate_families"][name]
-        if not path.exists():
-            blocked = {k: v for k, v in prereqs.items() if v != "Passed"}
-            info = {}
+        if path.exists():
+            return worst(r["status"] for r in read_family(self.out, self.x, name))
+        info = {}
+        try:
+            binding = family_binding(self.out, self.x, name)
+            actual = {key: value["status"] for key,value in binding["dependencies"].items()}
+            blocked = {key:value for key,value in dict(prereqs,**actual).items() if value!="Passed"}
+            contract = self.x["family_inputs"][name]
+            own = contract.get("owners",contract["producers"])
+            attempted = [actual[k] for k in own if actual[k] not in ("Passed","Pending")]
             if blocked:
-                status = (
-                    "BudgetExceeded"
-                    if "BudgetExceeded" in blocked.values()
-                    else "Pending"
-                )
-                rows = [unmeasured(n, status) for n in expected]
+                status = worst(attempted) if attempted else "Pending"
+                rows = [unmeasured(n,status) for n in expected]
+                # A definite producer error has no invented U/F/S measurement.
+                # Collection independently verifies the seal before accepting empty Failed rows.
                 info["blocked_by"] = blocked
-            elif remaining(self.clock) <= 0:
-                rows = [unmeasured(n, "BudgetExceeded") for n in expected]
-                info["reason"] = "combined time exhausted before reduction"
+                info["producer_diagnostics"] = binding["dependencies"]
+            elif remaining(self.clock)<=0:
+                rows=[unmeasured(n,"BudgetExceeded") for n in expected]
+                info["reason"]="combined time exhausted before reduction"
             else:
-                try:
-                    with reduction_deadline(self.clock):
-                        result = fn()
-                    rows, info = result if isinstance(result, tuple) else (result, {})
-                    checked_gates(rows)
-                    if set(r["name"] for r in rows) != set(expected):
-                        raise ValueError("incomplete physical gate family")
-                except Budget as exc:
-                    info = {"budget": str(exc)}
-                    rows = [unmeasured(n, "BudgetExceeded") for n in expected]
-                except (
-                    KeyError,
-                    ValueError,
-                    TypeError,
-                    ArithmeticError,
-                    OSError,
-                ) as exc:
-                    info = {"invalid_or_missing_evidence": str(exc)}
-                    rows = [unmeasured(n, "Inconclusive") for n in expected]
-            dump(path, dict(gates=rows, details=info))
-        rows = checked_gates(load(path)["gates"])
-        return next(
-            (
-                s
-                for s in (
-                    "Failed",
-                    "BudgetExceeded",
-                    "Inconclusive",
-                    "Unsupported",
-                    "Pending",
-                )
-                if any(r["status"] == s for r in rows)
-            ),
-            "Passed",
-        )
+                with reduction_deadline(self.clock):
+                    result=fn()
+                rows,info=result if isinstance(result,tuple) else (result,{})
+                checked_gates(rows)
+                if {r["name"] for r in rows} != set(expected):
+                    raise ValueError("incomplete physical gate family")
+            if family_binding(self.out,self.x,name)!=binding:
+                raise ValueError("family inputs changed during reduction")
+        except Budget as exc:
+            info={"budget":str(exc)}
+            rows=[unmeasured(n,"BudgetExceeded") for n in expected]
+        except (KeyError,ValueError,TypeError,ArithmeticError,OSError) as exc:
+            info={"invalid_or_missing_evidence":str(exc)}
+            rows=[unmeasured(n,"Inconclusive") for n in expected]
+            binding=None
+        dump(path, dict(gates=rows,details=info,binding=binding,
+                        epoch_sha256=digest(self.out/"external-epoch.json")))
+        return worst(r["status"] for r in rows)
 
     def evaluate(self, id, dependency):
         x, out = self.x, self.out
@@ -229,7 +250,7 @@ class Campaign:
                 evaluated[id] = self.evaluate(id, dep)
             prerequisites.update(evaluated)
             # A measured native mismatch must not suppress the independent cutoff comparisons.
-            outputs = {id: retained_result(out, id) for id in evaluated}
+            outputs = {id: job_state(out, x, id)[0] for id in evaluated}
             convergence = "converge-" + name
             prerequisites[convergence] = self.family(
                 convergence,
@@ -302,17 +323,8 @@ class Campaign:
 
 
 def collect(out, x):
-    rows = []
-    for family, expected in x["expected_gate_families"].items():
-        path = out / "reference/comparisons" / (family + ".json")
-        if not path.exists():
-            rows.extend(unmeasured(name) for name in expected)
-            continue
-        group = checked_gates(load(path)["gates"])
-        if {r["name"] for r in group} != set(expected):
-            raise ValueError("family differs from frozen roster")
-        rows.extend(group)
-    return checked_gates(rows)
+    return [row for name in x["expected_gate_families"]
+            for row in read_family(out,x,name)]
 
 
 def main(argv=None):

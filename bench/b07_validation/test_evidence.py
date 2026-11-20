@@ -176,7 +176,7 @@ class Evidence(unittest.TestCase):
                 for g in ledger["gates"]
                 if g["name"] == "execution_deterministic"
             ),
-            "Pending",
+            "Inconclusive",
         )
         metadata["exit"] = 0
         wrapper.unlink()
@@ -191,7 +191,7 @@ class Evidence(unittest.TestCase):
                 for g in ledger["gates"]
                 if g["name"] == "execution_deterministic"
             ),
-            "Pending",
+            "Inconclusive",
         )
 
     def test_truncated_rung_and_final_preserve_other_evidence(self):
@@ -384,6 +384,7 @@ class Evidence(unittest.TestCase):
         proc = subprocess.Popen(
             [
                 self.exe,
+                *campaign.PYTHON_FLAGS,
                 str(Path(campaign.__file__).resolve()),
                 "_monitor",
                 str(self.out),
@@ -420,3 +421,23 @@ class Evidence(unittest.TestCase):
         self.job("next")
         with self.assertRaises(campaign.Budget):
             campaign.run_job(self.out, "next")
+
+    def test_synthetic_provider_worker_is_accounted(self):
+        folder = self.job("ase-six-strain")
+        self.settings()
+        folder.mkdir()
+        import ctypes
+        lib=ctypes.CDLL("/usr/lib/libproc.dylib")
+        path=ctypes.create_string_buffer(4096)
+        self.assertGreater(lib.proc_pidpath(os.getpid(),path,len(path)),0)
+        actual=str(Path(os.fsdecode(path.value)).resolve())
+        freeze.dump(self.out/"external-epoch.json",{"ase_runtime":{"process_executable":actual}})
+        script = "import subprocess,sys;subprocess.run([sys.executable,'-I','-S','-c','import time;time.sleep(.2)'],check=True)"
+        freeze.dump(folder/"launch.json",dict(self.jobs["ase-six-strain"],
+                    argv=[self.exe,*campaign.PYTHON_FLAGS,"-c",script],
+                    name="ase-six-strain",protocol_sha256=self.pin,**self.clock))
+        self.assertEqual(campaign.monitor(self.out,folder),0)
+        child=freeze.load(folder/"child.json")
+        self.assertTrue(campaign.worker_coverage(child))
+        self.assertGreater(child["sampled_ase_tree_max_rss_bytes"],0)
+        self.assertTrue(all(r["rss_samples"]>0 for r in child["ase_workers"].values()))

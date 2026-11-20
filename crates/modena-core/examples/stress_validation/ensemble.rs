@@ -547,7 +547,12 @@ pub fn run_ensemble(out: &Path) -> R<Vec<GateResult>> {
                 std::env::var_os("B07_HOST_PYTHON").ok_or("missing pinned host interpreter")?;
             let launcher = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../bench/b07_validation/campaign.py");
-            let status = std::process::Command::new(python)
+            let status = std::process::Command::new("/bin/sh")
+                .arg(
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../bench/b07_validation/launch.sh"),
+                )
+                .arg(python)
                 .arg(launcher)
                 .args(["verify", "--out"])
                 .arg(out)

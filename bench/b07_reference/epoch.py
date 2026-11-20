@@ -2,6 +2,7 @@
 
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -18,14 +19,19 @@ from campaign import (
     verify_files,
 )
 from freeze import python_runtime_files
+from runtime import numerical_env, PYTHON_FLAGS
+from evidence import origin_contract, derivation_receipt
 from .native import COMP, LADDER, NATIVE_BUILD, data_file, section, write, write_table
 
-V3 = Path("/private/tmp/modena-b07-validation-v3")
+V3 = ROOT / "target/b07-evidence/task11-fix2-20261110/committed-internal-epoch"
+V4 = ROOT / "target/b07-evidence/task12-source-20261110/committed-epoch-v4"
+V4_SHA = "5f3fb41af0070b4dc90591708d8dec38112604cae1ab65ee4dfed518bf533335"
 V3_SHA = "1e2a8db5c20cd932f7aed61008addead9e05255a14eee09c94c8a2e82e879a67"
 REV = "9c5ab448c78a14fd534619622162ba418d6a1fb1"
 EVIDENCE = ROOT / "target/b07-evidence"
 ASEROOT = ROOT / "target/b07-tools/ase-3.26"
 DOCS = (
+    "plugin",
     "fix_shake",
     "fix_rigid",
     "fix_store_force",
@@ -48,14 +54,21 @@ ENERGY = [
     for metric in ("mean", "variance", "cdf10", "cdf50", "cdf90")
 ]
 GAS_METRICS = list(COMP) + ["scalar"] + ENERGY + ["orientation-" + x for x in COMP]
-ASE_ENV = {
-    "MODENA_ASE_PYTHON": str(ASEROOT / "bin/python"),
-    "PYTHONPATH": "",
-    "PYTHONNOUSERSITE": "1",
-    "PYTHONDONTWRITEBYTECODE": "1",
-    "OPENBLAS_NUM_THREADS": "1",
-    "PYTHONSAFEPATH": "1",
-}
+def provider_wrapper(static, python=None, site=None):
+    """Interpreter flags/environment apply before the first provider Python import."""
+    python = Path(python or ASEROOT / "bin/python")
+    site = Path(site or ASEROOT / "lib/python3.12/site-packages")
+    wrapper = static / "ase-python"
+    launch = ROOT / "bench/b07_validation/launch.sh"
+    bootstrap = ROOT / "bench/b07_validation/provider_bootstrap.py"
+    command = ["/bin/sh", str(launch), str(python), str(bootstrap), "--site", str(site)]
+    wrapper.write_text("#!/bin/sh\nset -eu\nexec " + " ".join(map(shlex.quote, command)) + ' "$@"\n')
+    wrapper.chmod(0o755)
+    return dict(wrapper=str(wrapper), interpreter=str(python),
+                resolved_interpreter=str(python.resolve()), site=str(site),
+                launch=str(launch), bootstrap=str(bootstrap), flags=PYTHON_FLAGS,
+                environment=numerical_env(ENV))
+
 
 
 def inspect_help(s):
@@ -130,7 +143,7 @@ def help_output(binary, static):
     try:
         proc = subprocess.run(
             [str(binary), "-h"],
-            env=dict(os.environ, **ENV),
+            env=numerical_env(ENV),
             timeout=20,
             capture_output=True,
         )
@@ -150,7 +163,7 @@ def help_output(binary, static):
     return proc.stdout.decode()
 
 
-def provenance(binary, static):
+def provenance(binary, static, runtime):
     adopt = EVIDENCE / "adoption-20261110"
     release = load(adopt / "lammps-source-candidate.json")
     discovery = load(adopt / "lammps-discovery.json")
@@ -199,23 +212,30 @@ def provenance(binary, static):
         raise ValueError("ASE interpreter drift")
     # Import-only metadata, no calculator construction, force call or integration.
     script = """import ase, numpy, scipy, ase.calculators.emt, ctypes, json, os, sys, sysconfig
+lib=ctypes.CDLL("/usr/lib/libproc.dylib"); executable=ctypes.create_string_buffer(4096)
+if lib.proc_pidpath(os.getpid(),executable,len(executable))<=0: raise RuntimeError("provider executable identity unavailable")
 d=ctypes.CDLL(None); g=d._dyld_get_image_name; g.argtypes=[ctypes.c_uint32]; g.restype=ctypes.c_char_p
 print(json.dumps(dict(versions=[ase.__version__,numpy.__version__,scipy.__version__],
  stdlib=sysconfig.get_path('stdlib'),libraries=[os.fsdecode(g(i)) for i in range(d._dyld_image_count())],
- python=sys.version)))"""
+ python=sys.version,process_executable=os.fsdecode(executable.value))))"""
     import json
 
     metadata = json.loads(
         subprocess.check_output(
-            [str(py), "-c", script],
+            [runtime["wrapper"], "-c", script],
             text=True,
             cwd=static,
-            env=dict(os.environ, **dict(ENV, **ASE_ENV)),
+            env=numerical_env(ENV),
             timeout=40,
         )
     )
     if metadata["versions"] != ["3.26.0", "2.2.6", "1.15.3"]:
         raise ValueError("ASE runtime version drift")
+    actual = Path(metadata["process_executable"]).resolve()
+    if not actual.is_absolute() or not actual.is_file():
+        raise ValueError("actual provider executable missing")
+    runtime["process_executable"] = str(actual)
+    runtime["process_executable_sha256"] = digest(actual)
     dump(static / "ase-runtime.json", metadata)
     libs = [
         Path(p)
@@ -227,14 +247,14 @@ print(json.dumps(dict(versions=[ase.__version__,numpy.__version__,scipy.__versio
     site = ASEROOT / "lib/python3.12/site-packages"
     std = Path(metadata["stdlib"])
     files.update(
-        [py, py.resolve(), ASEROOT / "pyvenv.cfg", *libs, *ase_e.iterdir(), *docs]
+        [py, py.resolve(), actual, ASEROOT / "pyvenv.cfg", *libs, *ase_e.iterdir(), *docs]
     )
-    # Include importable bytecode as well as source, since a timestamp-valid cache can be loaded.
-    files.update(p for p in site.rglob("*") if p.is_file())
+    # Caches cannot load under the required pre-import flags. Inventory all sources/libraries.
+    files.update(p for p in site.rglob("*") if p.is_file() and p.suffix != ".pyc")
     files.update(
         p
         for p in std.rglob("*")
-        if p.is_file() and "site-packages" not in p.relative_to(std).parts
+        if p.is_file() and p.suffix != ".pyc" and "site-packages" not in p.relative_to(std).parts
     )
     # Host-side reductions import statistics/random and their native modules in
     # addition to the internal controller's own prepared interpreter closure.
@@ -248,6 +268,8 @@ print(json.dumps(dict(versions=[ase.__version__,numpy.__version__,scipy.__versio
     files.update(
         [
             ROOT / "bench/b07_pressure_reference.py",
+            Path(runtime["wrapper"]), Path(runtime["launch"]), Path(runtime["bootstrap"]),
+            Path("/bin/sh"), Path("/usr/bin/env"),
             ROOT / "crates/modena-core/src/external/ase_emt_worker.py",
         ]
     )
@@ -291,7 +313,7 @@ def ase_input(static):
             mass_amu=63.546,
             units=[1.0, 1.0, 1.0],
             provider=dict(
-                python=ASE_ENV["MODENA_ASE_PYTHON"],
+                python=str(static / "ase-python"),
                 ase_version="3.26.0",
                 model_sha256="b8384ffed58deb1182134a0e5088260b7118971488c35cdb6b29e51f6e604f9d",
                 atomic_numbers=[29] * 4,
@@ -315,7 +337,9 @@ def prepare(binary, protocol, out):
         raise ValueError("source epoch already linked/started")
     if digest(V3 / "protocol.json") != V3_SHA:
         raise ValueError("unexpected previous core epoch")
-    frozen = list((V3 / "inputs").glob("*.json"))
+    if digest(V4 / "protocol.json") != V4_SHA:
+        raise ValueError("unexpected archived v4 epoch")
+    frozen = list((V4 / "inputs").glob("*.json"))
     for path in frozen:
         if path.name != "settings.json" and digest(
             out / "inputs" / path.name
@@ -325,7 +349,8 @@ def prepare(binary, protocol, out):
     area.mkdir()
     static = area / "inputs"
     static.mkdir()
-    source, packages, build = provenance(binary, static)
+    runtime = provider_wrapper(static)
+    source, packages, build = provenance(binary, static, runtime)
     fixtures = {f["id"]: f for f in p["fixtures"]}
     for name, f in fixtures.items():
         data_file(static / (name + ".data"), f)
@@ -358,10 +383,10 @@ def prepare(binary, protocol, out):
     ):
         raise ValueError("replica stream states are not distinct at fixed q")
     dump(static / "replica-identities.json", states)
-    return register(out, binary, fixtures, source, packages, build)
+    return register(out, binary, fixtures, source, packages, build, runtime)
 
 
-def register(out, binary, fixtures, source, packages, build):
+def register(out, binary, fixtures, source, packages, build, runtime):
     area, static = out / "reference", out / "reference/inputs"
     exe = out / "bin/stress_validation"
     actions, sections, evaluations, families = {}, {}, {}, {}
@@ -529,13 +554,15 @@ def register(out, binary, fixtures, source, packages, build):
             f"nvt-{backend}-{t}-{k}" for t in ("endpoint", "interval") for k in COMP
         ]
     job("ase-six-strain", [exe, "--child", "ase-six-strain", out], area)
-    actions["ase-six-strain"]["env"].update(ASE_ENV)
+    actions["ase-six-strain"]["env"]["MODENA_ASE_PYTHON"] = runtime["wrapper"]
     families["ase-six-strain"] = ["ase-wire-conversion", "ase-six-nonzero"] + [
         "ase-strain-" + k for k in COMP
     ]
     x = dict(
         internal_protocol_sha256=digest(out / "protocol.json"),
-        previous_internal_protocol_sha256=V3_SHA,
+        previous_internal_protocol_sha256=V4_SHA,
+        original_internal_protocol_sha256=V3_SHA,
+        ase_runtime=runtime,
         adapter_source_head=subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),
@@ -581,6 +608,45 @@ def register(out, binary, fixtures, source, packages, build):
             mesh if r["backend"] == "spme" else []
         )
         actions["trajectory-" + r["id"]]["requires_families"] = [ev]
+    # Exact raw paths, origin contracts and dependency graph are frozen before dispatch.
+    bindings = {name: dict(producers=[], families=[]) for name in families}
+    for name, action in actions.items():
+        if action["role"] == "reference":
+            tags = [tag for tag, row in sections.items() if row["producer"] == name]
+            action["artifacts"] = [str(area/name/"native.log")] + [str(area/name/(tag+".dump")) for tag in tags]
+        elif name in evaluations:
+            tag = evaluations[name]["tag"]
+            action["native_origin"] = origin_contract(out, x, tag)
+            src = action["native_origin"]["input_path"]
+            action["artifacts"] = [action["argv"][-1], src, src+".origin.json", src+".derivation.json"]
+            bindings[name]["producers"] = [sections[tag]["producer"], name]
+        elif name.startswith("trajectory-"):
+            action["artifacts"] = [action["argv"][-1]]
+        else:
+            action["artifacts"] = [str(area/"ase.jsonl"), str(area/"ase-requests.jsonl")]
+            bindings[name]["producers"] = [name]
+    for name in [*PAIRS, *BASES]:
+        tag = name + ("-r0" if name == "pair-oo" else "-r2")
+        bindings["converge-"+name]["producers"] = [sections[tag]["producer"]] + [
+            "evaluate-"+tag+"-"+backend for backend in ("ewald", "ewald-10", "ewald-12")]
+    bindings["outside-table"]["producers"] = ["preflight-probes"]
+    for name in gas:
+        bindings[name]["producers"] = [name]
+    for r in roster:
+        family = "nvt-"+r["backend"] if r["seed"] else "nve-"+(
+            r["fixture"] if r["backend"] == "zero" else r["backend"])
+        tag = r["id"].replace("spme-", "ewald-")
+        bindings[family]["producers"] += ["native-"+tag, "trajectory-"+r["id"]]
+    for name, binding in bindings.items():
+        binding["producers"] = sorted(set(binding["producers"]))
+        binding["owners"] = [name] if name in evaluations else list(binding["producers"])
+        binding["families"] = sorted({f for producer in binding["producers"]
+                                      for f in actions[producer].get("requires_families", [])})
+        if name in binding["families"]:
+            raise ValueError("self-dependent physical family")
+    for tag in {e["tag"] for e in evaluations.values()}:
+        derivation_receipt(area/(tag+".jsonl.derivation.json"), {"status":"Pending"}, create=True)
+    x["family_inputs"] = bindings
     validate_jobs(out, x)
     dump(out / "external-epoch.json", x)
     return x

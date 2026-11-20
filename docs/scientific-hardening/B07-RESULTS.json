@@ -1,0 +1,119 @@
+{
+  "kind": "B07-observed-results-summary",
+  "measured_on": "2026-11-20",
+  "measurement_revision": "3345c6f09ce6a61f6c92c3273eadad6c35ab6f09",
+  "production_validation": "Diagnostic",
+  "scientific_acceptance": "Failed",
+  "protocol_sha256": "89abb8b7a45b5d443bb886fdba0642e78b62fc7f64fe6c8438a06d2886b0759d",
+  "external_epoch_sha256": "97d45c8b934c2999dc8f8d77cfcfe563d7bd2a9bc7f1a8a508b9944ddf43381e",
+  "aggregate": {
+    "rows": 1145,
+    "Passed": 765,
+    "Failed": 33,
+    "Inconclusive": 143,
+    "Pending": 204
+  },
+  "external": {
+    "Passed": 175,
+    "Failed": 24,
+    "Inconclusive": 46,
+    "Pending": 135,
+    "failed_charged_tensor": 9,
+    "failed_neutral_energy": 15
+  },
+  "deterministic_passed": 163,
+  "formal_ou": {
+    "passed": 108,
+    "draws": 65536,
+    "charged_historical_plus_current_calls": 196612,
+    "historical_calls_added_to_ess": false
+  },
+  "gas_final": {
+    "Passed": 252,
+    "Failed": 7,
+    "Inconclusive": 97,
+    "molecule_steps": 316800000,
+    "weak_order_resolved_count": 0,
+    "fits": 60,
+    "raw_rows": 1024000,
+    "continuation_records": 192
+  },
+  "work": {
+    "primary_molecule_steps": 330258705,
+    "native_jobs": 12,
+    "native_registered": 24,
+    "native_wall_seconds": 9.132055791,
+    "oracle_rk4_substeps_reconstructed": 153600,
+    "unknown_suffixes": 0
+  },
+  "resources": {
+    "children": 65,
+    "child_wall_seconds": 2593.183403249,
+    "child_cpu_user_seconds": 2548.203794,
+    "child_cpu_system_seconds": 32.273582,
+    "max_child_or_worker_rss_bytes": 74825728,
+    "ase_sampled_tree_rss_bytes": 79380480,
+    "controller_peak_measured": false,
+    "registered_raw_bytes": 861511947
+  },
+  "clock": {
+    "started_utc": "2026-11-20T18:59:03.599210Z",
+    "deadline_utc": "2026-11-20T20:59:03.599182Z",
+    "elapsed_seconds_utc_derived": 6031.144813,
+    "shared_since_frozen_reference_seconds": 4462.049627542,
+    "legacy_boot_identity": null,
+    "legacy_monotonic_elapsed_seconds": null,
+    "deadline_extended": false
+  },
+  "costs": {
+    "scope": "single tiny batches; no replicated uncertainty",
+    "rotor_new_legacy_over_old": 3.36039,
+    "water32_new_legacy_over_old": 8.59074,
+    "rotor_reporting_over_new_legacy": 1.13154,
+    "water32_reporting_over_new_legacy": 2.15182,
+    "observer_profile_over_ordinary": 1.00326,
+    "spme32_cached_factor_delta_bytes": 1572864
+  },
+  "archive_inventory_sha256": "7d931afae6961329ecfa53948e9991b5704af45ec8a51f4725b0f5af094d948e",
+  "corrected_summary_sha256": "e324b4b48faeb8121c1082fef28cb7033a16ff7c5044f937f99c120c153a513f",
+  "software_verification": {
+    "status": "Failed and incomplete at measurement revision; grouped correction pending",
+    "source_revision": "3345c6f09ce6a61f6c92c3273eadad6c35ab6f09",
+    "completed_rust": {
+      "passed": 513,
+      "failed": 1,
+      "ignored": 3
+    },
+    "interrupted_spme_calibration": {
+      "observed_passed": 57,
+      "observed_ignored": 1,
+      "active_incomplete": 1,
+      "not_started": 46
+    },
+    "not_run": [
+      "thermostat_statistics",
+      "water"
+    ],
+    "python_package": {
+      "passed": 26,
+      "skipped": 9
+    },
+    "python_bench": {
+      "passed": 86,
+      "failed": 1,
+      "skipped": 2
+    },
+    "format": "Passed",
+    "clippy_default_all_targets": "Passed",
+    "doctests": {
+      "passed": 1,
+      "ignored": 1
+    },
+    "optional_compile_only": {
+      "gpu": "Passed",
+      "msrv_1_90": "Passed",
+      "mpi": "Passed"
+    },
+    "hardware_validation": false
+  }
+}

@@ -173,11 +173,7 @@ fn evaluate_with_pair_budget(input: &LjSnapshot, max_pairs: usize) -> Result<Sna
         protocol: SNAPSHOT_PROTOCOL,
         units: SnapshotUnits::default(),
         energy_ev: energy,
-        forces_ev_per_angstrom: system
-            .forces
-            .chunks_exact(3)
-            .map(|f| [f[0], f[1], f[2]])
-            .collect(),
+        forces_ev_per_angstrom: system.forces.as_chunks::<3>().0.to_vec(),
     })
 }
 

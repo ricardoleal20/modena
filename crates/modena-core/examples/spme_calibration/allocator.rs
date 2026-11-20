@@ -11,6 +11,19 @@ pub const SYSTEM_ALLOC_MARKER: &[u8] = b"MODENA_B05_SYSTEM_ALLOCATION_FAILED\n";
 pub const HEAP_MARKER: &[u8] = b"MODENA_B05_RUST_HEAP_CAP\n";
 pub const TIMING_MARKER: &[u8] = b"MODENA_B05_TIMING_ALLOCATOR_CALLBACK\n";
 
+/// Return the new value on success. Overflow, underflow or cap rejection leave
+/// the counter unchanged. AtomicUsize::try_update is unavailable on Rust 1.90.
+fn checked_update(counter: &AtomicUsize, update: impl Fn(usize) -> Option<usize>) -> Option<usize> {
+    let mut old = counter.load(Ordering::SeqCst);
+    loop {
+        let next = update(old)?;
+        match counter.compare_exchange_weak(old, next, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return Some(next),
+            Err(current) => old = current,
+        }
+    }
+}
+
 /// Reservations include in-flight allocations. Failed system allocations roll back.
 /// SeqCst updates make the process cap conservative across Rayon workers.
 pub struct HeapCounter {
@@ -27,29 +40,16 @@ impl HeapCounter {
         }
     }
     pub fn reserve(&self, bytes: usize) -> bool {
-        let mut old = self.live.load(Ordering::SeqCst);
-        loop {
-            let Some(next) = old.checked_add(bytes).filter(|n| *n <= self.cap) else {
-                return false;
-            };
-            match self
-                .live
-                .compare_exchange_weak(old, next, Ordering::SeqCst, Ordering::SeqCst)
-            {
-                Ok(_) => {
-                    self.peak.fetch_max(next, Ordering::SeqCst);
-                    return true;
-                }
-                Err(current) => old = current,
-            }
-        }
+        let Some(next) = checked_update(&self.live, |live| {
+            live.checked_add(bytes).filter(|n| *n <= self.cap)
+        }) else {
+            return false;
+        };
+        self.peak.fetch_max(next, Ordering::SeqCst);
+        true
     }
     pub fn release(&self, bytes: usize) -> bool {
-        self.live
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |live| {
-                live.checked_sub(bytes)
-            })
-            .is_ok()
+        checked_update(&self.live, |live| live.checked_sub(bytes)).is_some()
     }
     pub fn live(&self) -> usize {
         self.live.load(Ordering::SeqCst)
@@ -72,15 +72,11 @@ impl CallbackState {
         }
     }
     pub fn enter_callback(&self) -> bool {
-        self.active
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
-            .is_ok()
+        checked_update(&self.active, |n| n.checked_add(1)).is_some()
             && !self.forbidden.load(Ordering::SeqCst)
     }
     pub fn leave_callback(&self) {
-        let _ = self
-            .active
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
+        let _ = checked_update(&self.active, |n| n.checked_sub(1));
     }
     pub fn begin_guard(&self) -> bool {
         if self
@@ -141,13 +137,13 @@ pub fn peak_requested_heap() -> usize {
 #[cfg(unix)]
 fn terminate(marker: &[u8], code: i32) -> ! {
     unsafe extern "C" {
-        fn write(fd: i32, buf: *const u8, count: usize) -> isize;
+        fn write(fd: i32, buf: *const std::ffi::c_void, count: usize) -> isize;
         fn _exit(status: i32) -> !;
     }
     let mut sent = 0;
     while sent < marker.len() {
         // SAFETY: marker is a static valid byte slice; no buffer survives write.
-        let n = unsafe { write(2, marker.as_ptr().add(sent), marker.len() - sent) };
+        let n = unsafe { write(2, marker.as_ptr().add(sent).cast(), marker.len() - sent) };
         if n <= 0 {
             break;
         }

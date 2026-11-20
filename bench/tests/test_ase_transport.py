@@ -43,7 +43,10 @@ if fault=='missing-signature': del cp['continuation']['physical_signature']
 if fault=='empty-signature': cp['continuation']['physical_signature']={}
 if fault=='malformed-model': signature['model']['provider']={}
 if fault=='missing-dt': del signature['integrator']['dt']
-(deck.parent/run['restart_file']).write_text('MODENA_RESTART 2\n'+json.dumps(cp)+'\n')
+# Exercise cross-version parity using both envelopes for the same mechanical state.
+if mode=='persistent': header, cp = 'MODENA_RESTART 3', dict(mechanical=cp,stress=None)
+else: header = 'MODENA_RESTART 2'
+(deck.parent/run['restart_file']).write_text(header+'\n'+json.dumps(cp)+'\n')
 columns=['step','time','kinetic','potential','total','temperature','pressure','virial']
 if fault=='step-only': columns=['step']
 if fault=='duplicate-column': columns[-1]='pressure'

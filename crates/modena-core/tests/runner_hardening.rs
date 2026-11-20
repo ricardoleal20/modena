@@ -51,14 +51,28 @@ fn initialization_uses_conserved_com_dof() {
 
 #[test]
 fn initial_constraints_are_projected_before_sampling() {
-    let text = format!("{BASE}\n[[constraints.bonds]]\natoms = [0,1]\nlength = 1.6\n");
+    let larger_box = BASE.replace("replicas = [1,1,1]", "replicas = [2,2,2]");
+    let text = format!("{larger_box}\n[[constraints.bonds]]\natoms = [0,1]\nlength = 1.6\n");
     let s = sim(&text, Path::new("."));
     let sys = s.system();
     let d = sys.box_size.min_image(sys.pos(0) - sys.pos(1));
     assert!((d.norm() - 1.6).abs() < 1e-8);
     assert!(d.dot(sys.vel(0) - sys.vel(1)).abs() < 1e-8);
-    assert_eq!(sys.dof(), 8);
+    assert_eq!(sys.dof(), 92);
     assert!((sys.temperature() - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn initial_constraints_reject_ambiguous_half_cell_images() {
+    let text = format!("{BASE}\n[[constraints.bonds]]\natoms = [0,1]\nlength = 1.6\n");
+    let config = InputConfig::from_str(&text).unwrap();
+    let error = Simulation::from_config(&config, Path::new("."))
+        .err()
+        .unwrap();
+    assert!(
+        matches!(error, modena_core::ModenaError::Physics(ref message) if message.contains("ambiguous nearest constraint image")),
+        "{error}"
+    );
 }
 
 #[test]
@@ -253,7 +267,9 @@ fn intentional_protocol_switch_and_legacy_import_require_state_only() {
     let second = sim(&state_only, &d);
     assert_eq!(first.system().positions, second.system().positions);
     assert_eq!(first.system().velocities, second.system().velocities);
-    let mut legacy = modena_core::io::restart::load(d.join("cp.chk")).unwrap();
+    let mut legacy = modena_core::io::restart::load_with_stress(d.join("cp.chk"))
+        .unwrap()
+        .mechanical;
     legacy.continuation = None;
     // Genuine v1 imports lack atom/ensemble state and must opt in explicitly.
     let mut text = format!(
@@ -280,6 +296,10 @@ fn version_two_carries_atom_identity_and_rejects_corrupt_payloads() {
     let s = sim(BASE, &d);
     let p = d.join("cp.chk");
     s.write_checkpoint(&p).unwrap();
+    let mechanical = modena_core::io::restart::load_with_stress(&p)
+        .unwrap()
+        .mechanical;
+    modena_core::io::restart::save(&p, &mechanical).unwrap();
     let text = std::fs::read_to_string(&p).unwrap();
     assert!(text.starts_with("MODENA_RESTART 2\n"));
     let cp = modena_core::io::restart::load(&p).unwrap();

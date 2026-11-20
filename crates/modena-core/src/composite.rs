@@ -12,6 +12,7 @@ use crate::ewald::EwaldForceModel;
 use crate::force_model::{ForceModel, PairForceModel, Virial};
 use crate::neighbor::NeighborList;
 use crate::spme::SpmeForceModel;
+use crate::stress::ModelEvaluation;
 use crate::system::System;
 
 /// The long-range Coulomb sub-model: direct reciprocal-sum Ewald or SPME
@@ -33,6 +34,17 @@ impl LongRangeForceModel {
 }
 
 impl ForceModel for LongRangeForceModel {
+    fn evaluate(
+        &self,
+        system: &mut System,
+        neighbors: &mut NeighborList,
+    ) -> Result<ModelEvaluation> {
+        match self {
+            Self::Ewald(m) => m.evaluate(system, neighbors),
+            Self::Spme(m) => m.evaluate(system, neighbors),
+        }
+    }
+
     fn conserves_total_momentum(&self, system: &System) -> bool {
         match self {
             Self::Ewald(m) => m.conserves_total_momentum(system),
@@ -92,6 +104,21 @@ impl CompositeForceModel {
 }
 
 impl ForceModel for CompositeForceModel {
+    fn evaluate(
+        &self,
+        system: &mut System,
+        neighbors: &mut NeighborList,
+    ) -> Result<ModelEvaluation> {
+        let mut evaluation = self.pair.evaluate(system, neighbors)?;
+        if let Some(bonded) = &self.bonded {
+            evaluation = evaluation.combine(bonded.evaluate(system, neighbors)?);
+        }
+        if let Some(long_range) = &self.long_range {
+            evaluation = evaluation.combine(long_range.evaluate(system, neighbors)?);
+        }
+        Ok(evaluation)
+    }
+
     fn conserves_total_momentum(&self, system: &System) -> bool {
         self.pair.conserves_total_momentum(system)
             && self

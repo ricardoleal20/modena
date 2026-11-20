@@ -1,0 +1,790 @@
+{
+  "kind": "B07-observed-results-summary",
+  "measured_on": "2026-11-20",
+  "measurement_revision": "3345c6f09ce6a61f6c92c3273eadad6c35ab6f09",
+  "production_validation": "Diagnostic",
+  "scientific_acceptance": "Failed",
+  "protocol_sha256": "89abb8b7a45b5d443bb886fdba0642e78b62fc7f64fe6c8438a06d2886b0759d",
+  "external_epoch_sha256": "97d45c8b934c2999dc8f8d77cfcfe563d7bd2a9bc7f1a8a508b9944ddf43381e",
+  "aggregate": {
+    "rows": 1145,
+    "Passed": 765,
+    "Failed": 33,
+    "Inconclusive": 143,
+    "Pending": 204
+  },
+  "external": {
+    "Passed": 175,
+    "Failed": 24,
+    "Inconclusive": 46,
+    "Pending": 135,
+    "failed_charged_tensor": 9,
+    "failed_neutral_energy": 15
+  },
+  "deterministic_passed": 163,
+  "formal_ou": {
+    "passed": 108,
+    "draws": 65536,
+    "charged_historical_plus_current_calls": 196612,
+    "historical_calls_added_to_ess": false
+  },
+  "gas_final": {
+    "Passed": 252,
+    "Failed": 7,
+    "Inconclusive": 97,
+    "molecule_steps": 316800000,
+    "weak_order_resolved_count": 0,
+    "fits": 60,
+    "raw_rows": 1024000,
+    "continuation_records": 192
+  },
+  "work": {
+    "primary_molecule_steps": 330258705,
+    "native_jobs": 12,
+    "native_registered": 24,
+    "native_wall_seconds": 9.132055791,
+    "oracle_rk4_substeps_reconstructed": 153600,
+    "unknown_suffixes": 0
+  },
+  "resources": {
+    "children": 65,
+    "child_wall_seconds": 2593.183403249,
+    "child_cpu_user_seconds": 2548.203794,
+    "child_cpu_system_seconds": 32.273582,
+    "max_child_or_worker_rss_bytes": 74825728,
+    "ase_sampled_tree_rss_bytes": 79380480,
+    "controller_peak_measured": false,
+    "registered_raw_bytes": 861511947
+  },
+  "clock": {
+    "started_utc": "2026-11-20T18:59:03.599210Z",
+    "deadline_utc": "2026-11-20T20:59:03.599182Z",
+    "elapsed_seconds_utc_derived": 6031.144813,
+    "shared_since_frozen_reference_seconds": 4462.049627542,
+    "legacy_boot_identity": null,
+    "legacy_monotonic_elapsed_seconds": null,
+    "deadline_extended": false
+  },
+  "costs": {
+    "scope": "single tiny batches; no replicated uncertainty",
+    "rotor_new_legacy_over_old": 3.36039,
+    "water32_new_legacy_over_old": 8.59074,
+    "rotor_reporting_over_new_legacy": 1.13154,
+    "water32_reporting_over_new_legacy": 2.15182,
+    "observer_profile_over_ordinary": 1.00326,
+    "spme32_cached_factor_delta_bytes": 1572864,
+    "disposition": "Constrained legacy overhead accepted for this Diagnostic release at the measured revision."
+  },
+  "archive_inventory_sha256": "7d931afae6961329ecfa53948e9991b5704af45ec8a51f4725b0f5af094d948e",
+  "corrected_summary_sha256": "e324b4b48faeb8121c1082fef28cb7033a16ff7c5044f937f99c120c153a513f",
+  "software_verification": {
+    "status": "Failed and incomplete in the original measurement-revision window",
+    "source_revision": "3345c6f09ce6a61f6c92c3273eadad6c35ab6f09",
+    "completed_rust": {
+      "passed": 513,
+      "failed": 1,
+      "ignored": 3
+    },
+    "interrupted_spme_calibration": {
+      "observed_passed": 57,
+      "observed_ignored": 1,
+      "active_incomplete": 1,
+      "not_started": 46
+    },
+    "not_run": [
+      "thermostat_statistics",
+      "water"
+    ],
+    "python_package": {
+      "passed": 26,
+      "skipped": 9
+    },
+    "python_bench": {
+      "passed": 86,
+      "failed": 1,
+      "skipped": 2
+    },
+    "format": "Passed",
+    "clippy_default_all_targets": "Passed",
+    "doctests": {
+      "passed": 1,
+      "ignored": 1
+    },
+    "optional_compile_only": {
+      "gpu": "Passed",
+      "msrv_1_90": "Passed",
+      "mpi": "Passed"
+    },
+    "hardware_validation": false
+  },
+  "domain_gate_matrix": [
+    {
+      "provider_backend": "CPU known-empty contributions",
+      "integrator": "snapshot",
+      "constraints": "none",
+      "controller": "none",
+      "estimator": "conservative virial",
+      "evidence_or_blocker": "stress_tensor and stress_bonded, empty pair/bonded/composite identities",
+      "outcome": "Passed",
+      "production_availability": "exact zero tensor"
+    },
+    {
+      "provider_backend": "CPU pair (serial and Rayon)",
+      "integrator": "snapshot",
+      "constraints": "none",
+      "controller": "none",
+      "estimator": "conservative virial",
+      "evidence_or_blocker": "stress_tensor, harmonic and LJ periodic/scaled fixtures, 1 and 4 threads",
+      "outcome": "Passed",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "CPU Buckingham, Morse, soft sphere, tabulated and typed pair models outside the tested fixtures",
+      "integrator": "snapshot",
+      "constraints": "none",
+      "controller": "none",
+      "estimator": "conservative virial",
+      "evidence_or_blocker": "shared pair accumulator, separate fixture-specific strain evidence absent",
+      "outcome": "Pending",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "CPU bonded and complete composite",
+      "integrator": "snapshot",
+      "constraints": "unprojected coordinates",
+      "controller": "none",
+      "estimator": "conservative virial",
+      "evidence_or_blocker": "stress_bonded, bond/angle/dihedral six strains, connected images and composition",
+      "outcome": "Passed",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "CPU direct Ewald",
+      "integrator": "snapshot",
+      "constraints": "unprojected coordinates",
+      "controller": "none",
+      "estimator": "conservative virial",
+      "evidence_or_blocker": "stress_electrostatics, neutral/charged, scaled and excluded branches, fixed reciprocal modes",
+      "outcome": "Passed",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "LAMMPS CPU double, four pair and five interacting-water snapshots",
+      "integrator": "run-zero",
+      "constraints": "as registered",
+      "controller": "none",
+      "estimator": "native reference convergence and table checks",
+      "evidence_or_blocker": "converge-pair-*, converge-interacting32* and outside-table, pinned CPU double RIGID + KSPACE",
+      "outcome": "Passed",
+      "production_availability": "external reference only"
+    },
+    {
+      "provider_backend": "CPU direct Ewald, O–O probe",
+      "integrator": "snapshot",
+      "constraints": "none",
+      "controller": "none",
+      "estimator": "energy, force and virial",
+      "evidence_or_blocker": "evaluate-pair-oo-r0-ewald at 8/10/12, all nine companion gates pass",
+      "outcome": "Passed",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "CPU direct Ewald, charged pair and inside/outside excluded probes",
+      "integrator": "snapshot",
+      "constraints": "none",
+      "controller": "none",
+      "estimator": "energy, force and virial",
+      "evidence_or_blocker": "evaluate-pair-{charge,excluded-in,excluded-out}-r2-ewald at 8/10/12, nine tensor failures, U/F pass",
+      "outcome": "Failed",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "CPU LJ + direct Ewald, neutral interacting32",
+      "integrator": "snapshot",
+      "constraints": "32 rigid waters",
+      "controller": "none",
+      "estimator": "energy, force and conservative virial",
+      "evidence_or_blocker": "evaluate-interacting32*-r2-ewald at 8/10/12, fifteen energy failures, F/S pass",
+      "outcome": "Failed",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "CPU SPME, orthorhombic",
+      "integrator": "snapshot",
+      "constraints": "unprojected coordinates",
+      "controller": "none",
+      "estimator": "discrete virial and trace",
+      "evidence_or_blocker": "stress_mesh six strains at the reference cell and finite-grid energy oracle",
+      "outcome": "Passed",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "CPU SPME, charged/charged-scaled/inside-scaled",
+      "integrator": "snapshot",
+      "constraints": "unprojected coordinates",
+      "controller": "none",
+      "estimator": "E/F/S and translation",
+      "evidence_or_blocker": "stress_mesh 8/16/32 reference ladders, three fixture classifications",
+      "outcome": "Passed",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "CPU SPME, outside-excluded",
+      "integrator": "snapshot",
+      "constraints": "unprojected coordinates",
+      "controller": "none",
+      "estimator": "E/F/S and translation",
+      "evidence_or_blocker": "stress_mesh 8/16/32, maximum 32³ error and translation exceed 2e-4",
+      "outcome": "Failed",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "CPU SPME, external pair probes and interacting32",
+      "integrator": "snapshot",
+      "constraints": "none or rigid water as registered",
+      "controller": "none",
+      "estimator": "matched energy, force and virial",
+      "evidence_or_blocker": "evaluate-*-spme, required direct-Ewald matching did not pass",
+      "outcome": "Pending",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "CPU SPME, triclinic",
+      "integrator": "any",
+      "constraints": "any",
+      "controller": "any",
+      "estimator": "conservative virial and pressure",
+      "evidence_or_blocker": "production reciprocal cell guard, affine oracle is test-only",
+      "outcome": "Unsupported",
+      "production_availability": "rejected"
+    },
+    {
+      "provider_backend": "ASE 3.26.0 / EMT, periodic oblique Cu4",
+      "integrator": "snapshot",
+      "constraints": "none",
+      "controller": "none",
+      "estimator": "conservative virial",
+      "evidence_or_blocker": "ase-six-strain, eight external gates, 49 production snapshots",
+      "outcome": "Passed",
+      "production_availability": "six components"
+    },
+    {
+      "provider_backend": "CPU zero / harmonic trap on the registered rotor",
+      "integrator": "VV or BAOAB deterministic stages",
+      "constraints": "distance bond",
+      "controller": "none",
+      "estimator": "endpoint reaction and timed mechanical interval",
+      "evidence_or_blocker": "deterministic-gates and stress_vv/stress_baoab analytic stage identities, trap tests use their specified forces",
+      "outcome": "Passed",
+      "production_availability": "endpoint and interval"
+    },
+    {
+      "provider_backend": "CPU zero, principal and nonprincipal water",
+      "integrator": "VV",
+      "constraints": "rigid water",
+      "controller": "none",
+      "estimator": "endpoint and interval",
+      "evidence_or_blocker": "deterministic-gates, two mass sets and refined independent Euler solutions for general rotations",
+      "outcome": "Passed",
+      "production_availability": "endpoint and interval"
+    },
+    {
+      "provider_backend": "CPU zero, free rotor and light nonprincipal water",
+      "integrator": "VV",
+      "constraints": "distance bond or rigid water",
+      "controller": "none",
+      "estimator": "endpoint reaction, interval and state",
+      "evidence_or_blocker": "nve-rotor, nve-water-nonprincipal and evaluate-*-nve-*-zero, four fixed common-time rungs",
+      "outcome": "Passed",
+      "production_availability": "endpoint and interval"
+    },
+    {
+      "provider_backend": "CPU zero, fixed water geometry",
+      "integrator": "BAOAB O operator",
+      "constraints": "rigid water",
+      "controller": "Langevin bath",
+      "estimator": "projected OU law and impulse",
+      "evidence_or_blocker": "formal conditional OU, 108 gates, 65,536 draws, operator only",
+      "outcome": "Passed",
+      "production_availability": "separate bath ledger"
+    },
+    {
+      "provider_backend": "CPU zero, free rotor gas",
+      "integrator": "BAOAB",
+      "constraints": "distance bonds",
+      "controller": "Langevin bath",
+      "estimator": "endpoint, interval and ensemble law",
+      "evidence_or_blocker": "gas-rotor-1600-gates, 129 Passed, 4 Failed, 45 Inconclusive",
+      "outcome": "Failed",
+      "production_availability": "endpoint and interval"
+    },
+    {
+      "provider_backend": "CPU zero, free water gas",
+      "integrator": "BAOAB",
+      "constraints": "rigid waters",
+      "controller": "Langevin bath",
+      "estimator": "endpoint, interval and ensemble law",
+      "evidence_or_blocker": "gas-water-1600-gates, 123 Passed, 3 Failed, 52 Inconclusive",
+      "outcome": "Failed",
+      "production_availability": "endpoint and interval"
+    },
+    {
+      "provider_backend": "LAMMPS CPU double, free rotor and water gas",
+      "integrator": "native rigid/nvt",
+      "constraints": "rigid bodies",
+      "controller": "native thermostat",
+      "estimator": "native pressure and ensemble law",
+      "evidence_or_blocker": "preflight-gas-rotor and preflight-gas-water, each has 23 inconclusive precision/ESS gates",
+      "outcome": "Inconclusive",
+      "production_availability": "external reference only"
+    },
+    {
+      "provider_backend": "CPU LJ + direct Ewald or SPME, interacting32",
+      "integrator": "VV",
+      "constraints": "32 rigid waters",
+      "controller": "none",
+      "estimator": "endpoint, interval, state and native comparison",
+      "evidence_or_blocker": "nve-ewald / nve-spme, matching direct-Ewald energy and charged tensors failed",
+      "outcome": "Pending",
+      "production_availability": "endpoint and interval"
+    },
+    {
+      "provider_backend": "CPU LJ + direct Ewald or SPME, interacting32",
+      "integrator": "BAOAB",
+      "constraints": "32 rigid waters",
+      "controller": "Langevin bath",
+      "estimator": "endpoint, interval and native ensemble comparison",
+      "evidence_or_blocker": "nvt-ewald / nvt-spme, matching failures and both inconclusive native thermostat preflights",
+      "outcome": "Pending",
+      "production_availability": "endpoint and interval"
+    },
+    {
+      "provider_backend": "CPU complete providers, including ASE within its restrictions",
+      "integrator": "VV or BAOAB",
+      "constraints": "none or supported independent bonds/waters",
+      "controller": "fixed cell, VV may add Berendsen or velocity rescaling",
+      "estimator": "endpoint after velocity changes, interval before them",
+      "evidence_or_blocker": "stress_runner timing checks, other trajectory/ensemble tuples lack all required physical gates",
+      "outcome": "Pending",
+      "production_availability": "endpoint and interval for allowed combinations"
+    },
+    {
+      "provider_backend": "CPU complete internal providers",
+      "integrator": "VV or BAOAB",
+      "constraints": "none",
+      "controller": "isotropic Berendsen or energy-based MC under its canonical-input guard",
+      "estimator": "post-move endpoint and pre-move interval",
+      "evidence_or_blocker": "stress_runner / stress_restart validate timing, NPT sampling outside B07",
+      "outcome": "Pending",
+      "production_availability": "endpoint refreshed, interval total missing after a box move"
+    },
+    {
+      "provider_backend": "Legacy scalar models, GPU pair or MPI decomposition, composites containing an unavailable contribution",
+      "integrator": "VV or BAOAB",
+      "constraints": "any supported",
+      "controller": "any allowed",
+      "estimator": "model tensor and total pressure",
+      "evidence_or_blocker": "ForceModel scalar fallback, no independently implemented complete tensor for these domains",
+      "outcome": "Unsupported",
+      "production_availability": "scalar mechanics available, total tensor missing"
+    },
+    {
+      "provider_backend": "Internal CPU or eligible external provider",
+      "integrator": "Nosé–Hoover chain or custom integrator without step stress",
+      "constraints": "any supported",
+      "controller": "any allowed",
+      "estimator": "step endpoint and interval",
+      "evidence_or_blocker": "integrator stress hook absent, NHC lacks a derived thermostat ledger",
+      "outcome": "Unsupported",
+      "production_availability": "step endpoint missing, interval absent"
+    },
+    {
+      "provider_backend": "Any provider",
+      "integrator": "any",
+      "constraints": "periodic winding, ambiguous image or singular graph",
+      "controller": "any",
+      "estimator": "constraint endpoint and interval",
+      "evidence_or_blocker": "constraint_geometry image, closure and rank checks",
+      "outcome": "Unsupported",
+      "production_availability": "rejected"
+    },
+    {
+      "provider_backend": "Internal CPU",
+      "integrator": "any",
+      "constraints": "nonempty",
+      "controller": "any box rescaling",
+      "estimator": "box control using constrained pressure",
+      "evidence_or_blocker": "runner configuration rejects constrained box moves",
+      "outcome": "Unsupported",
+      "production_availability": "rejected"
+    },
+    {
+      "provider_backend": "Internal CPU",
+      "integrator": "any",
+      "constraints": "none",
+      "controller": "anisotropic Berendsen or legacy Parrinello–Rahman piston",
+      "estimator": "tensor-driven box control",
+      "evidence_or_blocker": "production configuration guard, direct orthorhombic diagonal update has engineering coverage only",
+      "outcome": "Unsupported",
+      "production_availability": "experimental direct API, production rejected"
+    },
+    {
+      "provider_backend": "ASE EMT",
+      "integrator": "any",
+      "constraints": "any explicit constraints",
+      "controller": "any",
+      "estimator": "model and pressure",
+      "evidence_or_blocker": "ASE total-provider input rejects added topology, electrostatics, constraints and barostats",
+      "outcome": "Unsupported",
+      "production_availability": "rejected"
+    },
+    {
+      "provider_backend": "ASE EMT",
+      "integrator": "any",
+      "constraints": "none",
+      "controller": "any barostat",
+      "estimator": "box control",
+      "evidence_or_blocker": "ASE total-provider input rejects barostats",
+      "outcome": "Unsupported",
+      "production_availability": "rejected"
+    },
+    {
+      "provider_backend": "ASE EMT, missing/invalid provider stress",
+      "integrator": "snapshot",
+      "constraints": "none",
+      "controller": "none",
+      "estimator": "conservative virial",
+      "evidence_or_blocker": "required six-component, finite, symmetric provider property, external_provider contract",
+      "outcome": "Unsupported",
+      "production_availability": "evaluation fails"
+    },
+    {
+      "provider_backend": "CPU complete providers",
+      "integrator": "VV or BAOAB at a full v2 continuation seam",
+      "constraints": "any supported",
+      "controller": "any allowed",
+      "estimator": "initial endpoint and first interval",
+      "evidence_or_blocker": "stress_restart, mechanical v2 lacks the previous conservative tensor",
+      "outcome": "Unsupported",
+      "production_availability": "missing legacy contribution until ordinary evaluations refill history"
+    }
+  ],
+  "measurement_cargo_features": {
+    "explicit_cli_features": [],
+    "default_features_enabled": true,
+    "optional_backend_enabled": false,
+    "resolved_artifact_features_recorded_in_formal_summary": false
+  },
+  "post_fix_software_verification": {
+    "status": "Passed for the scoped engineering checks",
+    "source_revision": "a0012846318be454d0be4003806a08229c0602a6",
+    "tree": "161a6e475090843d564d223b231f1fb4e49f3123",
+    "started_utc": "2026-11-20T21:57:55.025296+00:00",
+    "ended_utc": "2026-11-20T22:06:00.312679+00:00",
+    "elapsed_seconds": 485.28977974969894,
+    "wall_limit_seconds": 600,
+    "test_workers": 1,
+    "compiled_test_artifacts": 60,
+    "executed_rust_binaries": 26,
+    "rust": {
+      "passed": 330,
+      "failed": 0,
+      "ignored": 3,
+      "measured": 0,
+      "filtered": 0
+    },
+    "selected_checks": {
+      "spme_calibration": {
+        "passed": 102,
+        "failed": 0,
+        "ignored": 3,
+        "measured": 0,
+        "filtered": 0,
+        "elapsed_seconds": 164.10566379129887,
+        "cpu_seconds": 159.868668,
+        "peak_rss_bytes": 41172992
+      },
+      "thermostat_statistics": {
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0,
+        "elapsed_seconds": 6.241311541758478,
+        "cpu_seconds": 5.858958,
+        "peak_rss_bytes": 2146304
+      },
+      "water": {
+        "passed": 4,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0,
+        "elapsed_seconds": 75.06825454160571,
+        "cpu_seconds": 74.572371,
+        "peak_rss_bytes": 7815168
+      },
+      "modena_mcp": {
+        "passed": 21,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0,
+        "elapsed_seconds": 0.9117707908153534,
+        "cpu_seconds": 0.333508,
+        "peak_rss_bytes": 10567680
+      },
+      "stress_empty_endpoint": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0,
+        "elapsed_seconds": 0.38240537513047457,
+        "cpu_seconds": 0.009118,
+        "peak_rss_bytes": 2342912
+      },
+      "stress_restart": {
+        "passed": 11,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 0,
+        "elapsed_seconds": 0.8590210825204849,
+        "cpu_seconds": 0.13463599999999998,
+        "peak_rss_bytes": 8617984
+      }
+    },
+    "unexecuted_rust_artifacts": [
+      "admission_hardening-0d3cadc43196e9fb",
+      "bonded-0aa1fa478ee8888a",
+      "check-022a1bf9ad61863d",
+      "config_builder-22b37bcf8daf0fac",
+      "conservation-7c3cc74aad64be2b",
+      "decomp-b42978bbcbf9ced8",
+      "electrostatics-e9720e1dc52d42df",
+      "ensembles-0fb648caa5dc230e",
+      "external_sessions-81f96da780a62253",
+      "force_cache-522362b18e680ef4",
+      "force_hardening-a3ce136277c5c9a1",
+      "gpu_pair-f40984aae2fb9df1",
+      "io_and_lattice-83e201730ee37a94",
+      "melting_sweep_demo-025f46115ed7b01a",
+      "modena-4c6949131bb94e94",
+      "modena_bench-fb0d41dab35622b4",
+      "modena_core-95ec138a802536e2",
+      "modena_mcp-13789d931c7bd8ca",
+      "mpi_decomp-585dd5102d18aa20",
+      "packed_pair-d74a0271ace9930a",
+      "pair_scales-ec55cda14a0e8027",
+      "pair_scratch-7381401a628a777e",
+      "periodic_graph-0b334306f9b9cb6e",
+      "periodic_graph_official-9ada5e9e2509d2dc",
+      "property_consistency-d3a63583b507dac5",
+      "provider-f1705b1a02e1cd67",
+      "rigid_sampling-d5985bac100be921",
+      "sampling_hardening-0a83ddbaff10e5d9",
+      "snapshot-d7dd3c1b975d6c44",
+      "snapshot-fb7781edc98f125c",
+      "spme_profile-c7cc2a7feb0fe045",
+      "stress_mesh-1ef0f5d7b51df9a0",
+      "stress_statistics-89902d10ebd07517",
+      "triclinic_neighbors-7019b67f3475ec42"
+    ],
+    "unchanged_passing_binaries_credited_to_corrected_source": 0,
+    "python": {
+      "python-package": {
+        "tests": 35,
+        "passed": 26,
+        "skipped": 9,
+        "failed": 0,
+        "errors": 0
+      },
+      "python-bench": {
+        "tests": 89,
+        "passed": 87,
+        "skipped": 2,
+        "failed": 0,
+        "errors": 0
+      },
+      "python312-adapter": {
+        "tests": 35,
+        "passed": 35,
+        "skipped": 0,
+        "failed": 0,
+        "errors": 0
+      },
+      "python312-clock": {
+        "tests": 13,
+        "passed": 13,
+        "skipped": 0,
+        "failed": 0,
+        "errors": 0
+      },
+      "python39-adapter": {
+        "tests": 35,
+        "passed": 35,
+        "skipped": 0,
+        "failed": 0,
+        "errors": 0
+      },
+      "python39-clock": {
+        "tests": 13,
+        "passed": 13,
+        "skipped": 0,
+        "failed": 0,
+        "errors": 0
+      }
+    },
+    "isolated_release_cli": "a653d1a184570168387e97cabc1af2b7263dfc5fc696010469b70e2ead503ee1",
+    "doctests": {
+      "passed": 1,
+      "ignored": 1
+    },
+    "separate_static_compile_checks": {
+      "fmt": "Passed",
+      "clippy-default": "Passed",
+      "clippy-gpu": "Passed",
+      "clippy-mpi": "Passed",
+      "msrv-default": "Passed",
+      "msrv-gpu": "Passed",
+      "msrv-harness": "Passed",
+      "benches-build": "Passed",
+      "release-workspace": "Passed",
+      "gpu-test-build": "Passed",
+      "mpi-test-build": "Passed"
+    },
+    "hardware_validation": false,
+    "optional_live_provider_paths_skipped_in_passing_rust_cases": 4,
+    "repeated_fixed_q_conditional_ou_calls": 0,
+    "changed_measured_inventory_paths": [
+      "crates/modena-core/src/constraint_stress.rs",
+      "crates/modena-core/src/constraints.rs",
+      "crates/modena-core/src/io/restart.rs",
+      "crates/modena-core/src/stress.rs",
+      "crates/modena-core/tests/energy_diagnostics.rs",
+      "crates/modena-core/tests/stress_restart.rs"
+    ],
+    "commands": {
+      "test_build": [
+        "test",
+        "--locked",
+        "--offline",
+        "--workspace",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "rust": "each listed executable --test-threads=1 --nocapture",
+      "bench": "MODENA_BINARY=<isolated-release-cli> python3.12 -m unittest discover -s bench/tests -v",
+      "package": "python3.12 -m unittest discover -s python/modena/tests -v",
+      "controls": "sh bench/b07_validation/launch.sh <python> -m unittest discover -s <bench or bench/b07_validation> -p <test_b07_*.py or test_clock.py> -v",
+      "static": {
+        "fmt": [
+          "fmt",
+          "--all",
+          "--",
+          "--check"
+        ],
+        "clippy-default": [
+          "clippy",
+          "--locked",
+          "--offline",
+          "--workspace",
+          "--all-targets",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "clippy-gpu": [
+          "clippy",
+          "--locked",
+          "--offline",
+          "--workspace",
+          "--all-targets",
+          "--features",
+          "modena-core/gpu",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "clippy-mpi": [
+          "clippy",
+          "--locked",
+          "--offline",
+          "--workspace",
+          "--all-targets",
+          "--features",
+          "modena-core/mpi",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "msrv-default": [
+          "+1.90.0",
+          "check",
+          "--locked",
+          "--offline",
+          "--workspace",
+          "--all-targets"
+        ],
+        "msrv-gpu": [
+          "+1.90.0",
+          "check",
+          "--locked",
+          "--offline",
+          "--workspace",
+          "--all-targets",
+          "--features",
+          "modena-core/gpu"
+        ],
+        "msrv-harness": [
+          "+1.90.0",
+          "check",
+          "--locked",
+          "--offline",
+          "--manifest-path",
+          "bench/validation/harness/Cargo.toml",
+          "--all-targets"
+        ],
+        "benches-build": [
+          "bench",
+          "--locked",
+          "--offline",
+          "--workspace",
+          "--no-run"
+        ],
+        "release-workspace": [
+          "build",
+          "--locked",
+          "--offline",
+          "--workspace",
+          "--release"
+        ],
+        "gpu-test-build": [
+          "test",
+          "--locked",
+          "--offline",
+          "-p",
+          "modena-core",
+          "--features",
+          "gpu",
+          "--test",
+          "gpu_pair",
+          "--no-run"
+        ],
+        "mpi-test-build": [
+          "test",
+          "--locked",
+          "--offline",
+          "-p",
+          "modena-core",
+          "--features",
+          "mpi",
+          "--test",
+          "mpi_decomp",
+          "--no-run"
+        ]
+      }
+    }
+  }
+}

@@ -473,7 +473,25 @@ fn persistent_checkpoint_transport_independence_and_safe_step_cancellation() {
     assert_eq!(resumed.system().forces, full.system().forces);
     // Change transport in the checkpoint signature's input configuration: the
     // native physical signature intentionally contains neither transport nor path.
-    let cp = modena_core::io::restart::load(dir.path().join("state.chk")).unwrap();
+    let cp = modena_core::io::restart::load_with_stress(dir.path().join("state.chk"))
+        .unwrap()
+        .mechanical;
+    modena_core::io::restart::save(dir.path().join("v2.chk"), &cp).unwrap();
+    let evaluations = || {
+        std::fs::read_to_string(dir.path().join("requests"))
+            .unwrap()
+            .lines()
+            .filter(|action| *action == "evaluate")
+            .count()
+    };
+    let before_restore = evaluations();
+    let legacy = build(&format!("{text}\nrestore_file=\"v2.chk\"\n"));
+    assert_eq!(
+        evaluations(),
+        before_restore,
+        "restoring v2 evaluated a live worker"
+    );
+    assert!(legacy.pressure_observation().unwrap().scalar.is_none());
     let signature = &cp.continuation.unwrap().physical_signature;
     assert!(signature["model"].get("transport").is_none());
     assert!(signature["model"].get("python").is_none());
@@ -493,7 +511,7 @@ fn persistent_checkpoint_transport_independence_and_safe_step_cancellation() {
             .unwrap()
             .lines()
             .count(),
-        3
+        4
     );
 }
 
@@ -544,5 +562,62 @@ fn persistent_setup_cancellation_stops_at_existing_safe_boundaries_and_reaps() {
         } else {
             assert_reaped(dir.path());
         }
+    }
+}
+
+#[test]
+fn persistent_trait_tensor_requests_once_and_invalid_stress_terminates_session() {
+    use modena_core::stress::{SymTensor6, TensorAvailability};
+    for body in [
+        "pass",
+        "del response['evaluation']['stress_ev_per_angstrom3']",
+        "response['evaluation']['stress_ev_per_angstrom3'][0][1]=float('inf')",
+        "response['evaluation']['stress_ev_per_angstrom3'][0][1]=0.4",
+    ] {
+        let (dir, p) = fixture(body);
+        let m = model(&p);
+        let mut s = system();
+        let before = s.forces.clone();
+        for call in 1..=2 {
+            let result = ForceModel::evaluate(&m, &mut s, &mut NeighborList::new(1.));
+            if body == "pass" {
+                let e = result.unwrap();
+                let c = modena_core::external::EV_TO_KCAL_MOL;
+                let expected = SymTensor6([-6.4 * c, -12.8 * c, -19.2 * c, 0., 0., 0.]);
+                let TensorAvailability::Complete(t) = e.tensor else {
+                    panic!("missing provider tensor")
+                };
+                for (a, b) in t.0.into_iter().zip(expected.0) {
+                    assert!((a - b).abs() < 1e-12);
+                }
+                assert_eq!(
+                    std::fs::read_to_string(dir.path().join("requests"))
+                        .unwrap()
+                        .lines()
+                        .filter(|x| *x == "evaluate")
+                        .count(),
+                    call
+                );
+                for (k, &initial_force) in before.iter().enumerate() {
+                    assert!(
+                        (s.forces[k] - initial_force - call as f64 * c * (k + 1) as f64).abs()
+                            < 1e-12
+                    );
+                }
+            } else {
+                assert!(result.is_err());
+                assert_eq!(s.forces, before);
+                assert_eq!(
+                    std::fs::read_to_string(dir.path().join("requests"))
+                        .unwrap()
+                        .lines()
+                        .filter(|x| *x == "evaluate")
+                        .count(),
+                    1
+                );
+            }
+        }
+        drop(m);
+        assert_reaped(dir.path());
     }
 }

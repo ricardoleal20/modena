@@ -87,8 +87,8 @@ impl NoseHooverChain {
         }
         // Potential of the chain: N_f kT ξ_1 + Σ_{k≥2} kT ξ_k.
         h += dof * kt * self.xi[0];
-        for k in 1..self.chain_len {
-            h += kt * self.xi[k];
+        for &xi in &self.xi[1..self.chain_len] {
+            h += kt * xi;
         }
         h
     }

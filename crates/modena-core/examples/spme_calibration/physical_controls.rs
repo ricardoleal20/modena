@@ -238,11 +238,7 @@ impl<F: FnMut(PhysicalEvent<'_>) -> Result<(), CalibrationFailure>> Runner<'_, F
         let value = Evaluation {
             energy,
             strain_w: virial.w,
-            forces: system
-                .forces
-                .chunks_exact(3)
-                .map(|f| [f[0], f[1], f[2]])
-                .collect(),
+            forces: system.forces.as_chunks::<3>().0.to_vec(),
         };
         self.store(
             PhysicalRecord {

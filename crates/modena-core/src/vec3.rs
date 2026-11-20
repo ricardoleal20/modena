@@ -5,10 +5,22 @@
 //! the hot force kernels; the public `Vec3` API is intentionally small so that
 //! migration is mechanical.
 
+use serde::{Deserialize, Deserializer, Serialize};
+
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub struct Vec3(pub [f64; 3]);
+#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Vec3(#[serde(deserialize_with = "finite_components")] pub [f64; 3]);
+
+fn finite_components<'de, D: Deserializer<'de>>(d: D) -> Result<[f64; 3], D::Error> {
+    let value = <[f64; 3]>::deserialize(d)?;
+    if value.iter().all(|x| x.is_finite()) {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom("vector components must be finite"))
+    }
+}
 
 impl Vec3 {
     #[inline]

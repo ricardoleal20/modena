@@ -67,3 +67,5 @@ ordinary TOML runner uses CPU/Rayon.
 Document evidence and remaining limitations in
 [VALIDATED_SCOPE.md](VALIDATED_SCOPE.md), and follow
 [CONTRIBUTING.md](../CONTRIBUTING.md) for verification and pull requests.
+
+For downstream pressure, run-event and barostat API changes, see the [tensor pressure migration](releases/b07-pressure-api.md).

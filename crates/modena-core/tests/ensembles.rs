@@ -154,8 +154,8 @@ fn replica_exchange_uses_actual_cutoff_above_two_point_five() {
             (u - expected).abs() < 1e-14,
             "replica neighbor list must include r > 2.5 pairs"
         );
-        for k in 0..3 {
-            assert!((s.force(0).0[k] - d.0[k] * fr).abs() < 1e-14);
+        for (force, displacement) in s.force(0).0.into_iter().zip(d.0) {
+            assert!((force - displacement * fr).abs() < 1e-14);
         }
     }
 }

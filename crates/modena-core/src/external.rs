@@ -4,6 +4,7 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use crate::stress::{ModelEvaluation, SymTensor6, TensorAvailability};
 use crate::{ForceModel, ModenaError, NeighborList, Result, System, UnitFactors, Virial};
 use serde::{Deserialize, Serialize};
 
@@ -87,6 +88,7 @@ pub struct ProviderIdentity {
 pub struct ProviderEvaluation {
     pub energy_ev: f64,
     pub forces_ev_per_angstrom: Vec<[f64; 3]>,
+    /// Required configurational, tensile-positive stress; excludes kinetic stress.
     pub stress_ev_per_angstrom3: [[f64; 3]; 3],
 }
 
@@ -129,7 +131,7 @@ impl Serialize for ScaledPositions<'_> {
     ) -> std::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeSeq;
         let mut seq = serializer.serialize_seq(Some(self.positions.len() / 3))?;
-        for p in self.positions.chunks_exact(3) {
+        for p in self.positions.as_chunks::<3>().0 {
             seq.serialize_element(&[p[0] * self.sigma, p[1] * self.sigma, p[2] * self.sigma])?;
         }
         seq.end()
@@ -408,7 +410,7 @@ impl AseEmtForceModel {
         &self,
         e: &ProviderEvaluation,
         volume_angstrom3: f64,
-    ) -> Result<(f64, Vec<f64>, f64)> {
+    ) -> Result<(f64, Vec<f64>, SymTensor6)> {
         let energy_scale = EV_TO_KCAL_MOL / self.factors.epsilon;
         let energy = e.energy_ev * energy_scale;
         let forces: Vec<f64> = e
@@ -417,12 +419,24 @@ impl AseEmtForceModel {
             .flatten()
             .map(|f| f * self.factors.sigma * energy_scale)
             .collect();
-        let trace = (0..3).map(|i| e.stress_ev_per_angstrom3[i][i]).sum::<f64>();
-        let w = -volume_angstrom3 * trace * energy_scale;
-        if !energy.is_finite() || !w.is_finite() || forces.iter().any(|x| !x.is_finite()) {
+        let stress = e.stress_ev_per_angstrom3;
+        let tensor = SymTensor6([
+            stress[0][0],
+            stress[1][1],
+            stress[2][2],
+            stress[0][1],
+            stress[0][2],
+            stress[1][2],
+        ])
+        .scaled(-volume_angstrom3 * energy_scale);
+        if !energy.is_finite()
+            || !tensor.finite()
+            || !tensor.trace().is_finite()
+            || forces.iter().any(|x| !x.is_finite())
+        {
             return Err(failure("nonfinite converted properties"));
         }
-        Ok((energy, forces, w))
+        Ok((energy, forces, tensor))
     }
 }
 impl ForceModel for AseEmtForceModel {
@@ -438,9 +452,23 @@ impl ForceModel for AseEmtForceModel {
         virial: &mut Virial,
         _neighbors: &mut NeighborList,
     ) -> Result<f64> {
+        let evaluation = self.evaluate_pass(system, virial.w)?;
+        virial.w += evaluation.scalar_virial;
+        Ok(evaluation.energy)
+    }
+    fn evaluate(
+        &self,
+        system: &mut System,
+        _neighbors: &mut NeighborList,
+    ) -> Result<ModelEvaluation> {
+        self.evaluate_pass(system, 0.)
+    }
+}
+impl AseEmtForceModel {
+    fn evaluate_pass(&self, system: &mut System, previous_w: f64) -> Result<ModelEvaluation> {
         let evaluation = self.evaluate(system)?;
         let volume = system.box_size.volume() * self.factors.sigma.powi(3);
-        let (energy, forces, w) = self
+        let (energy, forces, tensor) = self
             .converted(&evaluation, volume)
             .inspect_err(|_| self.terminate_session())?;
         // Stage even the additions: overflow or malformed existing accumulators
@@ -451,14 +479,18 @@ impl ForceModel for AseEmtForceModel {
             .zip(&forces)
             .map(|(a, b)| a + b)
             .collect();
-        let total_w = virial.w + w;
+        let w = tensor.trace();
+        let total_w = previous_w + w;
         if !total_w.is_finite() || accumulated.iter().any(|x| !x.is_finite()) {
             self.terminate_session();
             return Err(failure("nonfinite force/virial accumulation"));
         }
         system.forces.copy_from_slice(&accumulated);
-        virial.w = total_w;
-        Ok(energy)
+        Ok(ModelEvaluation {
+            energy,
+            scalar_virial: w,
+            tensor: TensorAvailability::Complete(tensor),
+        })
     }
 }
 

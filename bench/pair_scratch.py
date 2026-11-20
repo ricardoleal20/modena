@@ -71,8 +71,19 @@ def verify_run(directory, stdout, atoms, steps):
     header, payload = (directory / 'final.checkpoint').read_text().split('\n', 1)
     def reject(value):
         raise ValueError(f'nonfinite JSON: {value}')
-    state = json.loads(payload, parse_constant=reject)
-    if header != 'MODENA_RESTART 2' or state['step'] != steps or state['atoms'] != atoms:
+    def unique_object(pairs):
+        record = dict(pairs)
+        if len(record) != len(pairs):
+            raise ValueError('duplicate checkpoint field')
+        return record
+    state = json.loads(payload, parse_constant=reject, object_pairs_hook=unique_object)
+    if header == 'MODENA_RESTART 3':
+        if not isinstance(state, dict) or set(state) != {'mechanical', 'stress'}:
+            raise ValueError('invalid v3 checkpoint envelope')
+        state = state['mechanical']
+    elif header != 'MODENA_RESTART 2':
+        raise ValueError('unsupported checkpoint format')
+    if not isinstance(state, dict) or state['step'] != steps or state['atoms'] != atoms:
         raise ValueError('checkpoint version/steps/atoms mismatch')
     expected_edges = [1.6796 * r for r in REPLICAS[atoms]]
     edges = state.get('box_edges')
@@ -134,8 +145,11 @@ def verify_run(directory, stdout, atoms, steps):
     for step, row in zip(expected_steps, thermo[1:]):
         if len(row) != 8 or int(row[0]) != step or not all(math.isfinite(float(x)) for x in row):
             raise ValueError('invalid thermo steps/values')
-    # Hash actual files: decoded float equality considers +0.0 == -0.0.
-    return dict(checkpoint_sha256=sha(directory / 'final.checkpoint'),
+    # Same-version runs require identical files. Across the v2/v3 envelope
+    # migration, compare every mechanical field, including the sign of zero.
+    mechanical = json.dumps(state, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    return dict(header=header, checkpoint_sha256=sha(directory / 'final.checkpoint'),
+                mechanical_sha256=hashlib.sha256(mechanical.encode()).hexdigest(),
                 thermo_sha256=sha(directory / 'thermo.csv'))
 
 
@@ -164,8 +178,9 @@ def run_one(out, binary, atoms, threads, steps, repetition, variant, warmup, row
     if process.returncode:
         raise ValueError(f'{name}: command exited {process.returncode}')
     evidence = verify_run(directory, (directory / 'stdout').read_text(), atoms, steps)
-    row.update(completed_steps=steps, checkpoint_sha256=sha(directory / 'final.checkpoint'),
-               thermo_sha256=sha(directory / 'thermo.csv'), physics_verified=True)
+    row.update(completed_steps=steps, checkpoint_sha256=evidence['checkpoint_sha256'],
+               checkpoint_format=evidence['header'], mechanical_sha256=evidence['mechanical_sha256'],
+               thermo_sha256=evidence['thermo_sha256'], physics_verified=True)
     return evidence
 
 
@@ -186,7 +201,7 @@ def main(argv=None):
     artifact = dict(schema_version=1, passed=False, runs=[], summary=[], command=sys.argv,
                     created_utc=datetime.now(timezone.utc).isoformat(),
                     scope='fresh full CLI: startup, setup, integration, identical output policy; warm OS caches possible',
-                    numerical_policy='1T exact checkpoint/thermo; >1T static E/W atol1e-8 rtol1e-12, all F atol1e-10 rtol1e-12 in isolated profile; scientific gates separate')
+                    numerical_policy='1T exact checkpoint/thermo (cross-format: exact mechanical payload and thermo); >1T static E/W atol1e-8 rtol1e-12, all F atol1e-10 rtol1e-12 in isolated profile; scientific gates separate')
     try:
         binaries = dict(before=args.before.resolve(strict=True), after=args.after.resolve(strict=True))
         source = {p: sha(ROOT / p) for p in capture(['git', '-C', str(ROOT), 'ls-files']).splitlines() if (ROOT / p).is_file()}
@@ -207,8 +222,17 @@ def main(argv=None):
                     for variant in order:
                         evidence = run_one(out, binaries[variant], atoms, threads,
                             min(50, args.steps) if warmup else args.steps, repetition, variant, warmup, artifact['runs'])
-                        if reference is not None and threads == 1 and evidence != reference:
-                            raise ValueError('one-thread exact checkpoint/thermo parity failed')
+                        if reference is not None and threads == 1:
+                            key = 'checkpoint_sha256' if evidence['header'] == reference['header'] else 'mechanical_sha256'
+                            rows = artifact['runs']
+                            rows[-1]['comparison'] = dict(
+                                kind='whole_checkpoint_and_thermo' if key == 'checkpoint_sha256' else 'mechanical_payload_and_thermo',
+                                reference_directory=rows[-2]['directory'], reference_format=reference['header'],
+                                reference_checkpoint_sha256=reference['checkpoint_sha256'],
+                                reference_mechanical_sha256=reference['mechanical_sha256'],
+                                reference_thermo_sha256=reference['thermo_sha256'])
+                            if evidence[key] != reference[key] or evidence['thermo_sha256'] != reference['thermo_sha256']:
+                                raise ValueError('one-thread exact checkpoint/thermo parity failed')
                         reference = evidence
                 samples = [r for r in artifact['runs'] if r['atoms']==atoms and r['threads']==threads and not r['warmup']]
                 medians = {v:statistics.median(r['wall_seconds'] for r in samples if r['variant']==v) for v in binaries}

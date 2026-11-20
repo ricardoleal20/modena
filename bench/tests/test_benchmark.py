@@ -1,4 +1,6 @@
+import hashlib
 import importlib.util
+import os
 import json
 import pathlib
 import subprocess
@@ -47,11 +49,15 @@ class BenchmarkTests(unittest.TestCase):
 
     def test_real_release_cli_uses_valid_no_file_deck_and_reports_drift(self):
         with tempfile.TemporaryDirectory() as tmp:
-            result = subprocess.run([sys.executable, str(TOOL), '--ladder', '864',
+            binary = pathlib.Path(os.environ.get('MODENA_BINARY', ROOT / 'target/release/modena')).resolve()
+            result = subprocess.run([sys.executable, str(TOOL), '--modena', str(binary), '--ladder', '864',
                 '--steps', '3', '--warmup-steps', '1', '--runs', '1', '--threads', '1',
                 '--output', tmp], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             artifact = json.loads((pathlib.Path(tmp) / 'benchmark.json').read_text())
+            selected = artifact['provenance']['binaries']['modena']
+            self.assertEqual(selected['path'], str(binary))
+            self.assertEqual(selected['sha256'], hashlib.sha256(binary.read_bytes()).hexdigest())
             self.assertIsNotNone(artifact['runs'][1]['relative_energy_drift'])
             self.assertFalse(list(pathlib.Path(tmp).glob('*.xyz')))
             self.assertFalse(list(pathlib.Path(tmp).glob('*.csv')))

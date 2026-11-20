@@ -147,6 +147,9 @@ jobs:
       - name: Build
         run: cargo build --locked --workspace --verbose --release
       - name: Test
+        # Calibration fixtures require one Rayon worker. Parallel probes set their own counts.
+        env:
+          RAYON_NUM_THREADS: "1"
         run: cargo test --locked --workspace --verbose
       - name: Build and freeze layout-step contract example
         run: |
@@ -194,6 +197,11 @@ jobs:
         run: |
           python -m unittest discover -s python/modena/tests -v
           python -m unittest discover -s bench/tests -v
+      - name: B07 source-only adapter and evidence controls
+        run: sh bench/b07_validation/launch.sh "$(command -v python)" -m unittest discover -s bench -p 'test_b07_*.py' -v
+      - name: B07 Darwin campaign clock controls
+        if: runner.os == 'macOS'
+        run: sh bench/b07_validation/launch.sh "$(command -v python)" -m unittest discover -s bench/b07_validation -p 'test_clock.py' -v
       - name: Bounded numerical scientific smoke
         run: |
           cargo build --locked --release -p modena-core --example scientific_validation

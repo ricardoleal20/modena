@@ -320,7 +320,7 @@ print(json.dumps({'energy_ev':a.get_potential_energy(),'forces_ev_per_angstrom':
             / 2e-6;
         assert!((fd_w - direct_w).abs() < 2e-6);
         let mut translated = s.clone();
-        for p in translated.positions.chunks_exact_mut(3) {
+        for p in translated.positions.as_chunks_mut::<3>().0 {
             p[0] += 0.71;
             p[1] -= 0.37;
             p[2] += 1.12;
@@ -391,15 +391,30 @@ log_every = 100
 #[test]
 fn external_toml_runs_total_provider_and_reports_real_stress_metadata() {
     use modena_core::{io::input::InputConfig, runner::Simulation};
-    let (_dir, python) = fixture(RUNNER_VALID);
+    let counted = format!(
+        "with open(__file__ + '.calls', 'a') as f: f.write('evaluate\\n')\n {RUNNER_VALID}"
+    );
+    let (_dir, python) = fixture(&counted);
+    let calls = || {
+        std::fs::read_to_string(format!("{python}.calls"))
+            .unwrap()
+            .lines()
+            .count()
+    };
     let config = InputConfig::from_str(&runner_toml(&python, &"a".repeat(64), "3.29.0")).unwrap();
     let mut sim =
         Simulation::from_config_without_outputs(&config, std::path::Path::new(".")).unwrap();
+    assert_eq!(calls(), 1);
     assert_eq!(sim.system().atomic_numbers, vec![29; 4]);
     let metadata = serde_json::to_value(sim.metadata()).unwrap();
     assert_eq!(metadata["pressure_status"], "unconstrained_provider_stress");
     assert_eq!(metadata["provider"]["provider"], "ase_emt");
     let summary = sim.run().unwrap();
+    assert_eq!(calls(), 3);
+    println!(
+        "external mock evaluate requests: initial 1, after 2 steps {}",
+        calls()
+    );
     assert_eq!(summary.conservation.diagnostics.unwrap().samples, 3);
     assert!(
         (summary.final_energies.potential - 2.0 * modena_core::external::EV_TO_KCAL_MOL).abs()
@@ -496,7 +511,7 @@ fn external_checkpoint_checks_atomic_numbers_runtime_identity_and_transport_inde
     sim.run().unwrap();
     let path = dir.path().join("state.chk");
     sim.write_checkpoint(&path).unwrap();
-    let mut cp = restart::load(&path).unwrap();
+    let mut cp = restart::load_with_stress(&path).unwrap().mechanical;
     cp.continuation.as_mut().unwrap().physical_signature["output_unit_factors"][5] =
         serde_json::json!(69477.8);
     restart::save(&path, &cp).unwrap();
@@ -587,7 +602,8 @@ fn older_native_v2_checkpoint_keeps_signature_and_unspecified_z_compatibility() 
     sim.run().unwrap();
     let path = dir.path().join("state.chk");
     sim.write_checkpoint(&path).unwrap();
-    let cp = restart::load(&path).unwrap();
+    let cp = restart::load_with_stress(&path).unwrap().mechanical;
+    restart::save(&path, &cp).unwrap();
     let state = cp.continuation.unwrap();
     // Hand-written legacy physical-v2 identity: no atomic-number/provider keys.
     let expected = serde_json::json!({"schema":"modena-physical-v2","model":{"type":"lennard_jones","sigma":1.0,"epsilon":1.0,"cutoff":2.5,"types":[],"overrides":[],"mixing":"lorentz_berthelot"},"integrator":{"type":"velocity_verlet","dt":0.005},"thermostat":null,"barostat":null,"electrostatics":null,"topology":null,"constraints":null,"water_geometry":null,"initialization_seed":42,"initial_temperature":1.0,"masses":[1.0,1.0,1.0,1.0],"species":[0,0,0,0],"charges":[0.0,0.0,0.0,0.0],"elements":["X","X","X","X"],"output_unit_factors":null});
@@ -619,7 +635,9 @@ fn checkpoint_rejects_nonempty_atomic_number_buffer_with_wrong_length() {
     let sim = build_runner(NATIVE_TOML, dir.path());
     let path = dir.path().join("state.chk");
     sim.write_checkpoint(&path).unwrap();
-    let mut cp = modena_core::io::restart::load(&path).unwrap();
+    let mut cp = modena_core::io::restart::load_with_stress(&path)
+        .unwrap()
+        .mechanical;
     cp.continuation.as_mut().unwrap().atomic_numbers = vec![29];
     assert!(modena_core::io::restart::save(&path, &cp).is_err());
 }
@@ -732,8 +750,9 @@ fn failed_runner_is_terminal_and_preserves_good_checkpoint() {
     assert_eq!(resumed.current_step(), 0);
     assert_eq!(
         resumed.system().positions,
-        modena_core::io::restart::load(checkpoint)
+        modena_core::io::restart::load_with_stress(checkpoint)
             .unwrap()
+            .mechanical
             .positions
     );
 }
@@ -776,7 +795,7 @@ fn legacy_real_fixed_cell_signature_migrates_only_exact_old_pressure_factor() {
         sim.run().unwrap();
         let path = dir.path().join("old.chk");
         sim.write_checkpoint(&path).unwrap();
-        let mut old = restart::load(&path).unwrap();
+        let mut old = restart::load_with_stress(&path).unwrap().mechanical;
         old.continuation.as_mut().unwrap().physical_signature["output_unit_factors"][5] =
             serde_json::json!(3.0 / (2.0 * 2.0 * 2.0) * 69477.8);
         restart::save(&path, &old).unwrap();
@@ -785,7 +804,9 @@ fn legacy_real_fixed_cell_signature_migrates_only_exact_old_pressure_factor() {
         resumed
             .write_checkpoint(&dir.path().join("new.chk"))
             .unwrap();
-        let new = restart::load(dir.path().join("new.chk")).unwrap();
+        let new = restart::load_with_stress(dir.path().join("new.chk"))
+            .unwrap()
+            .mechanical;
         assert_eq!(
             new.continuation.as_ref().unwrap().physical_signature["output_unit_factors"][5],
             serde_json::json!(25713.158612344094)
@@ -817,7 +838,7 @@ fn legacy_real_fixed_cell_signature_migrates_only_exact_old_pressure_factor() {
     let coupled = format!("units = \"real\"\n{NATIVE_TOML}\n[barostat]\ntype = \"monte_carlo\"\ntarget_pressure = 1.0\ntarget_temperature = 10.0").replace("type = \"velocity_verlet\"\ndt = 0.005","type = \"langevin_baoab\"\ndt = 0.0001\ngamma = 1.0\ntarget_temperature = 10.0");
     let sim = build_runner(&coupled, dir.path());
     sim.write_checkpoint(&path).unwrap();
-    let mut old = restart::load(&path).unwrap();
+    let mut old = restart::load_with_stress(&path).unwrap().mechanical;
     old.continuation.as_mut().unwrap().physical_signature["output_unit_factors"][5] =
         serde_json::json!(69477.8);
     restart::save(&path, &old).unwrap();
@@ -933,4 +954,75 @@ fn relative_interpreter_is_resolved_against_config_base_without_changing_identit
     let absolute = build_runner(&runner_toml(&python, &"a".repeat(64), "3.29.0"), dir.path());
     assert_eq!(relative.metadata().provider, absolute.metadata().provider);
     assert_eq!(relative.system().forces, absolute.system().forces);
+}
+
+#[test]
+fn trait_evaluation_retains_all_stress_components_and_requests_once_per_addition() {
+    use modena_core::stress::TensorAvailability;
+    let body = VALID.replace(
+        "[[0.1,0.0,0.0],[0.0,0.2,0.0],[0.0,0.0,0.3]]",
+        "[[1.0,0.4,0.5],[0.4,2.0,0.6],[0.5,0.6,3.0]]",
+    );
+    let (dir, p) = fixture(&body);
+    let path = std::path::Path::new(&p);
+    let script = std::fs::read_to_string(path).unwrap();
+    let counter = dir.path().join("requests");
+    std::fs::write(
+        path,
+        script.replace(
+            "else:\n",
+            &format!(
+                "else:\n open({:?},'a').write('evaluate\\n')\n",
+                counter.to_str().unwrap()
+            ),
+        ),
+    )
+    .unwrap();
+    let model = AseEmtForceModel::new(
+        spec(&p),
+        UnitFactors::new(1., modena_core::external::EV_TO_KCAL_MOL / 2., 1.),
+    )
+    .unwrap();
+    let mut s = system();
+    s.box_size = SimBox::cubic(2.);
+    s.velocities.fill(17.);
+    let initial = s.forces.clone();
+    for call in 1..=2 {
+        let e = ForceModel::evaluate(&model, &mut s, &mut NeighborList::new(1.)).unwrap();
+        assert_eq!(
+            e.tensor,
+            TensorAvailability::Complete(modena_core::stress::SymTensor6([
+                -16., -32., -48., -6.4, -8., -9.6
+            ]))
+        );
+        assert_eq!(e.scalar_virial, -96.);
+        assert_eq!(e.energy, 4.);
+        assert_eq!(
+            std::fs::read_to_string(&counter).unwrap().lines().count(),
+            call
+        );
+        for (k, &initial_force) in initial.iter().enumerate() {
+            assert_eq!(
+                s.forces[k],
+                initial_force + call as f64 * 2. * (k + 1) as f64
+            );
+        }
+    }
+}
+
+#[test]
+fn trait_evaluation_rejects_required_missing_nonfinite_and_asymmetric_stress_atomically() {
+    for body in [
+        VALID.replace("'stress_ev_per_angstrom3'", "'missing_stress'"),
+        VALID.replace("[0.1,0.0,0.0]", "[0.1,float('inf'),0.0]"),
+        VALID.replace("[0.1,0.0,0.0]", "[0.1,0.4,0.0]"),
+        VALID.replace("[0.1,0.0,0.0]", "[0.1,0.0]"),
+    ] {
+        let (_dir, p) = fixture(&body);
+        let m = AseEmtForceModel::new(spec(&p), UnitFactors::new(1., 1., 1.)).unwrap();
+        let mut s = system();
+        let before = s.forces.clone();
+        assert!(ForceModel::evaluate(&m, &mut s, &mut NeighborList::new(1.)).is_err());
+        assert_eq!(s.forces, before);
+    }
 }

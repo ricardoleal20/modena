@@ -21,6 +21,9 @@ use std::sync::Mutex;
 use crate::error::Result;
 use crate::neighbor::NeighborList;
 use crate::potential::{LennardJones, PairPotential};
+use crate::stress::{
+    MissingTensor, MissingTensorReason, ModelEvaluation, SymTensor6, TensorAvailability,
+};
 use crate::system::System;
 use crate::vec3::Vec3;
 
@@ -65,6 +68,25 @@ pub trait ForceModel: Send + Sync {
         virial: &mut Virial,
         neighbors: &mut NeighborList,
     ) -> Result<f64>;
+
+    /// Add this provider's forces and return only its own E/W/S contribution.
+    /// Legacy implementations remain usable, with explicitly missing tensor data.
+    fn evaluate(
+        &self,
+        system: &mut System,
+        neighbors: &mut NeighborList,
+    ) -> Result<ModelEvaluation> {
+        let mut w = Virial::default();
+        let energy = self.compute(system, &mut w, neighbors)?;
+        Ok(ModelEvaluation {
+            energy,
+            scalar_virial: w.w,
+            tensor: TensorAvailability::Missing(vec![MissingTensor {
+                component: std::any::type_name::<Self>().into(),
+                reason: MissingTensorReason::LegacyForceModel,
+            }]),
+        })
+    }
 }
 
 /// Pairwise-additive force model: sums a `PairPotential` over all neighbor
@@ -90,6 +112,7 @@ struct PairPartition {
     forces: Vec<f64>,
     pe: f64,
     w: f64,
+    tensor: SymTensor6,
 }
 
 impl PairForceModel {
@@ -128,6 +151,16 @@ impl ForceModel for PairForceModel {
         neighbors.build(system);
         self.compute_with_built_neighbors(system, virial, neighbors)
     }
+
+    fn evaluate(
+        &self,
+        system: &mut System,
+        neighbors: &mut NeighborList,
+    ) -> Result<ModelEvaluation> {
+        neighbors.validate_pair_scales(system.n())?;
+        neighbors.build(system);
+        self.evaluate_with_built_neighbors(system, neighbors, false)
+    }
 }
 
 impl PairForceModel {
@@ -139,20 +172,36 @@ impl PairForceModel {
         virial: &mut Virial,
         neighbors: &NeighborList,
     ) -> Result<f64> {
+        if system.n() == 0 {
+            return Ok(0.0);
+        }
+        let evaluation = self.evaluate_with_built_neighbors(system, neighbors, false)?;
+        virial.w += evaluation.scalar_virial;
+        Ok(evaluation.energy)
+    }
+
+    fn evaluate_with_built_neighbors(
+        &self,
+        system: &mut System,
+        neighbors: &NeighborList,
+        deterministic: bool,
+    ) -> Result<ModelEvaluation> {
         let cutoff2 = self.potential.cutoff2();
         let n = system.n();
         let box_size = system.box_size;
         let pairs = neighbors.pairs();
 
         if n == 0 {
-            return Ok(0.0);
+            return Ok(ModelEvaluation::zero());
         }
 
         // Monomorphize the hot path for the shipped LJ potential (removes the
         // per-pair vtable call, lets LLVM inline the pair math — bit-identical,
         // same `energy_force` arithmetic). Fall back to the dyn path otherwise.
-        let serial = pairs.len() < SERIAL_PAIR_THRESHOLD || rayon::current_num_threads() <= 1;
-        let (pe, w) = if let Some(lj) = self
+        let serial = deterministic
+            || pairs.len() < SERIAL_PAIR_THRESHOLD
+            || rayon::current_num_threads() <= 1;
+        let (pe, w, tensor) = if let Some(lj) = self
             .potential
             .as_any()
             .and_then(|a| a.downcast_ref::<LennardJones>())
@@ -186,11 +235,11 @@ impl PairForceModel {
             )
         };
 
-        // M3 accumulate contract: `pair_pass` accumulated directly into
-        // `system.forces` (the caller zeroed once before the pass) and returned
-        // the PE + virial contributions; compose via virial.
-        virial.w += w;
-        Ok(pe)
+        Ok(ModelEvaluation {
+            energy: pe,
+            scalar_virial: w,
+            tensor: TensorAvailability::Complete(tensor),
+        })
     }
 }
 
@@ -209,46 +258,12 @@ impl PairForceModel {
     ) -> Result<f64> {
         neighbors.validate_pair_scales(system.n())?;
         neighbors.build(system);
-        let cutoff2 = self.potential.cutoff2();
-        let n = system.n();
-        if n == 0 {
+        if system.n() == 0 {
             return Ok(0.0);
         }
-        let (pe, w) = if let Some(lj) = self
-            .potential
-            .as_any()
-            .and_then(|a| a.downcast_ref::<LennardJones>())
-        {
-            pair_pass(
-                lj,
-                neighbors.pairs(),
-                neighbors.scales(),
-                n,
-                &system.positions,
-                &system.species,
-                system.box_size,
-                cutoff2,
-                true, // serial
-                &mut system.forces,
-                &self.scratch,
-            )
-        } else {
-            pair_pass(
-                &*self.potential,
-                neighbors.pairs(),
-                neighbors.scales(),
-                n,
-                &system.positions,
-                &system.species,
-                system.box_size,
-                cutoff2,
-                true, // serial
-                &mut system.forces,
-                &self.scratch,
-            )
-        };
-        virial.w += w;
-        Ok(pe)
+        let evaluation = self.evaluate_with_built_neighbors(system, neighbors, true)?;
+        virial.w += evaluation.scalar_virial;
+        Ok(evaluation.energy)
     }
 }
 
@@ -262,7 +277,7 @@ const SERIAL_PAIR_THRESHOLD: usize = 100_000;
 
 /// Evaluate the half pair list: accumulate forces directly into `forces_out`
 /// (serial; bit-identical to the former single-worker fold) or via bounded
-/// model-owned per-chunk scratch (parallel). Returns `(PE, virial)`.
+/// model-owned per-chunk scratch (parallel). Returns `(PE, virial, tensor)`.
 ///
 /// Generic over the potential so the `LennardJones` fast path monomorphizes
 /// `energy_force` (inline + constant folding); the dyn path is unchanged.
@@ -279,7 +294,7 @@ fn pair_pass<P: PairPotential + ?Sized>(
     serial: bool,
     forces_out: &mut [f64],
     scratch: &Mutex<PairScratch>,
-) -> (f64, f64) {
+) -> (f64, f64, SymTensor6) {
     // A nonblocking lease is essential: a caller may reenter this shared
     // model while the owner waits on work in the same Rayon pool. Poisoned
     // scratch also falls back to the safe, unchanged serial arithmetic.
@@ -296,6 +311,7 @@ fn pair_pass<P: PairPotential + ?Sized>(
             // byte-identical — the G1 gate.
             let mut pe = 0.0f64;
             let mut w = 0.0f64;
+            let mut tensor = SymTensor6::ZERO;
             for &(i, j) in pairs {
                 let ri = Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
                 let rj = Vec3::new(positions[3 * j], positions[3 * j + 1], positions[3 * j + 2]);
@@ -317,8 +333,9 @@ fn pair_pass<P: PairPotential + ?Sized>(
                 }
                 pe += u;
                 w += d.dot(fv);
+                tensor = tensor.plus(SymTensor6::dyad(d, fv));
             }
-            (pe, w)
+            (pe, w, tensor)
         }
         Some(mut workspace) => {
             let useful = rayon::current_num_threads().min(pairs.len()).max(1);
@@ -339,6 +356,7 @@ fn pair_pass<P: PairPotential + ?Sized>(
                 .for_each(|(acc, pairs)| {
                     acc.forces.fill(0.0);
                     let (mut pe, mut w) = (0.0, 0.0);
+                    let mut tensor = SymTensor6::ZERO;
                     for &(i, j) in pairs {
                         let ri =
                             Vec3::new(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
@@ -362,9 +380,11 @@ fn pair_pass<P: PairPotential + ?Sized>(
                         }
                         pe += u;
                         w += d.dot(fv);
+                        tensor = tensor.plus(SymTensor6::dyad(d, fv));
                     }
                     acc.pe = pe;
                     acc.w = w;
+                    acc.tensor = tensor;
                 });
             // Each disjoint output block reduces partitions in the same
             // order. Parallel reduction avoids a serial T-times-N memory
@@ -383,11 +403,13 @@ fn pair_pass<P: PairPotential + ?Sized>(
                     }
                 });
             let (mut pe, mut w) = (0.0, 0.0);
+            let mut tensor = SymTensor6::ZERO;
             for partition in &workspace.partitions {
                 pe += partition.pe;
                 w += partition.w;
+                tensor = tensor.plus(partition.tensor);
             }
-            (pe, w)
+            (pe, w, tensor)
         }
     }
 }

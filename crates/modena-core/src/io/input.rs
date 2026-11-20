@@ -644,6 +644,9 @@ pub struct RunSpec {
     pub trajectory_every: usize,
     #[serde(default)]
     pub log_file: Option<String>,
+    /// Optional companion pressure JSON Lines file at the thermo cadence.
+    #[serde(default)]
+    pub pressure_jsonl: Option<String>,
     #[serde(default = "default_log_every")]
     pub log_every: usize,
     /// Continue a v2 checkpoint, checking physical configuration and atom
@@ -689,6 +692,7 @@ impl Default for RunSpec {
             trajectory_file: None,
             trajectory_every: 100,
             log_file: None,
+            pressure_jsonl: None,
             log_every: 10,
             restore_file: None,
             restart_mode: RestartMode::Continue,

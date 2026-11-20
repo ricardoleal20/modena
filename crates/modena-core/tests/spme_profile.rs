@@ -1,4 +1,5 @@
 //! Profiling must preserve the same analytic mesh functional and additive contract.
+use modena_core::stress::TensorAvailability;
 use modena_core::{
     force_model::{ForceModel, Virial},
     neighbor::{NeighborList, PairScale},
@@ -51,7 +52,7 @@ fn special() -> (System, Vec<PairScale>) {
 }
 fn ionic() -> (System, Vec<PairScale>) {
     let mut s = modena_core::lattice::rocksalt(2.2, [2; 3], "Na", "Cl", 1., 1., 1., -1.);
-    for (i, r) in s.positions.chunks_exact_mut(3).enumerate() {
+    for (i, r) in s.positions.as_chunks_mut::<3>().0.iter_mut().enumerate() {
         for (axis, v) in r.iter_mut().enumerate() {
             let z = ((i as u64 + 1) * 1_664_525 + (axis as u64 + 1) * 1_013_904_223 + 19 * 69_069)
                 % 65_536;
@@ -122,6 +123,40 @@ fn parity(mut initial: System, scales: Vec<PairScale>) {
         for ((&x, &y), &pre) in b.forces.iter().zip(&zero.forces).zip(&preload) {
             close(x, y + pre);
         }
+        // Tensor and legacy entry points must run the same physics exactly once.
+        let mut evaluated = initial.clone();
+        evaluated.forces.clone_from(&preload);
+        let ea = ordinary.evaluate(&mut evaluated, &mut nl).unwrap();
+        let mut evaluated_profiled = initial.clone();
+        evaluated_profiled.forces.clone_from(&preload);
+        let (eb, tensor_profile) = profiled
+            .evaluate_profiled(&mut evaluated_profiled, &mut np)
+            .unwrap();
+        assert_eq!(ea, eb);
+        close(ea.energy, ua);
+        close(ea.scalar_virial + 1.75, wa.w);
+        let TensorAvailability::Complete(tensor) = ea.tensor else {
+            panic!("SPME must provide its full tensor");
+        };
+        close(tensor.trace(), ea.scalar_virial);
+        assert_eq!(evaluated.forces, a.forces);
+        assert_eq!(evaluated_profiled.forces, a.forces);
+        // Fresh models catch stale shared influence factors after cell/kappa/grid changes.
+        let fresh = SpmeForceModel::new(ordinary.kappa, rc, ordinary.kspace_cutoff)
+            .unwrap()
+            .with_pair_scales(scales.clone())
+            .unwrap();
+        let mut fresh_system = initial.clone();
+        fresh_system.forces.clone_from(&preload);
+        let fresh_e = fresh
+            .evaluate(
+                &mut fresh_system,
+                &mut NeighborList::with_pair_scales(rc, 0.3, &scales).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(fresh_e, eb);
+        assert_eq!(fresh_system.forces, a.forces);
+        assert_eq!(fields(&tensor_profile).len(), 12);
         assert_eq!(fields(&p).len(), 12); // No timing thresholds or phase-sum equality.
         assert_eq!(nl.rebuild_count(), np.rebuild_count());
         if step == 1 {
@@ -139,4 +174,47 @@ fn perturbed_charged_sixty_four_ion_profile_parity() {
     let (s, p) = ionic();
     assert_eq!(s.n(), 64);
     parity(s, p);
+}
+
+#[test]
+fn parallel_fft_tensor_profile_and_reused_workspace_match_one_worker() {
+    let (mut source, scales) = special();
+    source.box_size = SimBox::from_array([20.; 3]);
+    let model = SpmeForceModel::new(0.8, 3.5, 7.5)
+        .unwrap()
+        .with_pair_scales(scales.clone())
+        .unwrap();
+    assert_eq!(
+        modena_core::spme::mesh_for_box(&source.box_size, 7.5),
+        [48; 3]
+    );
+    let mut expected = None;
+    // 48³ crosses the production parallel-FFT threshold. Reuse the same
+    // workspace across pools so growing worker scratch is also exercised.
+    for threads in [1, 4] {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        let mut s = source.clone();
+        s.forces.fill(0.125);
+        let mut nl = NeighborList::with_pair_scales(3.5, 0.3, &scales).unwrap();
+        let e = pool.install(|| model.evaluate(&mut s, &mut nl).unwrap());
+        let TensorAvailability::Complete(t) = e.tensor else {
+            panic!("missing tensor");
+        };
+        close(t.trace(), e.scalar_virial);
+        let mut p = source.clone();
+        p.forces.fill(0.125);
+        let (pe, profile) = pool.install(|| model.evaluate_profiled(&mut p, &mut nl).unwrap());
+        assert_eq!(e, pe);
+        assert_eq!(s.forces, p.forces);
+        assert_eq!(fields(&profile).len(), 12);
+        if let Some((ref old_e, ref old_f)) = expected {
+            assert_eq!(&e, old_e);
+            assert_eq!(&s.forces, old_f);
+        } else {
+            expected = Some((e, s.forces));
+        }
+    }
 }

@@ -667,6 +667,7 @@ impl RunManager {
             // Hermetic sweeps: no per-run file output (avoid clutter / races).
             config.run.trajectory_file = None;
             config.run.log_file = None;
+            config.run.pressure_jsonl = None;
             config.run.restart_file = None;
             configs.push(
                 config
@@ -847,6 +848,7 @@ fn run_loop(
                     });
                 }
             }
+            RunEvent::Pressure { .. } => {}
             RunEvent::Frame { step, .. } => st.step = *step,
             RunEvent::Finished { summary } => {
                 let summary = summary.clone();
@@ -1406,7 +1408,8 @@ seed = 42
         );
         let anomalies = mgr.detect_anomaly(Some(rid), None).unwrap();
         assert!(anomalies.anomalies.iter().any(|a| a.typ == "run_failure"));
-        assert!(status.error.unwrap().contains("non-finite energy"));
+        let error = status.error.unwrap();
+        assert_eq!(error, "physics error: non-finite kinetic pressure tensor");
     }
 
     #[test]

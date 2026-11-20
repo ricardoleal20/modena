@@ -29,6 +29,10 @@
 //! (Andersen, 1983) — it conserves a shadow Hamiltonian on the constraint
 //! manifold, verified by the constrained-NVE test in `tests/bonded.rs`.
 
+use crate::constraint_stress::{
+    constraint_geometry, geometry_from_positions, ConstraintGeometry, ProjectionReport,
+    ProjectionStage,
+};
 use crate::error::{ModenaError, Result};
 use serde::{Deserialize, Serialize};
 
@@ -70,6 +74,30 @@ pub struct Constraints {
     pub waters: Vec<RigidWater>,
 }
 
+pub(crate) fn validate_state_buffers(system: &System) -> Result<()> {
+    let n = system.n();
+    if system.positions.len() != 3 * n
+        || system.velocities.len() != 3 * n
+        || system.forces.len() != 3 * n
+    {
+        return Err(constraint_error(
+            "system buffer lengths do not match atom count",
+        ));
+    }
+    if system.masses.iter().any(|m| !m.is_finite() || *m <= 0.0) {
+        return Err(constraint_error("masses must be finite and positive"));
+    }
+    if system
+        .positions
+        .iter()
+        .chain(&system.velocities)
+        .any(|x| !x.is_finite())
+    {
+        return Err(constraint_error("positions/velocities must be finite"));
+    }
+    Ok(())
+}
+
 impl Constraints {
     pub fn new() -> Self {
         Self::default()
@@ -108,26 +136,8 @@ impl Constraints {
     /// Validate buffers, atom indices, positive masses and target geometry.
     pub fn validate(&self, system: &System) -> Result<()> {
         self.validate_parameters()?;
+        validate_state_buffers(system)?;
         let n = system.n();
-        if system.positions.len() != 3 * n
-            || system.velocities.len() != 3 * n
-            || system.forces.len() != 3 * n
-        {
-            return Err(constraint_error(
-                "system buffer lengths do not match atom count",
-            ));
-        }
-        if system.masses.iter().any(|m| !m.is_finite() || *m <= 0.0) {
-            return Err(constraint_error("masses must be finite and positive"));
-        }
-        if system
-            .positions
-            .iter()
-            .chain(&system.velocities)
-            .any(|x| !x.is_finite())
-        {
-            return Err(constraint_error("positions/velocities must be finite"));
-        }
         for c in &self.bonds {
             if c.i >= n || c.j >= n || c.i == c.j || !c.d.is_finite() || c.d <= 0.0 {
                 return Err(constraint_error("invalid bond indices or target length"));
@@ -171,7 +181,6 @@ impl Constraints {
                 &system.masses,
                 w,
                 tol,
-                None,
             )?;
         }
         check_residual(
@@ -212,82 +221,316 @@ impl Constraints {
         tol: f64,
         max_iter: usize,
     ) -> Result<()> {
-        self.validate(system)?;
-        validate_tolerance(tol)?;
-        if x_ref.len() != system.positions.len() || x_ref.iter().any(|x| !x.is_finite()) {
-            return Err(constraint_error("invalid SHAKE reference positions"));
-        }
-        let box_size = system.box_size;
-        for _ in 0..max_iter {
-            for &w in &self.waters {
-                settle_one(
-                    &box_size,
-                    &mut system.positions[3 * w.first..3 * w.first + 9],
+        let geometry = geometry_from_positions(system, self, x_ref)?;
+        self.shake_at_geometry(system, &geometry, tol, max_iter)
+    }
+
+    /// Use a pre-drift geometry without recording a ledger on the legacy path.
+    pub(crate) fn shake_at_geometry(
+        &self,
+        system: &mut System,
+        geometry: &ConstraintGeometry,
+        tol: f64,
+        max_iter: usize,
+    ) -> Result<()> {
+        self.project(
+            system,
+            geometry,
+            Projection::Position { interval: 1. },
+            tol,
+            max_iter,
+            None,
+        )
+    }
+
+    /// Velocity projection using the same physical solver as `rattle_report`,
+    /// without allocating or accumulating an impulse ledger.
+    pub fn rattle(&self, system: &mut System, tol: f64, max_iter: usize) -> Result<()> {
+        let geometry = constraint_geometry(system, self)?;
+        self.project(system, &geometry, Projection::Velocity, tol, max_iter, None)
+    }
+
+    /// Project an unwrapped predictor using pre-drift geometry. Leaves the
+    /// correction unwrapped so the caller can apply delta-q/interval to velocity
+    /// before wrapping once. On failure restores the input position buffer.
+    pub fn shake_report(
+        &self,
+        system: &mut System,
+        geometry: &ConstraintGeometry,
+        interval: f64,
+        stage: ProjectionStage,
+        tol: f64,
+        max_iter: usize,
+    ) -> Result<ProjectionReport> {
+        self.project_report(
+            system,
+            geometry,
+            Projection::Position { interval },
+            stage,
+            tol,
+            max_iter,
+        )
+    }
+
+    /// Project only velocities at fixed geometry. A stale lever is rejected.
+    /// On failure restores input velocities and discards the incomplete ledger.
+    pub fn rattle_report(
+        &self,
+        system: &mut System,
+        geometry: &ConstraintGeometry,
+        stage: ProjectionStage,
+        tol: f64,
+        max_iter: usize,
+    ) -> Result<ProjectionReport> {
+        self.project_report(system, geometry, Projection::Velocity, stage, tol, max_iter)
+    }
+
+    fn project_report(
+        &self,
+        system: &mut System,
+        geometry: &ConstraintGeometry,
+        mode: Projection,
+        stage: ProjectionStage,
+        tol: f64,
+        max_iter: usize,
+    ) -> Result<ProjectionReport> {
+        mode.validate_stage(stage)?;
+        let before = mode.buffer(system).to_vec();
+        let mut report = ProjectionReport::new(stage);
+        let result = self
+            .project(system, geometry, mode, tol, max_iter, Some(&mut report))
+            .and_then(|()| {
+                report.check_reconstruction(
+                    geometry,
                     &system.masses,
-                    w,
+                    &before,
+                    mode.buffer(system),
+                    mode.interval(),
+                )
+            });
+        if let Err(error) = result {
+            match mode {
+                Projection::Position { .. } => system.positions = before,
+                Projection::Velocity => system.velocities = before,
+            }
+            return Err(error);
+        }
+        Ok(report)
+    }
+
+    fn validate_projection(
+        &self,
+        system: &System,
+        geometry: &ConstraintGeometry,
+        mode: Projection,
+        tol: f64,
+        max_iter: usize,
+        caller_supplied: bool,
+    ) -> Result<f64> {
+        validate_tolerance(tol)?;
+        if max_iter == 0 {
+            return Err(constraint_error("iteration cap must be positive"));
+        }
+        if let Projection::Position { interval } = mode {
+            if !interval.is_finite() || interval <= 0. {
+                return Err(constraint_error(
+                    "drift interval must be finite and positive",
+                ));
+            }
+        }
+        geometry.validate_stage(
+            system,
+            self,
+            matches!(mode, Projection::Velocity),
+            caller_supplied,
+        )
+    }
+
+    fn project(
+        &self,
+        system: &mut System,
+        geometry: &ConstraintGeometry,
+        mode: Projection,
+        tol: f64,
+        max_iter: usize,
+        mut report: Option<&mut ProjectionReport>,
+    ) -> Result<()> {
+        let half =
+            self.validate_projection(system, geometry, mode, tol, max_iter, report.is_some())?;
+        // Only edges incident on a moved atom can lose their continuous image.
+        let guard = ProjectionGuard::new(geometry, mode, half, system.n());
+        for _ in 0..max_iter {
+            // Keep the existing water-before-loose-bonds update order.
+            for (water_index, &water) in self.waters.iter().enumerate() {
+                let first_edge = self.bonds.len() + 3 * water_index;
+                self.project_water(
+                    system,
+                    geometry,
+                    first_edge,
+                    water,
+                    mode,
                     tol,
-                    Some(&x_ref[3 * w.first..3 * w.first + 9]),
+                    &guard,
+                    &mut report,
                 )?;
             }
-            for &c in &self.bonds {
-                let rij = box_size.min_image(system.pos(c.j) - system.pos(c.i));
-                let residual = rij.norm2() - c.d * c.d;
+            let mut changed = false;
+            for (index, e) in geometry.edges[..self.bonds.len()].iter().enumerate() {
+                let r = geometry.vector(system, e)?;
+                let reference = match mode {
+                    Projection::Position { .. } => e.reference,
+                    Projection::Velocity => r,
+                };
+                let (residual, denom) = match mode {
+                    Projection::Position { .. } => (
+                        r.norm2() - e.distance * e.distance,
+                        2. * (1. / system.masses[e.i] + 1. / system.masses[e.j]) * r.dot(reference),
+                    ),
+                    Projection::Velocity => (
+                        r.dot(system.vel(e.j) - system.vel(e.i)),
+                        (1. / system.masses[e.i] + 1. / system.masses[e.j]) * r.norm2(),
+                    ),
+                };
+                if !denom.is_finite() || denom.abs() < 1e-20 || !residual.is_finite() {
+                    return Err(constraint_error("singular or nonfinite projection solve"));
+                }
                 if residual.abs() <= tol {
                     continue;
                 }
-                let ri0 = Vec3::new(x_ref[3 * c.i], x_ref[3 * c.i + 1], x_ref[3 * c.i + 2]);
-                let rj0 = Vec3::new(x_ref[3 * c.j], x_ref[3 * c.j + 1], x_ref[3 * c.j + 2]);
-                let rij0 = box_size.min_image(rj0 - ri0);
-                let mi = system.masses[c.i];
-                let mj = system.masses[c.j];
-                let denom = 2.0 * (1.0 / mi + 1.0 / mj) * rij.dot(rij0);
-                if !denom.is_finite() || denom.abs() < 1e-20 {
-                    return Err(constraint_error("singular SHAKE solve"));
+                let multiplier = residual / denom;
+                let on_i = reference * (multiplier / system.masses[e.i]);
+                let on_j = reference * (-multiplier / system.masses[e.j]);
+                match mode {
+                    Projection::Position { .. } => {
+                        system.add_pos(e.i, on_i);
+                        system.add_pos(e.j, on_j);
+                    }
+                    Projection::Velocity => {
+                        system.add_vel(e.i, on_i);
+                        system.add_vel(e.j, on_j);
+                    }
                 }
-                let g = residual / denom;
-                system.add_pos(c.i, rij0 * (g / mi));
-                system.add_pos(c.j, rij0 * (-g / mj));
+                if let Some(ledger) = report.as_deref_mut() {
+                    // Loose solver: atom j receives MINUS multiplier*r.
+                    ledger.record(
+                        index,
+                        reference,
+                        reference * (-multiplier / mode.interval()),
+                    )?;
+                }
+                changed = true;
+                guard.check(system, &[e.i, e.j])?;
             }
-            if self.max_residual(system) <= tol {
+            if changed {
+                if let Some(ledger) = report.as_deref_mut() {
+                    ledger.iterations += 1;
+                }
+            }
+            let (position, velocity) = geometry.residuals(system)?;
+            let residual = match mode {
+                Projection::Position { .. } => position,
+                Projection::Velocity => velocity,
+            };
+            if residual <= tol {
+                if let Some(ledger) = report {
+                    ledger.max_position_residual = position;
+                    ledger.max_velocity_residual = velocity;
+                }
                 return Ok(());
             }
         }
-        check_residual(self.max_residual(system), tol, "SHAKE iteration limit")
+        Err(constraint_error("projection iteration limit"))
     }
 
-    /// RATTLE velocities, returning an error if the tangent residual cannot
-    /// reach the absolute velocity-dot-length tolerance.
-    pub fn rattle(&self, system: &mut System, tol: f64, max_iter: usize) -> Result<()> {
-        self.validate(system)?;
-        validate_tolerance(tol)?;
-        let box_size = system.box_size;
-        for _ in 0..max_iter {
-            self.settle_velocities(system, tol)?;
-            for &c in &self.bonds {
-                let rij = box_size.min_image(system.pos(c.j) - system.pos(c.i));
-                let rv = rij.dot(system.vel(c.j) - system.vel(c.i));
-                let mi = system.masses[c.i];
-                let mj = system.masses[c.j];
-                let denom = (1.0 / mi + 1.0 / mj) * rij.norm2();
-                if !denom.is_finite() || denom.abs() < 1e-20 {
-                    return Err(constraint_error("singular RATTLE solve"));
-                }
-                if rv.abs() <= tol {
-                    continue;
-                }
-                let mu = rv / denom;
-                system.add_vel(c.i, rij * (mu / mi));
-                system.add_vel(c.j, rij * (-mu / mj));
+    #[allow(clippy::too_many_arguments)]
+    fn project_water(
+        &self,
+        system: &mut System,
+        geometry: &ConstraintGeometry,
+        first_edge: usize,
+        water: RigidWater,
+        mode: Projection,
+        tol: f64,
+        guard: &ProjectionGuard,
+        report: &mut Option<&mut ProjectionReport>,
+    ) -> Result<()> {
+        let edges = &geometry.edges[first_edge..first_edge + 3];
+        let masses = [
+            system.masses[water.first],
+            system.masses[water.first + 1],
+            system.masses[water.first + 2],
+        ];
+        // Preserve the existing inner Newton cap; velocity uses one linear solve.
+        for iteration in 0..=WATER_NEWTON_ITER {
+            let current = [
+                geometry.vector(system, &edges[0])?,
+                geometry.vector(system, &edges[1])?,
+                geometry.vector(system, &edges[2])?,
+            ];
+            let mut residual = [0.; 3];
+            for k in 0..3 {
+                residual[k] = match mode {
+                    Projection::Position { .. } => {
+                        current[k].norm2() - edges[k].distance * edges[k].distance
+                    }
+                    Projection::Velocity => {
+                        current[k].dot(system.vel(edges[k].j) - system.vel(edges[k].i))
+                    }
+                };
             }
-            if self.max_velocity_residual(system) <= tol {
+            if residual.iter().any(|x| !x.is_finite()) {
+                return Err(constraint_error("nonfinite water residual"));
+            }
+            if residual.iter().all(|x| x.abs() < tol) {
                 return Ok(());
             }
+            if iteration == WATER_NEWTON_ITER {
+                return Err(constraint_error("water Newton iteration limit"));
+            }
+            let reference = match mode {
+                Projection::Position { .. } => {
+                    [edges[0].reference, edges[1].reference, edges[2].reference]
+                }
+                Projection::Velocity => current,
+            };
+            let factor = match mode {
+                Projection::Position { .. } => 2.,
+                Projection::Velocity => 1.,
+            };
+            let matrix = water_matrix(current, reference, masses, factor);
+            let Some(lam) = solve3(&matrix, &residual.map(|x| -x)) else {
+                return Err(constraint_error("singular water projection solve"));
+            };
+            // Preserve simultaneous mass-weighted updates and arithmetic order.
+            let delta = water_deltas(reference, lam, masses);
+            for (k, d) in delta.into_iter().enumerate() {
+                match mode {
+                    Projection::Position { .. } => system.add_pos(water.first + k, d),
+                    Projection::Velocity => system.add_vel(water.first + k, d),
+                }
+            }
+            if let Some(ledger) = report.as_deref_mut() {
+                for k in 0..3 {
+                    // Water Newton: atom j receives PLUS lam*r.
+                    ledger.record(
+                        first_edge + k,
+                        reference[k],
+                        reference[k] * (lam[k] / mode.interval()),
+                    )?;
+                }
+                ledger.iterations += 1;
+            }
+            guard.check(system, &[water.first, water.first + 1, water.first + 2])?;
+            if matches!(mode, Projection::Velocity) {
+                let residual = edges
+                    .iter()
+                    .zip(current)
+                    .map(|(e, r)| r.dot(system.vel(e.j) - system.vel(e.i)).abs())
+                    .fold(0., f64::max);
+                return check_residual(residual, tol, "water velocity projection");
+            }
         }
-        check_residual(
-            self.max_velocity_residual(system),
-            tol,
-            "RATTLE iteration limit",
-        )
+        Err(constraint_error("water Newton iteration limit"))
     }
 
     fn water_pairs(&self) -> impl Iterator<Item = Constraint> + '_ {
@@ -359,6 +602,80 @@ impl Constraints {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Projection {
+    Position { interval: f64 },
+    Velocity,
+}
+impl Projection {
+    fn validate_stage(self, stage: ProjectionStage) -> Result<()> {
+        use ProjectionStage::*;
+        let position_stage = match stage {
+            VvPosition | BaoabA1Pre | BaoabA2Pre => true,
+            VvFinal | BaoabB0 | BaoabA1Post | BaoabO | BaoabA2Post | BaoabB1 => false,
+        };
+        if position_stage != matches!(self, Self::Position { .. }) {
+            return Err(constraint_error(&format!(
+                "stage {stage:?} does not match projection operation"
+            )));
+        }
+        Ok(())
+    }
+    fn buffer(self, s: &System) -> &[f64] {
+        match self {
+            Self::Position { .. } => &s.positions,
+            Self::Velocity => &s.velocities,
+        }
+    }
+    fn interval(self) -> f64 {
+        match self {
+            Self::Position { interval } => interval,
+            Self::Velocity => 1.,
+        }
+    }
+}
+struct ProjectionGuard<'a> {
+    geometry: &'a ConstraintGeometry,
+    mode: Projection,
+    half: f64,
+    adjacent: Vec<Vec<usize>>,
+}
+impl<'a> ProjectionGuard<'a> {
+    fn new(geometry: &'a ConstraintGeometry, mode: Projection, half: f64, n: usize) -> Self {
+        let mut adjacent = Vec::new();
+        if matches!(mode, Projection::Position { .. }) {
+            adjacent.resize_with(n, Vec::new);
+            for (k, e) in geometry.edges.iter().enumerate() {
+                adjacent[e.i].push(k);
+                adjacent[e.j].push(k);
+            }
+        }
+        Self {
+            geometry,
+            mode,
+            half,
+            adjacent,
+        }
+    }
+    fn check(&self, s: &System, moved: &[usize]) -> Result<()> {
+        for &i in moved {
+            let value = match self.mode {
+                Projection::Position { .. } => s.pos(i),
+                Projection::Velocity => s.vel(i),
+            };
+            if value.0.iter().any(|x| !x.is_finite()) {
+                return Err(constraint_error("nonfinite projection update"));
+            }
+            if let Some(incident) = self.adjacent.get(i) {
+                for &k in incident {
+                    self.geometry.check_edge(s, self.half, k)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 fn constraint_error(message: &str) -> ModenaError {
     ModenaError::Physics(format!("constraint projection: {message}"))
 }
@@ -379,32 +696,19 @@ fn check_residual(residual: f64, tol: f64, method: &str) -> Result<()> {
     }
 }
 
-/// Solve one water's three position constraints with Newton on the
-/// multipliers. `g_k = |v_k|² − d_k²` uses the current constraint vectors.
-/// During a drift, `∂x_i/∂λ_l = ∓r_l(t)/m_i` uses saved reference vectors;
-/// `J_kl = 2 v_k · (∂x_{j_k} − ∂x_{i_k})/∂λ_l` is generally nonsymmetric.
-/// Holding those directions fixed is essential: the resulting impulse plus
-/// final tangent projection is a RATTLE update, conserving rigid rotation.
-/// Without a reference (standalone initialization), current directions are used.
+/// Standalone geometry repair uses current normals at each Newton iteration.
+/// It has no elapsed physical interval and produces no impulse ledger.
 fn settle_one(
     box_size: &SimBox,
     chunk: &mut [f64],
     masses: &[f64],
     w: RigidWater,
     tol: f64,
-    reference: Option<&[f64]>,
 ) -> Result<()> {
     let (mo, m1, m2) = (masses[w.first], masses[w.first + 1], masses[w.first + 2]);
     let doh2 = w.d_oh * w.d_oh;
     let dhh2 = w.d_hh * w.d_hh;
     let p = |chunk: &[f64], k: usize| Vec3::new(chunk[3 * k], chunk[3 * k + 1], chunk[3 * k + 2]);
-    let reference_vectors = reference.map(|chunk| {
-        [
-            box_size.min_image(p(chunk, 1) - p(chunk, 0)),
-            box_size.min_image(p(chunk, 2) - p(chunk, 0)),
-            box_size.min_image(p(chunk, 2) - p(chunk, 1)),
-        ]
-    });
     for iteration in 0..=WATER_NEWTON_ITER {
         let (o, h1, h2) = (p(chunk, 0), p(chunk, 1), p(chunk, 2));
         let v1 = box_size.min_image(h1 - o); // O–H1
@@ -417,34 +721,14 @@ fn settle_one(
         if iteration == WATER_NEWTON_ITER {
             return Err(constraint_error("water Newton iteration limit"));
         }
-        // Rows use the predicted vectors; columns use the saved impulse
-        // directions. The initialization case reduces to the symmetric solve.
-        let [r1, r2, r3] = reference_vectors.unwrap_or([v1, v2, v3]);
-        let j = [
-            [
-                2.0 * v1.dot(r1) * (1.0 / mo + 1.0 / m1),
-                2.0 * v1.dot(r2) / mo,
-                -2.0 * v1.dot(r3) / m1,
-            ],
-            [
-                2.0 * v2.dot(r1) / mo,
-                2.0 * v2.dot(r2) * (1.0 / mo + 1.0 / m2),
-                2.0 * v2.dot(r3) / m2,
-            ],
-            [
-                -2.0 * v3.dot(r1) / m1,
-                2.0 * v3.dot(r2) / m2,
-                2.0 * v3.dot(r3) * (1.0 / m1 + 1.0 / m2),
-            ],
-        ];
+        let r = [v1, v2, v3];
+        let j = water_matrix(r, r, [mo, m1, m2], 2.);
         let Some(lam) = solve3(&j, &[-g[0], -g[1], -g[2]]) else {
             return Err(constraint_error("singular water position solve"));
         };
-        // Internal, mass-weighted impulses preserve COM and carry the
-        // pre-drift directions for dynamical SHAKE.
-        add3(chunk, 0, (r1 * lam[0] + r2 * lam[1]) * (-1.0 / mo));
-        add3(chunk, 1, (r1 * lam[0] - r3 * lam[2]) * (1.0 / m1));
-        add3(chunk, 2, (r2 * lam[1] + r3 * lam[2]) * (1.0 / m2));
+        for (atom, delta) in water_deltas(r, lam, [mo, m1, m2]).into_iter().enumerate() {
+            add3(chunk, atom, delta);
+        }
     }
     Err(constraint_error("water Newton iteration limit"))
 }
@@ -485,30 +769,54 @@ fn settle_vel_one(
         }
         return Ok(());
     }
-    let m = [
-        [
-            r1.dot(r1) * (1.0 / mo + 1.0 / m1),
-            r1.dot(r2) / mo,
-            -r1.dot(r3) / m1,
-        ],
-        [
-            r1.dot(r2) / mo,
-            r2.dot(r2) * (1.0 / mo + 1.0 / m2),
-            r2.dot(r3) / m2,
-        ],
-        [
-            -r1.dot(r3) / m1,
-            r2.dot(r3) / m2,
-            r3.dot(r3) * (1.0 / m1 + 1.0 / m2),
-        ],
-    ];
+    let r = [r1, r2, r3];
+    let m = water_matrix(r, r, [mo, m1, m2], 1.);
     let Some(mu) = solve3(&m, &[-c[0], -c[1], -c[2]]) else {
         return Err(constraint_error("singular water velocity solve"));
     };
-    add3(velocities, 0, (r1 * mu[0] + r2 * mu[1]) * (-1.0 / mo));
-    add3(velocities, 1, (r1 * mu[0] - r3 * mu[2]) * (1.0 / m1));
-    add3(velocities, 2, (r2 * mu[1] + r3 * mu[2]) * (1.0 / m2));
+    for (atom, delta) in water_deltas(r, mu, [mo, m1, m2]).into_iter().enumerate() {
+        add3(velocities, atom, delta);
+    }
     Ok(())
+}
+
+/// Water Newton Jacobian: rows are current edges, columns the actual impulse
+/// directions. Velocity projection uses current edges for both and factor 1.
+fn water_matrix(
+    current: [Vec3; 3],
+    reference: [Vec3; 3],
+    masses: [f64; 3],
+    factor: f64,
+) -> [[f64; 3]; 3] {
+    let [v1, v2, v3] = current;
+    let [r1, r2, r3] = reference;
+    let [mo, m1, m2] = masses;
+    [
+        [
+            factor * v1.dot(r1) * (1. / mo + 1. / m1),
+            factor * v1.dot(r2) / mo,
+            -factor * v1.dot(r3) / m1,
+        ],
+        [
+            factor * v2.dot(r1) / mo,
+            factor * v2.dot(r2) * (1. / mo + 1. / m2),
+            factor * v2.dot(r3) / m2,
+        ],
+        [
+            -factor * v3.dot(r1) / m1,
+            factor * v3.dot(r2) / m2,
+            factor * v3.dot(r3) * (1. / m1 + 1. / m2),
+        ],
+    ]
+}
+fn water_deltas(reference: [Vec3; 3], lam: [f64; 3], masses: [f64; 3]) -> [Vec3; 3] {
+    let [r1, r2, r3] = reference;
+    let [mo, m1, m2] = masses;
+    [
+        (r1 * lam[0] + r2 * lam[1]) * (-1. / mo),
+        (r1 * lam[0] - r3 * lam[2]) * (1. / m1),
+        (r2 * lam[1] + r3 * lam[2]) * (1. / m2),
+    ]
 }
 
 /// Add `d` to atom `k` of a contiguous 3-atom chunk buffer.
